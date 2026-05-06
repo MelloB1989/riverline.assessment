@@ -15,10 +15,20 @@ import (
 func StartServer() {
 	port := constants.AppCfg.Get().Port
 	appServer := createFiberApp()
+	appServer.Use("/health", healthCheckHandler())
 	v1 := appServer.Group("/v1")
 	routes.SetupMainRoutes(v1)
 	if err := appServer.Listen(":" + port); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func healthCheckHandler() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status":  "healthy",
+			"service": "riverline",
+		})
 	}
 }
 

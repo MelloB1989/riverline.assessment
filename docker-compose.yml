@@ -1,0 +1,145 @@
+name: riverline
+
+x-backend-env: &backend-env
+  PORT: "9000"
+  ENV: DEV
+  REDIS_URL: redis://redis:6379/0
+
+services:
+  redis:
+    image: redis:7-alpine
+    profiles: ["dev", "prod"]
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres-dev:
+    image: postgres:16-alpine
+    profiles: ["dev"]
+    environment:
+      POSTGRES_USER: riverline
+      POSTGRES_PASSWORD: riverline_dev_password
+      POSTGRES_DB: riverline_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U riverline -d riverline_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres-prod:
+    image: postgres:16-alpine
+    profiles: ["prod"]
+    environment:
+      POSTGRES_USER: riverline
+      POSTGRES_PASSWORD: ${POSTGRES_PROD_PASSWORD:-riverline_prod_password}
+      POSTGRES_DB: riverline_prod
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-prod-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U riverline -d riverline_prod"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      dockerfile: services/server/Dockerfile
+      target: dev
+    env_file:
+      - ./services/server/.env
+    environment:
+      <<: *backend-env
+      DATABASE_URL: postgres://riverline:riverline_dev_password@postgres-dev:5432/riverline_dev?sslmode=disable
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./services/server:/app/services/server
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+
+  backend-prod:
+    profiles: ["prod"]
+    build:
+      context: .
+      dockerfile: services/server/Dockerfile
+      target: prod
+    env_file:
+      - ./services/server/.env
+    environment:
+      <<: *backend-env
+      ENV: PROD
+      DATABASE_URL: postgres://riverline:${POSTGRES_PROD_PASSWORD:-riverline_prod_password}@postgres-prod:5432/riverline_prod?sslmode=disable
+    depends_on:
+      postgres-prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "9000:9000"
+
+  web-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: dev
+    env_file:
+      - ./apps/web/.env.local
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:9000}
+    depends_on:
+      - backend-dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - web-root-node-modules:/app/node_modules
+      - web-node-modules:/app/apps/web/node_modules
+      - web-next-cache:/app/apps/web/.next
+
+  web-prod:
+    profiles: ["prod"]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: prod
+    env_file:
+      - ./apps/web/.env
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:9000}
+    depends_on:
+      - backend-prod
+    ports:
+      - "3000:3000"
+
+volumes:
+  redis-data:
+  postgres-dev-data:
+  postgres-prod-data:
+  go-mod-cache:
+  go-build-cache:
+  web-root-node-modules:
+  web-node-modules:
+  web-next-cache:
