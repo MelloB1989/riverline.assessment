@@ -1,0 +1,35 @@
+{
+  "name": "riverline.assessment",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "check-types": "turbo run check-types",
+    "db:generate": "cd database && bunx drizzle-kit generate",
+    "db:migrate": "cd database && bunx drizzle-kit migrate",
+    "db:browser": "cd database && bunx drizzle-kit studio",
+    "start:backend": "cd services/server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go run main.go -ldflags \"-X lyznflow/internal/constants.Version=$(git describe --tags --always --dirty)\"",
+    "cloc": "cloc . --exclude-dir=node_modules,dist,build,.next,.expo"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.32.1",
+    "postgres": "^3.4.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "prettier": "^3.7.4",
+    "turbo": "^2.9.9",
+    "typescript": "5.9.2",
+    "drizzle-kit": "^0.23.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "bun@1.3.13",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
