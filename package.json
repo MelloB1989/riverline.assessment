@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
-    "dev": "docker compose --profile dev up --build",
+    "dev": "temporal server start-dev && docker compose --profile dev up --build",
     "start": "docker compose --profile prod up --build",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",

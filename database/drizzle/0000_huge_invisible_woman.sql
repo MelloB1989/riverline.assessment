@@ -1,0 +1,408 @@
+DO $$ BEGIN
+ CREATE TYPE "public"."agent_id" AS ENUM('aria', 'nova', 'delta');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."borrower_status" AS ENUM('pending', 'in_assessment', 'in_resolution', 'in_final_notice', 'resolved', 'escalated', 'stop_contact', 'hardship');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."compliance_rule" AS ENUM('identity_disclosure', 'no_false_threats', 'no_harassment', 'no_misleading_terms', 'sensitive_situations', 'recording_disclosure', 'professional_composure', 'data_privacy');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."flag_type" AS ENUM('score_inflation', 'metric_uselessness', 'judge_disagreement', 'compliance_blindspot', 'post_adoption_regression');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."message_role" AS ENUM('agent', 'borrower');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."outcome" AS ENUM('committed', 'rejected', 'no_response', 'hardship', 'stop_contact', 'escalated');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."persona" AS ENUM('cooperative', 'combative', 'evasive', 'distressed');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "agent_conversations" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"workflow_id" varchar NOT NULL,
+	"user_id" varchar NOT NULL,
+	"agent_id" "agent_id" NOT NULL,
+	"is_simulated" boolean DEFAULT false,
+	"persona_type" "persona",
+	"seed" varchar,
+	"prompt_version" integer NOT NULL,
+	"outcome" "outcome",
+	"total_turns" integer DEFAULT 0,
+	"total_tokens_used" integer DEFAULT 0,
+	"started_at" timestamp DEFAULT now() NOT NULL,
+	"ended_at" timestamp
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "agent_messages" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"conversation_id" varchar NOT NULL,
+	"workflow_id" varchar NOT NULL,
+	"user_id" varchar NOT NULL,
+	"agent_id" "agent_id" NOT NULL,
+	"role" "message_role" NOT NULL,
+	"content" text NOT NULL,
+	"token_count" integer,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "assessments" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"workflow_id" varchar NOT NULL,
+	"user_id" varchar NOT NULL,
+	"identity_verified" boolean DEFAULT false,
+	"employment_status" varchar,
+	"monthly_income_range" varchar,
+	"monthly_obligations" numeric,
+	"default_reason" varchar,
+	"borrower_emotional_state" "persona",
+	"has_savings" boolean,
+	"hardship_mentioned" boolean DEFAULT false,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "borrower_workflows" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"user_id" varchar NOT NULL,
+	"loan_id" varchar NOT NULL,
+	"current_stage" "agent_id" DEFAULT 'aria' NOT NULL,
+	"aria_attempts" integer DEFAULT 0 NOT NULL,
+	"outcome" "outcome",
+	"aria_summary" text,
+	"nova_summary" text,
+	"final_offer_amount" numeric,
+	"final_offer_deadline" timestamp,
+	"resolved_at" timestamp,
+	"stop_contact_flagged" boolean DEFAULT false,
+	"hardship_flagged" boolean DEFAULT false,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "canary_results" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"canary_id" varchar NOT NULL,
+	"evaluator_version" integer NOT NULL,
+	"checker_result" boolean,
+	"correctly_flagged" boolean,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "compliance_canaries" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"agent_id" "agent_id" NOT NULL,
+	"rule" "compliance_rule" NOT NULL,
+	"description" text NOT NULL,
+	"transcript" text NOT NULL,
+	"should_fail" boolean DEFAULT true,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "conversation_scores" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"conversation_id" varchar NOT NULL,
+	"workflow_id" varchar,
+	"agent_id" "agent_id" NOT NULL,
+	"prompt_version" integer NOT NULL,
+	"evaluator_version" integer NOT NULL,
+	"is_simulated" boolean DEFAULT true,
+	"persona_type" "persona",
+	"seed" varchar,
+	"composite_score" numeric NOT NULL,
+	"score_identity_verified" numeric,
+	"score_info_completeness" numeric,
+	"score_no_redundancy" numeric,
+	"score_tone_appropriateness" numeric,
+	"score_offer_clarity" numeric,
+	"score_objection_handling" numeric,
+	"score_commitment_attempt" numeric,
+	"score_context_continuity" numeric,
+	"score_consequence_accuracy" numeric,
+	"score_deadline_specificity" numeric,
+	"score_no_negotiation_drift" numeric,
+	"score_compliance_pass" numeric,
+	"compliance_breakdown" jsonb DEFAULT '{}'::jsonb,
+	"compliance_passed" boolean,
+	"judge_b_composite" numeric,
+	"judge_b_metric_scores" jsonb DEFAULT '{}'::jsonb,
+	"judge_disagreement_delta" numeric,
+	"eval_cost_usd" numeric,
+	"eval_model_used" varchar,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "eval_runs" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"run_label" varchar NOT NULL,
+	"seed" integer NOT NULL,
+	"batch_size" integer NOT NULL,
+	"personas_used" jsonb DEFAULT '[]'::jsonb,
+	"agent_ids" jsonb DEFAULT '[]'::jsonb,
+	"prompt_versions_used" jsonb DEFAULT '{}'::jsonb,
+	"evaluator_versions_used" jsonb DEFAULT '{}'::jsonb,
+	"total_conversations" integer,
+	"total_cost_usd" numeric,
+	"started_at" timestamp DEFAULT now() NOT NULL,
+	"completed_at" timestamp,
+	"config_snapshot" jsonb DEFAULT '{}'::jsonb
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "evaluator_versions" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"version_number" integer NOT NULL,
+	"agent_id" "agent_id" NOT NULL,
+	"judge_prompt" text NOT NULL,
+	"is_active" boolean DEFAULT false,
+	"change_reason" text,
+	"triggered_by_flag_id" varchar,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "llm_cost_log" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"call_type" varchar NOT NULL,
+	"agent_id" "agent_id",
+	"model_used" varchar NOT NULL,
+	"prompt_tokens" integer NOT NULL,
+	"completion_tokens" integer NOT NULL,
+	"total_tokens" integer NOT NULL,
+	"cost_usd" numeric NOT NULL,
+	"conversation_id" varchar,
+	"experiment_id" varchar,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "loans" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"user_id" varchar NOT NULL,
+	"account_number_partial" varchar NOT NULL,
+	"loan_type" varchar NOT NULL,
+	"principal_amount" numeric NOT NULL,
+	"outstanding_amount" numeric NOT NULL,
+	"days_overdue" integer NOT NULL,
+	"last_payment_date" timestamp,
+	"last_payment_amount" numeric,
+	"interest_rate" numeric,
+	"policy_max_discount_pct" numeric NOT NULL,
+	"status" "borrower_status" DEFAULT 'pending' NOT NULL,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "meta_flags" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"flag_type" "flag_type" NOT NULL,
+	"agent_id" "agent_id",
+	"evidence" jsonb DEFAULT '{}'::jsonb,
+	"proposed_action" text,
+	"resolved" boolean DEFAULT false,
+	"resolution" text,
+	"evaluator_version_before" integer,
+	"evaluator_version_after" integer,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"resolved_at" timestamp
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "prompt_experiments" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"agent_id" "agent_id" NOT NULL,
+	"control_version" integer NOT NULL,
+	"candidate_version" integer NOT NULL,
+	"control_n" integer NOT NULL,
+	"control_mean" numeric NOT NULL,
+	"control_stddev" numeric NOT NULL,
+	"control_median" numeric NOT NULL,
+	"control_p10" numeric,
+	"control_p90" numeric,
+	"control_min" numeric,
+	"control_max" numeric,
+	"control_compliance_rate" numeric,
+	"treatment_n" integer NOT NULL,
+	"treatment_mean" numeric NOT NULL,
+	"treatment_stddev" numeric NOT NULL,
+	"treatment_median" numeric NOT NULL,
+	"treatment_p10" numeric,
+	"treatment_p90" numeric,
+	"treatment_min" numeric,
+	"treatment_max" numeric,
+	"treatment_compliance_rate" numeric,
+	"mean_delta" numeric NOT NULL,
+	"p_value" numeric NOT NULL,
+	"cohens_d" numeric,
+	"is_significant" boolean,
+	"adopted" boolean NOT NULL,
+	"rejection_reason" text,
+	"control_scores" jsonb DEFAULT '[]'::jsonb,
+	"treatment_scores" jsonb DEFAULT '[]'::jsonb,
+	"experiment_cost_usd" numeric,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "prompt_versions" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"agent_id" "agent_id" NOT NULL,
+	"version_number" integer NOT NULL,
+	"prompt_text" text NOT NULL,
+	"is_active" boolean DEFAULT false NOT NULL,
+	"adopted_at" timestamp,
+	"retired_at" timestamp,
+	"adoption_reason" text,
+	"rejection_reason" text,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "resolution_offers" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"workflow_id" varchar NOT NULL,
+	"vapi_call_id" varchar,
+	"call_recording_url" varchar,
+	"call_transcript" text,
+	"lump_sum_offered" numeric,
+	"lump_sum_discount_pct" numeric,
+	"emi_amount" numeric,
+	"emi_months" integer,
+	"emi_start_date" timestamp,
+	"hardship_offered" boolean DEFAULT false,
+	"offer_accepted" boolean,
+	"accepted_offer_type" varchar,
+	"objections_raised" json DEFAULT '[]'::json,
+	"call_duration_seconds" integer,
+	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "user_memories" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"user_id" varchar NOT NULL,
+	"memory_toc" json DEFAULT '{}'::json,
+	"memory_tree" json DEFAULT '{}'::json,
+	"token_estimate" integer DEFAULT 0,
+	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "users" (
+	"id" varchar PRIMARY KEY NOT NULL,
+	"first_name" varchar NOT NULL,
+	"last_name" varchar NOT NULL,
+	"email" varchar NOT NULL,
+	"phone" varchar,
+	"dob" timestamp NOT NULL,
+	"gender" varchar NOT NULL,
+	"pfp" varchar DEFAULT '',
+	"bio" text NOT NULL,
+	"extra" json DEFAULT '{}'::json,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL,
+	"billing_address" json DEFAULT '{"country":"IN","state":"","city":"","street":"","zipcode":""}'::json
+);
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "agent_conversations" ADD CONSTRAINT "agent_conversations_workflow_id_borrower_workflows_id_fk" FOREIGN KEY ("workflow_id") REFERENCES "public"."borrower_workflows"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "agent_conversations" ADD CONSTRAINT "agent_conversations_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "agent_messages" ADD CONSTRAINT "agent_messages_conversation_id_agent_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."agent_conversations"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "agent_messages" ADD CONSTRAINT "agent_messages_workflow_id_borrower_workflows_id_fk" FOREIGN KEY ("workflow_id") REFERENCES "public"."borrower_workflows"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "agent_messages" ADD CONSTRAINT "agent_messages_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "assessments" ADD CONSTRAINT "assessments_workflow_id_borrower_workflows_id_fk" FOREIGN KEY ("workflow_id") REFERENCES "public"."borrower_workflows"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "assessments" ADD CONSTRAINT "assessments_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "borrower_workflows" ADD CONSTRAINT "borrower_workflows_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "borrower_workflows" ADD CONSTRAINT "borrower_workflows_loan_id_loans_id_fk" FOREIGN KEY ("loan_id") REFERENCES "public"."loans"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "canary_results" ADD CONSTRAINT "canary_results_canary_id_compliance_canaries_id_fk" FOREIGN KEY ("canary_id") REFERENCES "public"."compliance_canaries"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "conversation_scores" ADD CONSTRAINT "conversation_scores_conversation_id_agent_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."agent_conversations"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "evaluator_versions" ADD CONSTRAINT "evaluator_versions_triggered_by_flag_id_meta_flags_id_fk" FOREIGN KEY ("triggered_by_flag_id") REFERENCES "public"."meta_flags"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "loans" ADD CONSTRAINT "loans_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "resolution_offers" ADD CONSTRAINT "resolution_offers_workflow_id_borrower_workflows_id_fk" FOREIGN KEY ("workflow_id") REFERENCES "public"."borrower_workflows"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "user_memories" ADD CONSTRAINT "user_memories_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;

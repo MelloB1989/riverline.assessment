@@ -54,6 +54,52 @@ services:
       timeout: 3s
       retries: 20
 
+  migrate-dev:
+    image: oven/bun:1.3.13
+    profiles: ["dev"]
+    working_dir: /app/database
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres-dev
+      DB_USER: riverline
+      DB_PASSWORD: riverline_dev_password
+      DB_NAME: riverline_dev
+      DB_PORT: "5432"
+      DB_SSL: "false"
+    volumes:
+      - .:/app
+    command:
+      [
+        "sh",
+        "-lc",
+        "test -d /app/database/drizzle || { echo 'Missing database/drizzle migrations. Generate migrations locally first with bun run db:generate.'; exit 1; } && bunx drizzle-kit migrate",
+      ]
+
+  migrate-prod:
+    image: oven/bun:1.3.13
+    profiles: ["prod"]
+    working_dir: /app/database
+    depends_on:
+      postgres-prod:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres-prod
+      DB_USER: riverline
+      DB_PASSWORD: ${POSTGRES_PROD_PASSWORD:-riverline_prod_password}
+      DB_NAME: riverline_prod
+      DB_PORT: "5432"
+      DB_SSL: "false"
+    volumes:
+      - .:/app
+    command:
+      [
+        "sh",
+        "-lc",
+        "test -d /app/database/drizzle || { echo 'Missing database/drizzle migrations. Generate migrations locally first with bun run db:generate.'; exit 1; } && bunx drizzle-kit migrate",
+      ]
+
   backend-dev:
     profiles: ["dev"]
     build:
@@ -66,8 +112,8 @@ services:
       <<: *backend-env
       DATABASE_URL: postgres://riverline:riverline_dev_password@postgres-dev:5432/riverline_dev?sslmode=disable
     depends_on:
-      postgres-dev:
-        condition: service_healthy
+      migrate-dev:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     ports:
@@ -90,8 +136,8 @@ services:
       ENV: PROD
       DATABASE_URL: postgres://riverline:${POSTGRES_PROD_PASSWORD:-riverline_prod_password}@postgres-prod:5432/riverline_prod?sslmode=disable
     depends_on:
-      postgres-prod:
-        condition: service_healthy
+      migrate-prod:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     ports:
