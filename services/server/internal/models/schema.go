@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"github.com/MelloB1989/karma/models"
+)
 
 type BillingAddress struct {
 	Country string `json:"country"`
@@ -111,6 +115,7 @@ type AgentConversation struct {
 	Seed            *string    `json:"seed"`
 	PromptVersion   int        `json:"prompt_version"`
 	Outcome         *Outcome   `json:"outcome"`
+	Summary         string     `json:"summary"`
 	TotalTurns      *int       `json:"total_turns"`
 	TotalTokensUsed *int       `json:"total_tokens_used"`
 	StartedAt       time.Time  `json:"started_at"`
@@ -118,16 +123,20 @@ type AgentConversation struct {
 }
 
 type AgentMessage struct {
-	TableName      string      `karma_table:"agent_messages" json:"-"`
-	Id             string      `json:"id" karma:"primary"`
-	ConversationId string      `json:"conversation_id"`
-	WorkflowId     string      `json:"workflow_id"`
-	UserId         string      `json:"user_id"`
-	AgentId        AgentID     `json:"agent_id"`
-	Role           MessageRole `json:"role"`
-	Content        string      `json:"content"`
-	TokenCount     *int        `json:"token_count"`
-	CreatedAt      time.Time   `json:"created_at"`
+	TableName      string                  `karma_table:"agent_messages" json:"-"`
+	Id             string                  `json:"id" karma:"primary"`
+	ConversationId string                  `json:"conversation_id"`
+	WorkflowId     string                  `json:"workflow_id"`
+	UserId         string                  `json:"user_id"`
+	AgentId        AgentID                 `json:"agent_id"`
+	Role           MessageRole             `json:"role"`
+	Content        string                  `json:"content"`
+	ToolCalls      []models.OpenAIToolCall `json:"tools,omitempty"` // Tool calls based on OpenAI standards
+	ToolCallId     string                  `json:"tool_call_id,omitempty"`
+	Images         []string                `json:"images,omitempty"`
+	Files          []string                `json:"files,omitempty"`
+	TokenCount     *int                    `json:"token_count"`
+	CreatedAt      time.Time               `json:"created_at"`
 }
 
 type UserMemory struct {

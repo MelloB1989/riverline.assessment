@@ -178,6 +178,7 @@ export const agent_conversations = pgTable("agent_conversations", {
   seed: varchar("seed"), // for reproducibility
   prompt_version: integer("prompt_version").notNull(),
   outcome: outcomeEnum("outcome"),
+  summary: varchar("summary"),
   total_turns: integer("total_turns").default(0),
   total_tokens_used: integer("total_tokens_used").default(0),
   started_at: timestamp("started_at").defaultNow().notNull(),
@@ -198,6 +199,10 @@ export const agent_messages = pgTable("agent_messages", {
   agent_id: agentIdEnum("agent_id").notNull(),
   role: messageRoleEnum("role").notNull(),
   content: text("content").notNull(),
+  tool_calls: json("tool_calls").default([]), // []OpenAIToolCall - karma tool calls
+  tool_call_id: varchar("tool_call_id"), // For tool response messages
+  images: json("images").default([]), // Image URLs or base64
+  files: json("files").default([]), // File URLs or base64
   token_count: integer("token_count"),
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
