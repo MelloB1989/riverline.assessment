@@ -6,11 +6,6 @@ import (
 	"github.com/MelloB1989/karma/ai"
 )
 
-const (
-	TotalContextBudget   = 2000
-	HandoffContextBudget = 500
-)
-
 type Client struct {
 	agentID       models.AgentID
 	promptVersion int

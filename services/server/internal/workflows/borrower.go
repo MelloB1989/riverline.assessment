@@ -132,9 +132,6 @@ func StartNOVA(workflowID string) (string, error) {
 		return "", err
 	}
 	contextForNova := derefString(wf.ContextForNova)
-	if err := novaAgent.AssertBudget(contextForNova, nil); err != nil {
-		return "", err
-	}
 	client := vapi.New(constants.AppCfg.Get().VapiApiKey, "", constants.AppCfg.Get().VapiPhoneNumberId, constants.AppCfg.Get().VapiAssistantId)
 	offers := map[string]any{"lump_sum": offer.LumpSumOffered, "emi_amount": offer.EmiAmount, "emi_months": offer.EmiMonths, "hardship": offer.HardshipOffered}
 	phone := ""

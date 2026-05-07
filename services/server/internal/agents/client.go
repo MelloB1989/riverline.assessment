@@ -2,13 +2,13 @@ package agents
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 
 	"riverline_server/internal/models"
 
 	"github.com/MelloB1989/karma/ai"
+	"github.com/MelloB1989/karma/ai/parser"
 	karmaModels "github.com/MelloB1989/karma/models"
 	"github.com/MelloB1989/karma/v2/orm"
 )
@@ -42,31 +42,37 @@ func (c *Client) PromptVersion() int {
 	return c.promptVersion
 }
 
-func (c *Client) AssertBudget(handoff string, history []models.AgentMessage) error {
-	if CountTokens(handoff) > HandoffContextBudget {
-		return fmt.Errorf("handoff context exceeds %d token budget", HandoffContextBudget)
-	}
-	total := CountTokens(c.prompt) + CountTokens(handoff)
-	for _, msg := range history {
-		total += CountTokens(msg.Content)
-	}
-	if total > TotalContextBudget {
-		return fmt.Errorf("%s context exceeds %d token budget: %d", c.agentID, TotalContextBudget, total)
-	}
-	return nil
-}
-
 func (c *Client) Converse(handoff string, history []models.AgentMessage) (*karmaModels.AIChatResponse, error) {
-	if err := c.AssertBudget(handoff, history); err != nil {
-		return nil, err
-	}
 	chatHistory := toKarmaHistory(handoff, history)
 	resp, err := c.aiClient.ChatCompletionManaged(chatHistory)
 	if err == nil && strings.TrimSpace(resp.AIResponse) != "" {
 		return resp, nil
 	}
-	reply := fallbackReply(c.agentID, history)
-	return &karmaModels.AIChatResponse{AIResponse: reply, Tokens: CountTokens(reply)}, nil
+	if err != nil {
+		return nil, err
+	}
+	return nil, errors.New("empty AI response")
+}
+
+func (c *Client) GenerateText(prompt string) (*karmaModels.AIChatResponse, error) {
+	resp, err := c.aiClient.GenerateFromSinglePrompt(prompt)
+	if err == nil && strings.TrimSpace(resp.AIResponse) != "" {
+		return resp, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, errors.New("empty AI response")
+}
+
+func (c *Client) ParseStructured(prompt string, output any) (int, error) {
+	p := parser.NewParser(parser.WithAIClient(c.aiClient), parser.WithMaxRetries(2))
+	_, tokens, err := p.Parse(prompt, "", output)
+	return tokens, err
+}
+
+func (c *Client) ParseHandoff(prompt string, output any) (int, error) {
+	return c.ParseStructured(prompt, output)
 }
 
 func activePrompt(agentID models.AgentID) (*models.PromptVersion, error) {

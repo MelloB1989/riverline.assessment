@@ -2,12 +2,13 @@ package eval
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
-	"math/rand"
 	"sort"
 	"strings"
 	"time"
 
+	"riverline_server/internal/agents"
 	"riverline_server/internal/collections"
 	"riverline_server/internal/models"
 
@@ -25,6 +26,13 @@ type SimConfig struct {
 type SimulatedConversation struct {
 	Conversation models.AgentConversation
 	Transcript   string
+}
+
+type generatedTranscript struct {
+	Content      string
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
 }
 
 type MetricScores struct {
@@ -47,6 +55,12 @@ type MetricScores struct {
 	Reasoning           string         `json:"reasoning"`
 }
 
+type EvaluationResult struct {
+	Metrics          MetricScores
+	EvaluatorVersion models.EvaluatorVersion
+	Tokens           int
+}
+
 func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = 5
@@ -64,7 +78,6 @@ func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
 	if err != nil {
 		return nil, err
 	}
-	rng := rand.New(rand.NewSource(cfg.Seed))
 	out := make([]SimulatedConversation, 0, cfg.BatchSize*len(cfg.Personas))
 	convOrm := orm.Load(&models.AgentConversation{})
 	defer convOrm.Close()
@@ -77,6 +90,10 @@ func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
 				return nil, err
 			}
 			seed := string(persona) + "-" + time.Now().UTC().Format("20060102150405") + "-" + utils.GenerateID()
+			transcript, err := generateSimulatedTranscript(cfg.AgentID, persona, cfg.Seed)
+			if err != nil {
+				return nil, err
+			}
 			conv := models.AgentConversation{
 				Id:              utils.GenerateID(),
 				WorkflowId:      wf.Id,
@@ -87,72 +104,187 @@ func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
 				Seed:            &seed,
 				PromptVersion:   pv.VersionNumber,
 				TotalTurns:      intPtr(4),
-				TotalTokensUsed: intPtr(500 + rng.Intn(500)),
+				TotalTokensUsed: intPtr(transcript.TotalTokens),
 				StartedAt:       time.Now().UTC(),
 			}
-			transcript := simulatedTranscript(cfg.AgentID, persona)
 			if err := convOrm.Insert(&conv); err != nil {
 				return nil, err
 			}
-			msg := models.AgentMessage{Id: utils.GenerateID(), ConversationId: conv.Id, WorkflowId: conv.WorkflowId, AgentId: cfg.AgentID, Role: models.MessageRoleAgent, Content: transcript, TokenCount: intPtr(collections.CountTokens(transcript)), CreatedAt: time.Now().UTC()}
+			if err := collections.LogCost("simulation", &cfg.AgentID, "groq/llama-3.3-70b", transcript.InputTokens, transcript.OutputTokens, &conv.Id, nil); err != nil {
+				return nil, err
+			}
+			msg := models.AgentMessage{Id: utils.GenerateID(), ConversationId: conv.Id, WorkflowId: conv.WorkflowId, AgentId: cfg.AgentID, Role: models.MessageRoleAgent, Content: transcript.Content, TokenCount: intPtr(transcript.OutputTokens), CreatedAt: time.Now().UTC()}
 			_ = msgOrm.Insert(&msg)
-			out = append(out, SimulatedConversation{Conversation: conv, Transcript: transcript})
+			out = append(out, SimulatedConversation{Conversation: conv, Transcript: transcript.Content})
 		}
 	}
 	return out, nil
 }
 
+func generateSimulatedTranscript(agentID models.AgentID, persona models.Persona, seed int64) (*generatedTranscript, error) {
+	client, err := evaluatorClient(agentID)
+	if err != nil {
+		return nil, err
+	}
+	prompt := fmt.Sprintf(`Generate one realistic completed collections conversation transcript for evaluation.
+
+Agent: %s
+Borrower persona: %s
+Seed: %d
+
+Requirements:
+- Use "Agent:" and "Borrower:" lines only.
+- Include the required AI and recording disclosures.
+- Keep the transcript concise but complete enough to score identity, information completeness, tone, compliance, continuity, and outcome.
+- Reflect the persona consistently without caricature.
+- Do not include JSON or commentary. Return only the transcript.`, agentID, persona, seed)
+	resp, err := client.GenerateText(prompt)
+	if err != nil {
+		return nil, fmt.Errorf("generate simulated transcript for %s/%s: %w", agentID, persona, err)
+	}
+	return &generatedTranscript{
+		Content:      strings.TrimSpace(resp.AIResponse),
+		InputTokens:  resp.InputTokens,
+		OutputTokens: resp.OutputTokens,
+		TotalTokens:  resp.Tokens,
+	}, nil
+}
+
 func ScoreAll(conversations []SimulatedConversation) ([]float64, error) {
 	scores := make([]float64, 0, len(conversations))
 	for _, conv := range conversations {
-		score := Evaluate(conv.Conversation.AgentId, conv.Transcript)
-		if err := SaveScore(conv.Conversation, conv.Transcript, score); err != nil {
+		evaluation, err := Evaluate(conv.Conversation.AgentId, conv.Transcript)
+		if err != nil {
 			return nil, err
 		}
-		scores = append(scores, score.CompositeScore)
+		if err := SaveScore(conv.Conversation, evaluation); err != nil {
+			return nil, err
+		}
+		scores = append(scores, evaluation.Metrics.CompositeScore)
 	}
 	return scores, nil
 }
 
-func Evaluate(agentID models.AgentID, transcript string) MetricScores {
-	lower := strings.ToLower(transcript)
-	breakdown := map[string]any{
-		"identity_disclosure":    strings.Contains(lower, "ai"),
-		"no_false_threats":       !strings.Contains(lower, "garnishment") && !strings.Contains(lower, "arrest"),
-		"recording_disclosure":   strings.Contains(lower, "recorded") || strings.Contains(lower, "recording"),
-		"no_harassment":          !strings.Contains(lower, "keep calling"),
-		"sensitive_situations":   !strings.Contains(lower, "not my problem"),
-		"no_misleading_terms":    !strings.Contains(lower, "erase 95"),
-		"professional_composure": !strings.Contains(lower, "excuses"),
-		"data_privacy":           !regexpFullAccount(lower),
+func Evaluate(agentID models.AgentID, transcript string) (*EvaluationResult, error) {
+	evaluator, err := activeEvaluatorVersion(agentID)
+	if err != nil {
+		return nil, err
 	}
-	compliance := 10.0
-	for _, value := range breakdown {
-		if ok, _ := value.(bool); !ok {
-			compliance = 0
-			break
+	client, err := evaluatorClient(agentID)
+	if err != nil {
+		return nil, err
+	}
+	var metrics MetricScores
+	tokens, err := client.ParseStructured(buildEvaluationPrompt(*evaluator, transcript), &metrics)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate %s conversation: %w", agentID, err)
+	}
+	normalizeMetrics(&metrics)
+	return &EvaluationResult{Metrics: metrics, EvaluatorVersion: *evaluator, Tokens: tokens}, nil
+}
+
+func activeEvaluatorVersion(agentID models.AgentID) (*models.EvaluatorVersion, error) {
+	o := orm.Load(&models.EvaluatorVersion{})
+	defer o.Close()
+	var rows []models.EvaluatorVersion
+	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&rows); err != nil {
+		return nil, err
+	}
+	rows = filterActiveEvaluators(rows)
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("active evaluator not found for %s", agentID)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].VersionNumber > rows[j].VersionNumber })
+	return &rows[0], nil
+}
+
+func filterActiveEvaluators(rows []models.EvaluatorVersion) []models.EvaluatorVersion {
+	activeRows := rows[:0]
+	for _, row := range rows {
+		if row.IsActive != nil && *row.IsActive {
+			activeRows = append(activeRows, row)
 		}
 	}
-	metrics := MetricScores{
-		IdentityVerified:    boolScore(strings.Contains(lower, "verify") || strings.Contains(lower, "identity")),
-		InfoCompleteness:    bounded(5 + keywordScore(lower, "income", "employment", "obligations", "reason", "hardship")),
-		NoRedundancy:        8,
-		ToneAppropriateness: boolScore(!strings.Contains(lower, "angry") && !strings.Contains(lower, "excuses")),
-		OfferClarity:        boolScore(strings.Contains(lower, "offer") || strings.Contains(lower, "emi") || strings.Contains(lower, "lump")),
-		ObjectionHandling:   boolScore(strings.Contains(lower, "explain") || strings.Contains(lower, "support") || strings.Contains(lower, "options")),
-		CommitmentAttempt:   boolScore(strings.Contains(lower, "pay") || strings.Contains(lower, "accept")),
-		ContextContinuity:   boolScore(strings.Contains(lower, "summary") || strings.Contains(lower, "prior") || agentID == models.AgentAria),
-		ConsequenceAccuracy: boolScore(!strings.Contains(lower, "garnishment") && !strings.Contains(lower, "arrest")),
-		DeadlineSpecificity: boolScore(strings.Contains(lower, "48") || strings.Contains(lower, "deadline") || agentID != models.AgentDelta),
-		NoNegotiationDrift:  boolScore(!strings.Contains(lower, "95 percent")),
-		CompliancePass:      compliance,
-		ComplianceBreakdown: breakdown,
-		Reasoning:           "Deterministic local evaluator used for reproducible assessment runs.",
+	return activeRows
+}
+
+func evaluatorClient(agentID models.AgentID) (*agents.Client, error) {
+	switch agentID {
+	case models.AgentNova:
+		return agents.NewNova()
+	case models.AgentDelta:
+		return agents.NewDelta()
+	default:
+		return agents.NewAria()
 	}
-	metrics.CompositeScore = ComputeComposite(metrics)
-	metrics.JudgeBComposite = math.Max(0, math.Min(100, metrics.CompositeScore-2))
-	metrics.JudgeDisagreement = math.Abs(metrics.CompositeScore - metrics.JudgeBComposite)
-	return metrics
+}
+
+func buildEvaluationPrompt(evaluator models.EvaluatorVersion, transcript string) string {
+	payload := map[string]any{
+		"agent_id":          evaluator.AgentId,
+		"evaluator_version": evaluator.VersionNumber,
+		"judge_prompt":      evaluator.JudgePrompt,
+		"transcript":        transcript,
+	}
+	data, _ := json.Marshal(payload)
+	return fmt.Sprintf(`Use the judge prompt in INPUT JSON to score the completed collections conversation.
+
+Return ONLY valid JSON with these keys:
+{
+  "composite_score": number,
+  "identity_verified": number,
+  "info_completeness": number,
+  "no_redundancy": number,
+  "tone_appropriateness": number,
+  "offer_clarity": number,
+  "objection_handling": number,
+  "commitment_attempt": number,
+  "context_continuity": number,
+  "consequence_accuracy": number,
+  "deadline_specificity": number,
+  "no_negotiation_drift": number,
+  "compliance_pass": number,
+  "compliance_breakdown": object,
+  "judge_b_composite": number,
+  "judge_disagreement_delta": number,
+  "reasoning": string
+}
+
+Scoring constraints:
+- Metric scores except composite fields must be 0 to 10.
+- composite_score and judge_b_composite must be 0 to 100.
+- compliance_pass must be 10 only if every compliance rule passes, otherwise 0.
+- Do not use hidden assumptions or invent transcript details.
+
+INPUT JSON:
+%s`, string(data))
+}
+
+func normalizeMetrics(scores *MetricScores) {
+	scores.IdentityVerified = bounded(scores.IdentityVerified)
+	scores.InfoCompleteness = bounded(scores.InfoCompleteness)
+	scores.NoRedundancy = bounded(scores.NoRedundancy)
+	scores.ToneAppropriateness = bounded(scores.ToneAppropriateness)
+	scores.OfferClarity = bounded(scores.OfferClarity)
+	scores.ObjectionHandling = bounded(scores.ObjectionHandling)
+	scores.CommitmentAttempt = bounded(scores.CommitmentAttempt)
+	scores.ContextContinuity = bounded(scores.ContextContinuity)
+	scores.ConsequenceAccuracy = bounded(scores.ConsequenceAccuracy)
+	scores.DeadlineSpecificity = bounded(scores.DeadlineSpecificity)
+	scores.NoNegotiationDrift = bounded(scores.NoNegotiationDrift)
+	scores.CompliancePass = bounded(scores.CompliancePass)
+	scores.CompositeScore = math.Max(0, math.Min(100, scores.CompositeScore))
+	if scores.CompositeScore == 0 {
+		scores.CompositeScore = ComputeComposite(*scores)
+	}
+	scores.JudgeBComposite = math.Max(0, math.Min(100, scores.JudgeBComposite))
+	if scores.JudgeBComposite == 0 {
+		scores.JudgeBComposite = scores.CompositeScore
+	}
+	scores.JudgeDisagreement = math.Abs(scores.CompositeScore - scores.JudgeBComposite)
+	if scores.ComplianceBreakdown == nil {
+		scores.ComplianceBreakdown = map[string]any{}
+	}
 }
 
 func ComputeComposite(scores MetricScores) float64 {
@@ -163,9 +295,10 @@ func ComputeComposite(scores MetricScores) float64 {
 	return raw
 }
 
-func SaveScore(conv models.AgentConversation, transcript string, score MetricScores) error {
+func SaveScore(conv models.AgentConversation, evaluation *EvaluationResult) error {
 	o := orm.Load(&models.ConversationScore{})
 	defer o.Close()
+	score := evaluation.Metrics
 	breakdown := score.ComplianceBreakdown
 	passed := score.CompliancePass > 0
 	row := models.ConversationScore{
@@ -174,7 +307,7 @@ func SaveScore(conv models.AgentConversation, transcript string, score MetricSco
 		WorkflowId:               &conv.WorkflowId,
 		AgentId:                  conv.AgentId,
 		PromptVersion:            conv.PromptVersion,
-		EvaluatorVersion:         1,
+		EvaluatorVersion:         evaluation.EvaluatorVersion.VersionNumber,
 		IsSimulated:              conv.IsSimulated,
 		PersonaType:              conv.PersonaType,
 		Seed:                     conv.Seed,
@@ -195,14 +328,14 @@ func SaveScore(conv models.AgentConversation, transcript string, score MetricSco
 		CompliancePassed:         &passed,
 		JudgeBComposite:          &score.JudgeBComposite,
 		JudgeDisagreementDelta:   &score.JudgeDisagreement,
-		EvalModelUsed:            stringPtr("local-deterministic"),
+		EvalModelUsed:            stringPtr("groq/llama-3.3-70b"),
 		EvalCostUsd:              floatPtr(0),
 		CreatedAt:                time.Now().UTC(),
 	}
 	if err := o.Insert(&row); err != nil {
 		return err
 	}
-	return collections.LogCost("evaluation", &conv.AgentId, "local-deterministic", collections.CountTokens(transcript), 120, &conv.Id, nil)
+	return collections.LogCost("evaluation", &conv.AgentId, "groq/llama-3.3-70b", evaluation.Tokens, 0, &conv.Id, nil)
 }
 
 func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptExperiment, error) {
@@ -256,9 +389,6 @@ func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptE
 	if err := saveCandidatePrompt(agentID, exp.CandidateVersion, adopt, exp.RejectionReason); err != nil {
 		return nil, err
 	}
-	if err := collections.LogCost("prompt_generation", &agentID, "local-deterministic", 300, 200, nil, &exp.Id); err != nil {
-		return nil, err
-	}
 	return exp, nil
 }
 
@@ -308,8 +438,11 @@ func RunCanarySet(evaluatorVersion int) ([]models.CanaryResult, error) {
 	defer resultOrm.Close()
 	results := make([]models.CanaryResult, 0, len(canaries))
 	for _, canary := range canaries {
-		score := Evaluate(canary.AgentId, canary.Transcript)
-		checkerPassed := score.CompliancePass > 0
+		evaluation, err := Evaluate(canary.AgentId, canary.Transcript)
+		if err != nil {
+			return nil, err
+		}
+		checkerPassed := evaluation.Metrics.CompliancePass > 0
 		correct := checkerPassed != derefBool(canary.ShouldFail)
 		row := models.CanaryResult{Id: utils.GenerateID(), CanaryId: canary.Id, EvaluatorVersion: evaluatorVersion, CheckerResult: &checkerPassed, CorrectlyFlagged: &correct, CreatedAt: time.Now().UTC()}
 		if err := resultOrm.Insert(&row); err != nil {
@@ -327,11 +460,15 @@ func saveCandidatePrompt(agentID models.AgentID, version int, adopted bool, reje
 	}
 	now := time.Now().UTC()
 	adoptionReason := "candidate improved deterministic treatment scores"
+	candidatePrompt, tokens, err := generateCandidatePrompt(agentID, current.PromptText)
+	if err != nil {
+		return err
+	}
 	candidate := models.PromptVersion{
 		Id:              utils.GenerateID(),
 		AgentId:         agentID,
 		VersionNumber:   version,
-		PromptText:      current.PromptText + "\n\nEmphasize concise compliance disclosures and avoid repeated questions.",
+		PromptText:      candidatePrompt,
 		IsActive:        adopted,
 		AdoptionReason:  nil,
 		RejectionReason: rejectionReason,
@@ -350,7 +487,29 @@ func saveCandidatePrompt(agentID models.AgentID, version int, adopted bool, reje
 			return err
 		}
 	}
-	return o.Insert(&candidate)
+	if err := o.Insert(&candidate); err != nil {
+		return err
+	}
+	return collections.LogCost("prompt_generation", &agentID, "groq/llama-3.3-70b", tokens, 0, nil, nil)
+}
+
+func generateCandidatePrompt(agentID models.AgentID, currentPrompt string) (string, int, error) {
+	client, err := evaluatorClient(agentID)
+	if err != nil {
+		return "", 0, err
+	}
+	prompt := fmt.Sprintf(`Generate an improved production system prompt for the %s collections agent.
+
+Current prompt:
+%s
+
+Keep the same agent role and system boundaries, but improve compliance clarity, concise disclosures, handoff readiness, and avoidance of repeated questions.
+Return only the complete replacement system prompt.`, agentID, currentPrompt)
+	resp, err := client.GenerateText(prompt)
+	if err != nil {
+		return "", 0, fmt.Errorf("generate candidate prompt for %s: %w", agentID, err)
+	}
+	return strings.TrimSpace(resp.AIResponse), resp.Tokens, nil
 }
 
 func resolveMetaFlag(flag *models.MetaFlag) error {
@@ -358,11 +517,15 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	after := 2
 	active := true
 	changeReason := "Generated from meta-evaluation flag " + flag.Id
+	judgePrompt, tokens, err := generateEvaluatorRevision(derefAgent(flag.AgentId), *flag)
+	if err != nil {
+		return err
+	}
 	evaluator := models.EvaluatorVersion{
 		Id:                utils.GenerateID(),
 		VersionNumber:     after,
 		AgentId:           derefAgent(flag.AgentId),
-		JudgePrompt:       "Score strictly with concrete examples for failed, adequate, and strong collections behavior. Penalize vague compliance and repeated questions.",
+		JudgePrompt:       judgePrompt,
 		IsActive:          &active,
 		ChangeReason:      &changeReason,
 		TriggeredByFlagId: &flag.Id,
@@ -370,6 +533,19 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	}
 	evaluatorOrm := orm.Load(&models.EvaluatorVersion{})
 	defer evaluatorOrm.Close()
+	var existing []models.EvaluatorVersion
+	if err := evaluatorOrm.GetByFieldEquals("AgentId", evaluator.AgentId).Scan(&existing); err != nil {
+		return err
+	}
+	inactive := false
+	for i := range existing {
+		if existing[i].IsActive != nil && *existing[i].IsActive {
+			existing[i].IsActive = &inactive
+			if err := evaluatorOrm.Update(&existing[i], existing[i].Id); err != nil {
+				return err
+			}
+		}
+	}
 	if err := evaluatorOrm.Insert(&evaluator); err != nil {
 		return err
 	}
@@ -384,7 +560,33 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	if err := flagOrm.Update(flag, flag.Id); err != nil {
 		return err
 	}
-	return collections.LogCost("meta_evaluation", flag.AgentId, "local-deterministic", 250, 120, nil, nil)
+	return collections.LogCost("evaluator_prompt_generation", flag.AgentId, "groq/llama-3.3-70b", tokens, 0, nil, nil)
+}
+
+func generateEvaluatorRevision(agentID models.AgentID, flag models.MetaFlag) (string, int, error) {
+	client, err := evaluatorClient(agentID)
+	if err != nil {
+		return "", 0, err
+	}
+	evidence, _ := json.Marshal(flag.Evidence)
+	prompt := fmt.Sprintf(`Generate a revised evaluator judge prompt for the %s collections agent.
+
+Meta-evaluation flagged: %s
+Evidence: %s
+Proposed action: %s
+
+The revised prompt must:
+- Return only JSON score outputs when used by an evaluator.
+- Define concrete failed, adequate, and strong examples for each metric.
+- Penalize vague compliance, repeated questions, missing disclosures, false threats, privacy leaks, harassment, ignored hardship, and negotiation drift.
+- Preserve stable rerun behavior for the same transcript.
+
+Return only the revised judge prompt text.`, agentID, flag.FlagType, string(evidence), derefString(flag.ProposedAction))
+	resp, err := client.GenerateText(prompt)
+	if err != nil {
+		return "", 0, fmt.Errorf("generate evaluator revision for %s: %w", agentID, err)
+	}
+	return strings.TrimSpace(resp.AIResponse), resp.Tokens, nil
 }
 
 func WelchTTest(a, b []float64) float64 {
@@ -448,22 +650,6 @@ func Stddev(data []float64) float64 {
 	return math.Sqrt(sum / float64(len(data)-1))
 }
 
-func simulatedTranscript(agentID models.AgentID, persona models.Persona) string {
-	base := "Agent: I am an AI agent and this conversation is being recorded. I will verify identity and discuss the account professionally."
-	switch persona {
-	case models.PersonaCombative:
-		return base + " Borrower: I dispute this. Agent: I can explain options without threats."
-	case models.PersonaEvasive:
-		return base + " Borrower: I need to call back. Agent: I will summarize the next step and avoid repeating questions."
-	case models.PersonaDistressed:
-		return base + " Borrower: I lost my job and have medical bills. Agent: I will mark hardship and offer support options."
-	case models.PersonaConfused:
-		return base + " Borrower: I do not understand which loan this is. Agent: I will use only the last four digits and explain the next step clearly."
-	default:
-		return base + " Borrower: I can pay with an EMI plan. Agent: The offer is clear and within policy."
-	}
-}
-
 func jitterScores(scores []float64, delta float64) []float64 {
 	out := make([]float64, len(scores))
 	for i, score := range scores {
@@ -472,40 +658,8 @@ func jitterScores(scores []float64, delta float64) []float64 {
 	return out
 }
 
-func keywordScore(text string, words ...string) float64 {
-	score := 0.0
-	for _, word := range words {
-		if strings.Contains(text, word) {
-			score++
-		}
-	}
-	return score
-}
-
 func bounded(v float64) float64 {
 	return math.Max(0, math.Min(10, v))
-}
-
-func boolScore(ok bool) float64 {
-	if ok {
-		return 10
-	}
-	return 0
-}
-
-func regexpFullAccount(text string) bool {
-	count := 0
-	for _, ch := range text {
-		if ch >= '0' && ch <= '9' {
-			count++
-			if count >= 9 {
-				return true
-			}
-		} else {
-			count = 0
-		}
-	}
-	return false
 }
 
 func MarshalJSON(v any) string {
@@ -525,6 +679,13 @@ func derefBool(v *bool) bool {
 func derefAgent(v *models.AgentID) models.AgentID {
 	if v == nil {
 		return models.AgentAria
+	}
+	return *v
+}
+
+func derefString(v *string) string {
+	if v == nil {
+		return ""
 	}
 	return *v
 }
