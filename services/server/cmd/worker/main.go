@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"log"
 
+	"riverline_server/internal/collections"
 	"riverline_server/internal/temporalclient"
 	"riverline_server/internal/workflows"
 
@@ -10,6 +12,13 @@ import (
 )
 
 func main() {
+	if err := collections.EnsureDefaults(); err != nil {
+		log.Printf("bootstrap defaults skipped: %v", err)
+	}
+	if err := collections.SyncNovaVapiAssistant(context.Background()); err != nil {
+		log.Printf("vapi nova assistant sync skipped: %v", err)
+	}
+
 	c, err := temporalclient.Dial()
 	if err != nil {
 		log.Fatal(err)

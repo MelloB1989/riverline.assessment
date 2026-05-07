@@ -13,6 +13,7 @@ import (
 	"riverline_server/internal/middleware"
 	"riverline_server/internal/models"
 	"riverline_server/internal/temporalclient"
+	vapiclient "riverline_server/internal/vapi"
 	"riverline_server/internal/workflows"
 
 	"github.com/MelloB1989/karma/v2/orm"
@@ -160,7 +161,12 @@ func VapiWebhook(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ok": true, "ignored": "workflow_id missing"})
 	}
 	if strings.Contains(eventType, "ended") || eventType == "call.ended" || transcript != "" {
-		signal := workflows.NovaCompleteSignal{CallID: callID, Transcript: transcript, RecordingURL: recordingURL}
+		signal := workflows.NovaCompleteSignal{
+			CallID:           callID,
+			Transcript:       transcript,
+			RecordingURL:     recordingURL,
+			StructuredOutput: vapiclient.ExtractNovaStructuredOutput(event.Message, event.Call),
+		}
 		if err := signalWithStartTemporalWorkflow(c, workflows.NovaCompletionWorkflowID(workflowID), workflows.NovaCompleteSignalName, signal, workflows.NovaCompletionWorkflow, workflowID); err != nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, err.Error())
 		}

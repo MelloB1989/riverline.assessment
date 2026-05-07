@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"log"
 	"riverline_server/constants"
 	"riverline_server/internal/collections"
@@ -19,6 +20,9 @@ func StartServer() {
 	setupGlobalMiddleware(appServer)
 	if err := collections.EnsureDefaults(); err != nil {
 		log.Printf("bootstrap defaults skipped: %v", err)
+	}
+	if err := collections.SyncNovaVapiAssistant(context.Background()); err != nil {
+		log.Printf("vapi nova assistant sync skipped: %v", err)
 	}
 	appServer.Use("/health", healthCheckHandler())
 	v1 := appServer.Group("/v1")

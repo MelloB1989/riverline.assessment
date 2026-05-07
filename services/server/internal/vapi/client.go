@@ -7,25 +7,38 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
+const NovaStructuredOutputName = "Riverline NOVA Handoff"
+
 type HandoffContext struct {
-	WorkflowID     string         `json:"workflow_id"`
-	AriaSummary    string         `json:"aria_summary"`
-	ContextForNova string         `json:"context_for_nova"`
-	Offers         map[string]any `json:"offers"`
+	WorkflowID             string         `json:"workflow_id"`
+	BorrowerName           string         `json:"borrower_name"`
+	BorrowerFirstName      string         `json:"borrower_first_name"`
+	BorrowerEmail          string         `json:"borrower_email"`
+	AccountNumberPartial   string         `json:"account_number_partial"`
+	BorrowerContext        string         `json:"borrower_context"`
+	LoanContext            string         `json:"loan_context"`
+	AriaSummary            string         `json:"aria_summary"`
+	ContextForNova         string         `json:"context_for_nova"`
+	ResolutionOfferContext string         `json:"resolution_offer_context"`
+	Offers                 map[string]any `json:"offers"`
+	CurrentISTTimestamp    string         `json:"current_ist_timestamp"`
+	CurrentUTCTimestamp    string         `json:"current_utc_timestamp"`
 }
 
 type CallDetails struct {
-	ID              string
-	Status          string
-	EndedReason     string
-	Transcript      string
-	Summary         string
-	RecordingURL    string
-	DurationSeconds *int
+	ID               string
+	Status           string
+	EndedReason      string
+	Transcript       string
+	Summary          string
+	RecordingURL     string
+	DurationSeconds  *int
+	StructuredOutput map[string]any
 }
 
 type Client struct {
@@ -55,18 +68,32 @@ func (c *Client) StartCall(ctx context.Context, phone string, context HandoffCon
 	if c.DryRun || c.APIKey == "" || phone == "" || isReservedTestPhone(phone) {
 		return "mock-vapi-" + time.Now().UTC().Format("20060102150405"), nil
 	}
+	customer := map[string]any{"number": phone}
+	if context.BorrowerName != "" {
+		customer["name"] = context.BorrowerName
+	}
+	if context.BorrowerEmail != "" {
+		customer["email"] = context.BorrowerEmail
+	}
 	body := map[string]any{
 		"phoneNumberId": c.PhoneNumberID,
 		"assistantId":   c.AssistantID,
-		"customer": map[string]any{
-			"number": phone,
-		},
+		"customer":      customer,
 		"assistantOverrides": map[string]any{
 			"variableValues": map[string]any{
-				"workflow_id":      context.WorkflowID,
-				"aria_summary":     context.AriaSummary,
-				"context_for_nova": context.ContextForNova,
-				"offers":           context.Offers,
+				"workflow_id":              context.WorkflowID,
+				"borrower_name":            context.BorrowerName,
+				"borrower_first_name":      context.BorrowerFirstName,
+				"borrower_email":           context.BorrowerEmail,
+				"account_number_partial":   context.AccountNumberPartial,
+				"borrower_context":         context.BorrowerContext,
+				"loan_context":             context.LoanContext,
+				"aria_summary":             context.AriaSummary,
+				"context_for_nova":         context.ContextForNova,
+				"resolution_offer_context": context.ResolutionOfferContext,
+				"offers":                   context.Offers,
+				"current_ist_timestamp":    context.CurrentISTTimestamp,
+				"current_utc_timestamp":    context.CurrentUTCTimestamp,
 			},
 		},
 		"metadata": map[string]any{
@@ -129,7 +156,75 @@ func (c *Client) GetCallDetails(ctx context.Context, callID string) (*CallDetail
 	if details.Transcript == "" {
 		details.Transcript = details.Summary
 	}
+	details.StructuredOutput = ExtractNovaStructuredOutput(payload)
 	return details, nil
+}
+
+func (c *Client) SyncNovaAssistant(ctx context.Context, systemPrompt string) (string, error) {
+	if c.DryRun || c.APIKey == "" || c.AssistantID == "" {
+		return "", nil
+	}
+	structuredOutputID, err := c.EnsureNovaStructuredOutput(ctx)
+	if err != nil {
+		return "", err
+	}
+	assistant, err := c.getAssistant(ctx)
+	if err != nil {
+		return "", err
+	}
+	model, _ := assistant["model"].(map[string]any)
+	if model == nil {
+		model = map[string]any{}
+	}
+	model["messages"] = []map[string]string{{"role": "system", "content": systemPrompt}}
+	artifactPlan, _ := assistant["artifactPlan"].(map[string]any)
+	if artifactPlan == nil {
+		artifactPlan = map[string]any{}
+	}
+	artifactPlan["structuredOutputIds"] = appendUniqueStringPayload(artifactPlan["structuredOutputIds"], structuredOutputID)
+	body := map[string]any{
+		"model":            model,
+		"artifactPlan":     artifactPlan,
+		"firstMessage":     novaFirstMessageTemplate(),
+		"firstMessageMode": "assistant-speaks-first",
+	}
+	resp, err := c.do(ctx, http.MethodPatch, "/assistant/"+c.AssistantID, body)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	return structuredOutputID, nil
+}
+
+func (c *Client) EnsureNovaStructuredOutput(ctx context.Context) (string, error) {
+	existing, err := c.findStructuredOutputByName(ctx, NovaStructuredOutputName)
+	if err != nil {
+		return "", err
+	}
+	if existing != nil {
+		id := firstPayloadString(existing, "id")
+		if id == "" {
+			return "", fmt.Errorf("vapi structured output %q missing id", NovaStructuredOutputName)
+		}
+		if err := c.updateStructuredOutput(ctx, id); err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/structured-output", novaStructuredOutputPayload(c.AssistantID))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	id := firstPayloadString(payload, "id")
+	if id == "" {
+		return "", fmt.Errorf("vapi structured output create response missing id")
+	}
+	return id, nil
 }
 
 func (c *Client) GetRecordingURL(ctx context.Context, callID string) (string, error) {
@@ -186,6 +281,47 @@ func (c *Client) getCall(ctx context.Context, callID string) (map[string]any, er
 	return payload, nil
 }
 
+func (c *Client) getAssistant(ctx context.Context) (map[string]any, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/assistant/"+c.AssistantID, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func (c *Client) findStructuredOutputByName(ctx context.Context, name string) (map[string]any, error) {
+	path := "/structured-output?limit=100&name=" + url.QueryEscape(name)
+	resp, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var payload any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	for _, item := range payloadItems(payload) {
+		if strings.EqualFold(firstPayloadString(item, "name"), name) {
+			return item, nil
+		}
+	}
+	return nil, nil
+}
+
+func (c *Client) updateStructuredOutput(ctx context.Context, id string) error {
+	resp, err := c.do(ctx, http.MethodPatch, "/structured-output/"+id+"?schemaOverride=true", novaStructuredOutputPayload(c.AssistantID))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
@@ -211,4 +347,205 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (*http.R
 		return nil, fmt.Errorf("vapi %s %s failed: %s: %s", method, path, resp.Status, string(data))
 	}
 	return resp, nil
+}
+
+func appendUniqueStringPayload(existing any, value string) []string {
+	out := []string{}
+	switch v := existing.(type) {
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+	case []string:
+		out = append(out, v...)
+	}
+	for _, item := range out {
+		if item == value {
+			return out
+		}
+	}
+	if value != "" {
+		out = append(out, value)
+	}
+	return out
+}
+
+func payloadItems(payload any) []map[string]any {
+	switch v := payload.(type) {
+	case []any:
+		items := make([]map[string]any, 0, len(v))
+		for _, item := range v {
+			if obj, ok := item.(map[string]any); ok {
+				items = append(items, obj)
+			}
+		}
+		return items
+	case map[string]any:
+		for _, key := range []string{"data", "items", "results"} {
+			if items, ok := v[key].([]any); ok {
+				return payloadItems(items)
+			}
+		}
+	}
+	return nil
+}
+
+func novaFirstMessageTemplate() string {
+	return "Hello {{borrower_first_name}}, this is Nova from Riverline calling about your loan account ending {{account_number_partial}}. For transparency, I am an AI assistant and this call may be recorded. Is this a good time to discuss repayment options?"
+}
+
+func novaStructuredOutputPayload(assistantID string) map[string]any {
+	return map[string]any{
+		"name":        NovaStructuredOutputName,
+		"type":        "ai",
+		"description": "Extract NOVA collections call outcome, accepted offer, objections, and downstream DELTA handoff context.",
+		"schema":      novaStructuredOutputSchema(),
+		"assistantIds": []string{
+			assistantID,
+		},
+	}
+}
+
+func novaStructuredOutputSchema() map[string]any {
+	nullableString := []string{"string", "null"}
+	nullableNumber := []string{"number", "null"}
+	nullableInteger := []string{"integer", "null"}
+	nullableBoolean := []string{"boolean", "null"}
+	return map[string]any{
+		"type":        "object",
+		"description": "NOVA call completion handoff for Riverline collections workflow.",
+		"properties": map[string]any{
+			"offer_accepted": map[string]any{
+				"type":        nullableBoolean,
+				"description": "Whether the borrower accepted a repayment offer. Null when the call did not reach a decision.",
+			},
+			"accepted_offer_type": map[string]any{
+				"type":        nullableString,
+				"description": "Accepted offer category, for example lump_sum, emi, hardship, or null.",
+			},
+			"objections_raised": map[string]any{
+				"type":        "array",
+				"description": "Specific objections or concerns the borrower raised.",
+				"items":       map[string]any{"type": "string"},
+			},
+			"outcome": map[string]any{
+				"type":        nullableString,
+				"enum":        []any{"committed", "rejected", "no_response", "hardship", "stop_contact", "escalated", nil},
+				"description": "Final call outcome.",
+			},
+			"aria_summary": map[string]any{
+				"type":        "string",
+				"description": "Updated memory summary preserving ARIA context plus relevant NOVA call facts.",
+			},
+			"context_for_delta": map[string]any{
+				"type":        "string",
+				"description": "Concise downstream context for DELTA if the account continues to final follow-up.",
+			},
+			"final_offer_amount": map[string]any{
+				"type":        nullableNumber,
+				"description": "Final amount to use for DELTA or commitment confirmation when applicable.",
+			},
+			"final_offer_deadline_hours": map[string]any{
+				"type":        nullableInteger,
+				"description": "Deadline window in hours for the final offer, when applicable.",
+			},
+		},
+		"required": []string{"offer_accepted", "objections_raised", "outcome", "aria_summary", "context_for_delta"},
+	}
+}
+
+func NovaSystemPrompt(basePrompt string) string {
+	return strings.TrimSpace(basePrompt) + `
+
+[Vapi Voice Runtime Context]
+You are speaking with the borrower over {{transport.conversationType}}. Treat the following dynamic variables as authoritative runtime context for this exact call:
+- Current IST timestamp: {{current_ist_timestamp}}
+- Workflow ID: {{workflow_id}}
+- Borrower name: {{borrower_name}}
+- Borrower profile JSON: {{borrower_context}}
+- Loan profile JSON: {{loan_context}}
+- ARIA assessment summary: {{aria_summary}}
+- NOVA call context: {{context_for_nova}}
+- Resolution offer JSON: {{resolution_offer_context}}
+
+[Voice Requirements]
+- Use the borrower profile, loan profile, ARIA summary, NOVA context, and resolution offer before asking questions.
+- Do not say that loan amount, overdue days, account context, or offer details are unavailable when they are present in the runtime context.
+- Speak naturally for a phone call; do not use Markdown.
+- Ask one question at a time and keep turns concise.
+- If the borrower disputes identity, requests no contact, reports hardship, accepts an offer, rejects all offers, or the call should end, close politely. The backend will consume Vapi structured outputs after the call ends.`
+}
+
+func ExtractNovaStructuredOutput(payloads ...map[string]any) map[string]any {
+	for _, payload := range payloads {
+		if result := extractNovaStructuredOutput(payload); len(result) > 0 {
+			return result
+		}
+	}
+	return nil
+}
+
+func extractNovaStructuredOutput(payload map[string]any) map[string]any {
+	if payload == nil {
+		return nil
+	}
+	for _, path := range []string{"artifact.structuredOutputs", "analysis.structuredOutputs", "structuredOutputs"} {
+		if result := extractNovaStructuredOutputFromValue(nestedAny(payload, path)); len(result) > 0 {
+			return result
+		}
+	}
+	if result := extractNovaStructuredOutputFromValue(payload); len(result) > 0 {
+		return result
+	}
+	return nil
+}
+
+func extractNovaStructuredOutputFromValue(value any) map[string]any {
+	switch v := value.(type) {
+	case map[string]any:
+		if name, _ := v["name"].(string); strings.EqualFold(name, NovaStructuredOutputName) {
+			if result, ok := v["result"].(map[string]any); ok {
+				return result
+			}
+		}
+		if result, ok := v["result"].(map[string]any); ok && looksLikeNovaHandoff(result) {
+			return result
+		}
+		if looksLikeNovaHandoff(v) {
+			return v
+		}
+		for _, child := range v {
+			if result := extractNovaStructuredOutputFromValue(child); len(result) > 0 {
+				return result
+			}
+		}
+	case []any:
+		for _, item := range v {
+			if result := extractNovaStructuredOutputFromValue(item); len(result) > 0 {
+				return result
+			}
+		}
+	}
+	return nil
+}
+
+func looksLikeNovaHandoff(value map[string]any) bool {
+	_, hasOutcome := value["outcome"]
+	_, hasContext := value["context_for_delta"]
+	_, hasAccepted := value["offer_accepted"]
+	return hasOutcome && hasContext && hasAccepted
+}
+
+func nestedAny(m map[string]any, path string) any {
+	var cur any = m
+	for _, part := range strings.Split(path, ".") {
+		obj, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = obj[part]
+	}
+	return cur
 }

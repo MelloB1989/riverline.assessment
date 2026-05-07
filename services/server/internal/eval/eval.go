@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -492,6 +493,11 @@ func saveCandidatePrompt(agentID models.AgentID, version int, adopted bool, reje
 	}
 	if err := o.Insert(&candidate); err != nil {
 		return err
+	}
+	if adopted && agentID == models.AgentNova {
+		if err := collections.SyncNovaVapiAssistant(context.Background()); err != nil {
+			return err
+		}
 	}
 	return collections.LogCost("prompt_generation", &agentID, modelUsed, tokens, 0, nil, nil)
 }

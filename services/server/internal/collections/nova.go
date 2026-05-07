@@ -36,6 +36,10 @@ func PrepareNOVA(workflowID string) (*models.ResolutionOffer, error) {
 	if offer.EmiStartDate == nil {
 		offer.EmiStartDate = timePtr(now.Add(7 * 24 * time.Hour))
 	}
+	wf.UpdatedAt = now
+	if err := updateWorkflow(wf); err != nil {
+		return nil, err
+	}
 	o := orm.Load(&models.ResolutionOffer{})
 	defer o.Close()
 	var existing []models.ResolutionOffer
@@ -218,7 +222,7 @@ func MarkNOVAStarted(workflowID, callID string, promptVersion int, handoff strin
 	return updateConversation(&conv)
 }
 
-func CompleteNOVA(workflowID, callID, transcript, recordingURL string, durationSeconds *int) (models.Outcome, error) {
+func CompleteNOVA(workflowID, callID, transcript, recordingURL string, durationSeconds *int, structuredOutput map[string]any) (models.Outcome, error) {
 	wf, err := GetWorkflow(workflowID)
 	if err != nil {
 		return "", err
@@ -230,9 +234,15 @@ func CompleteNOVA(workflowID, callID, transcript, recordingURL string, durationS
 			return "", err
 		}
 	}
-	handoff, err := generateNovaCallHandoffViaTool(*wf, offer, transcript)
+	handoff, err := NovaCallHandoffFromStructuredOutput(structuredOutput)
 	if err != nil {
 		return "", err
+	}
+	if handoff == nil {
+		handoff, err = generateNovaCallHandoffViaTool(*wf, offer, transcript)
+		if err != nil {
+			return "", err
+		}
 	}
 	if callID != "" {
 		offer.VapiCallId = &callID

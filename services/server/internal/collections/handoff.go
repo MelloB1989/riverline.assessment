@@ -163,6 +163,34 @@ func GenerateNovaCallHandoff(wf models.BorrowerWorkflow, offer *models.Resolutio
 	return &HandoffCall[NovaCallHandoffResult]{Result: result, Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
 }
 
+func NovaCallHandoffFromStructuredOutput(output map[string]any) (*HandoffCall[NovaCallHandoffResult], error) {
+	if len(output) == 0 {
+		return nil, nil
+	}
+	if nested, ok := output["result"].(map[string]any); ok {
+		output = nested
+	}
+	if !hasNovaStructuredHandoffFields(output) {
+		return nil, nil
+	}
+	data, err := json.Marshal(output)
+	if err != nil {
+		return nil, err
+	}
+	var result NovaCallHandoffResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("parse vapi nova structured output: %w", err)
+	}
+	return &HandoffCall[NovaCallHandoffResult]{Result: result, ModelUsed: "vapi/structured-output"}, nil
+}
+
+func hasNovaStructuredHandoffFields(output map[string]any) bool {
+	_, hasAccepted := output["offer_accepted"]
+	_, hasOutcome := output["outcome"]
+	_, hasContext := output["context_for_delta"]
+	return hasAccepted && hasOutcome && hasContext
+}
+
 func GenerateDeltaHandoff(wf models.BorrowerWorkflow, messages []models.AgentMessage) (*HandoffCall[DeltaHandoffResult], error) {
 	client, err := agents.NewDelta()
 	if err != nil {

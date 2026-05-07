@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -30,10 +31,11 @@ type BorrowerWorkflowResult struct {
 }
 
 type NovaCompleteSignal struct {
-	CallID          string
-	Transcript      string
-	RecordingURL    string
-	DurationSeconds *int
+	CallID           string
+	Transcript       string
+	RecordingURL     string
+	DurationSeconds  *int
+	StructuredOutput map[string]any
 }
 
 type RescheduleNovaCallSignal struct {
@@ -291,7 +293,15 @@ func StartNOVA(workflowID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	loan, err := collections.GetLoan(wf.LoanId)
+	if err != nil {
+		return "", err
+	}
 	offer, err := collections.PrepareNOVA(workflowID)
+	if err != nil {
+		return "", err
+	}
+	wf, err = collections.GetWorkflow(workflowID)
 	if err != nil {
 		return "", err
 	}
@@ -301,13 +311,17 @@ func StartNOVA(workflowID string) (string, error) {
 	}
 	contextForNova := derefString(wf.ContextForNova)
 	cfg := constants.AppCfg.Get()
+	if err := collections.SyncNovaVapiAssistant(context.Background()); err != nil {
+		return "", err
+	}
 	client := vapi.New(cfg.VapiApiKey, "", cfg.VapiPhoneNumberId, cfg.VapiAssistantId, cfg.VapiDryRun)
 	offers := map[string]any{"lump_sum": offer.LumpSumOffered, "emi_amount": offer.EmiAmount, "emi_months": offer.EmiMonths, "hardship": offer.HardshipOffered}
 	phone := ""
 	if user.Phone != nil {
 		phone = *user.Phone
 	}
-	callID, err := client.StartCall(context.Background(), phone, vapi.HandoffContext{WorkflowID: workflowID, AriaSummary: derefString(wf.AriaSummary), ContextForNova: contextForNova, Offers: offers})
+	callContext := novaVapiHandoffContext(workflowID, *wf, *user, *loan, *offer, offers)
+	callID, err := client.StartCall(context.Background(), phone, callContext)
 	if err != nil {
 		if strings.Contains(err.Error(), "400 Bad Request") {
 			return "", temporal.NewNonRetryableApplicationError("vapi start call failed", "VapiBadRequest", err)
@@ -332,7 +346,7 @@ func GetNovaScheduledCallAt(workflowID string) (time.Time, error) {
 }
 
 func CompleteNOVA(workflowID string, signal NovaCompleteSignal) (string, error) {
-	outcome, err := collections.CompleteNOVA(workflowID, signal.CallID, signal.Transcript, signal.RecordingURL, signal.DurationSeconds)
+	outcome, err := collections.CompleteNOVA(workflowID, signal.CallID, signal.Transcript, signal.RecordingURL, signal.DurationSeconds, signal.StructuredOutput)
 	if err != nil {
 		return "", err
 	}
@@ -371,12 +385,91 @@ func PollNOVACompletionFromVapi(workflowID string) (*NovaCompletionPollResult, e
 	return &NovaCompletionPollResult{
 		Ready: true,
 		Signal: NovaCompleteSignal{
-			CallID:          *offer.VapiCallId,
-			Transcript:      transcript,
-			RecordingURL:    recordingURL,
-			DurationSeconds: details.DurationSeconds,
+			CallID:           *offer.VapiCallId,
+			Transcript:       transcript,
+			RecordingURL:     recordingURL,
+			DurationSeconds:  details.DurationSeconds,
+			StructuredOutput: details.StructuredOutput,
 		},
 	}, nil
+}
+
+func novaVapiHandoffContext(workflowID string, wf models.BorrowerWorkflow, user models.User, loan models.Loan, offer models.ResolutionOffer, offers map[string]any) vapi.HandoffContext {
+	now := time.Now().UTC()
+	ist := now.In(novaISTLocation())
+	return vapi.HandoffContext{
+		WorkflowID:             workflowID,
+		BorrowerName:           strings.TrimSpace(user.FirstName + " " + user.LastName),
+		BorrowerFirstName:      strings.TrimSpace(user.FirstName),
+		BorrowerEmail:          user.Email,
+		AccountNumberPartial:   loan.AccountNumberPartial,
+		BorrowerContext:        compactJSON(novaBorrowerContext(user)),
+		LoanContext:            compactJSON(novaLoanContext(loan)),
+		AriaSummary:            derefString(wf.AriaSummary),
+		ContextForNova:         derefString(wf.ContextForNova),
+		ResolutionOfferContext: compactJSON(novaOfferContext(offer)),
+		Offers:                 offers,
+		CurrentISTTimestamp:    ist.Format(time.RFC3339),
+		CurrentUTCTimestamp:    now.Format(time.RFC3339),
+	}
+}
+
+func novaBorrowerContext(user models.User) map[string]any {
+	return map[string]any{
+		"user_id":    user.Id,
+		"first_name": user.FirstName,
+		"last_name":  user.LastName,
+		"email":      user.Email,
+		"phone":      user.Phone,
+		"dob":        user.Dob.Format("2006-01-02"),
+		"gender":     user.Gender,
+		"extra":      user.Extra,
+	}
+}
+
+func novaLoanContext(loan models.Loan) map[string]any {
+	return map[string]any{
+		"loan_id":                 loan.Id,
+		"account_number_partial":  loan.AccountNumberPartial,
+		"loan_type":               loan.LoanType,
+		"principal_amount":        loan.PrincipalAmount,
+		"outstanding_amount":      loan.OutstandingAmount,
+		"days_overdue":            loan.DaysOverdue,
+		"last_payment_date":       loan.LastPaymentDate,
+		"last_payment_amount":     loan.LastPaymentAmount,
+		"interest_rate":           loan.InterestRate,
+		"policy_max_discount_pct": loan.PolicyMaxDiscountPct,
+		"status":                  loan.Status,
+	}
+}
+
+func novaOfferContext(offer models.ResolutionOffer) map[string]any {
+	return map[string]any{
+		"candidate_offer":       offer.CandidateOffer,
+		"scheduled_call_at":     offer.ScheduledCallAt,
+		"lump_sum_offered":      offer.LumpSumOffered,
+		"lump_sum_discount_pct": offer.LumpSumDiscountPct,
+		"emi_amount":            offer.EmiAmount,
+		"emi_months":            offer.EmiMonths,
+		"emi_start_date":        offer.EmiStartDate,
+		"hardship_offered":      offer.HardshipOffered,
+	}
+}
+
+func compactJSON(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}
+
+func novaISTLocation() *time.Location {
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	if err == nil {
+		return loc
+	}
+	return time.FixedZone("IST", 5*60*60+30*60)
 }
 
 func novaCallEndReason(details *vapi.CallDetails) string {
