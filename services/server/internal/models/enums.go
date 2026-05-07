@@ -45,6 +45,7 @@ const (
 	PersonaCombative   Persona = "combative"
 	PersonaEvasive     Persona = "evasive"
 	PersonaDistressed  Persona = "distressed"
+	PersonaConfused    Persona = "confused"
 )
 
 const (

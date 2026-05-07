@@ -1,15 +1,25 @@
 package agents
 
 import (
-	m "riverline_server/internal/models"
+	"riverline_server/internal/models"
 
-	"github.com/MelloB1989/karma/models"
+	"github.com/MelloB1989/karma/ai"
 )
 
-type Agent interface {
-	Start(summary string) (conversationId string, Err error)
-	Converse(user_message string) (*models.AIChatResponse, error)
-	CreateHandOff() (string, error)
-	GetAgentId() m.AgentID
-	GetConversationId() string
+const (
+	TotalContextBudget   = 2000
+	HandoffContextBudget = 500
+)
+
+type Client struct {
+	agentID       models.AgentID
+	promptVersion int
+	prompt        string
+	aiClient      *ai.KarmaAI
+}
+
+type Config struct {
+	Temperature float32
+	TopP        float32
+	TopK        int
 }

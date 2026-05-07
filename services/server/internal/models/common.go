@@ -28,5 +28,10 @@ type AppConfig struct {
 	JwtSecret          string `env:"JWT_SECRET"`
 	DatabaseURL        string `env:"DATABASE_URL"`
 	RedisURL           string `env:"REDIS_URL"`
+	TemporalHostPort   string `env:"TEMPORAL_HOST_PORT" optional:"true" default:"temporal:7233"`
+	VapiApiKey         string `env:"VAPI_API_KEY" optional:"true"`
+	VapiAssistantId    string `env:"VAPI_ASSISTANT_ID" optional:"true"`
+	VapiPhoneNumberId  string `env:"VAPI_PHONE_NUMBER_ID" optional:"true"`
+	VapiWebhookSecret  string `env:"VAPI_WEBHOOK_SECRET" optional:"true"`
 	Port               string `env:"PORT" optional:"true" default:"8080"`
 }

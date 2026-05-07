@@ -3,6 +3,7 @@ package cmd
 import (
 	"log"
 	"riverline_server/constants"
+	"riverline_server/internal/collections"
 	"riverline_server/internal/routes"
 	"strings"
 
@@ -15,9 +16,15 @@ import (
 func StartServer() {
 	port := constants.AppCfg.Get().Port
 	appServer := createFiberApp()
+	setupGlobalMiddleware(appServer)
+	if err := collections.EnsureDefaults(); err != nil {
+		log.Printf("bootstrap defaults skipped: %v", err)
+	}
 	appServer.Use("/health", healthCheckHandler())
 	v1 := appServer.Group("/v1")
 	routes.SetupMainRoutes(v1)
+	apiV1 := appServer.Group("/api/v1")
+	routes.SetupMainRoutes(apiV1)
 	if err := appServer.Listen(":" + port); err != nil {
 		log.Fatal(err)
 	}

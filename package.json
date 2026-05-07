@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
-    "dev": "temporal server start-dev && docker compose --profile dev up --build",
+    "dev": "docker compose --profile dev up --build",
     "start": "docker compose --profile prod up --build",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
@@ -11,6 +11,8 @@
     "db:generate": "cd database && bunx drizzle-kit generate",
     "db:migrate": "cd database && bunx drizzle-kit migrate",
     "db:browser": "cd database && bunx drizzle-kit studio",
+    "eval": "make eval",
+    "report": "make report",
     "start:backend": "cd services/server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go run main.go -ldflags \"-X lyznflow/internal/constants.Version=$(git describe --tags --always --dirty)\"",
     "cloc": "cloc . --exclude-dir=node_modules,dist,build,.next,.expo"
   },

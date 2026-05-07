@@ -4,6 +4,7 @@ x-backend-env: &backend-env
   PORT: "9000"
   ENV: DEV
   REDIS_URL: redis://redis:6379/0
+  TEMPORAL_HOST_PORT: temporal:7233
 
 services:
   redis:
@@ -19,6 +20,35 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  temporal:
+    image: temporalio/auto-setup:1.28
+    profiles: ["dev"]
+    environment:
+      DB: postgresql
+      DB_PORT: "5432"
+      POSTGRES_USER: riverline
+      POSTGRES_PWD: riverline_dev_password
+      POSTGRES_SEEDS: postgres-dev
+      DBNAME: riverline_dev
+      VISIBILITY_DBNAME: riverline_dev
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+    ports:
+      - "7233:7233"
+
+  temporal-ui:
+    image: temporalio/ui:2.40.1
+    profiles: ["dev"]
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      - temporal
+    ports:
+      - "8080:8080"
 
   postgres-dev:
     image: postgres:16-alpine
@@ -122,6 +152,28 @@ services:
       - ./services/server:/app/services/server
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/root/.cache/go-build
+
+  worker-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      dockerfile: services/server/Dockerfile
+      target: dev
+    env_file:
+      - ./services/server/.env
+    environment:
+      <<: *backend-env
+      DATABASE_URL: postgres://riverline:riverline_dev_password@postgres-dev:5432/riverline_dev?sslmode=disable
+    depends_on:
+      backend-dev:
+        condition: service_started
+      temporal:
+        condition: service_started
+    volumes:
+      - ./services/server:/app/services/server
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    command: ["go", "run", "./cmd/worker"]
 
   backend-prod:
     profiles: ["prod"]

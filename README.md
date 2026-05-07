@@ -1,159 +1,87 @@
-# Turborepo starter
+# Riverline Collections AI
 
-This Turborepo starter is maintained by the Turborepo core team.
+Three-agent collections pipeline:
 
-## Using this example
+```text
+Borrower Chat UI
+  -> Go API
+  -> ARIA assessment chat
+  -> NOVA Vapi voice resolution
+  -> DELTA final notice chat
+  -> Evaluation, canaries, prompt experiments, CSV reports
 
-Run the following command:
-
-```sh
-npx create-turbo@latest
+Persistence: PostgreSQL + Karma ORM
+Cache/infra: Redis, Temporal worker, Docker Compose
+Frontend: Next.js
 ```
 
-## What's inside?
-
-This Turborepo includes the following packages/apps:
-
-### Apps and Packages
-
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+## Quick Start
 
 ```sh
-cd my-turborepo
-turbo build
+cp .env.example .env
+cp services/server/.env.example services/server/.env
+cp apps/web/.env.local.example apps/web/.env.local
+docker compose --profile dev up --build
 ```
 
-Without global `turbo`, use your package manager:
+Open:
+
+- Web: `http://localhost:3000/chat`
+- API health: `http://localhost:9000/health`
+- Temporal UI: `http://localhost:8080`
+
+## API
+
+- `POST /api/v1/workflows/start`
+- `GET /api/v1/workflows/:id`
+- `POST /api/v1/chat/:workflowId`
+- `GET /api/v1/chat/:workflowId/stream`
+- `GET /api/v1/conversations/:id`
+- `POST /api/v1/vapi/webhook`
+- `GET /api/v1/admin/eval`
+
+## Evaluation
+
+Run deterministic local simulations, score conversations, run prompt experiment gates, execute canaries, and export CSVs:
 
 ```sh
-cd my-turborepo
-npx turbo build
-bun dlx turbo build
-bun exec turbo build
+make eval SEED=42 BATCH_SIZE=20 AGENT=all OUTPUT=./results
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+Regenerate reports from existing DB data:
 
 ```sh
-turbo build --filter=docs
+make report OUTPUT=./results
 ```
 
-Without global `turbo`:
+Report files:
 
-```sh
-npx turbo build --filter=docs
-bun exec turbo build --filter=docs
-bun exec turbo build --filter=docs
-```
+- `results/conversations_aria.csv`
+- `results/conversations_nova.csv`
+- `results/conversations_delta.csv`
+- `results/experiments_aria.csv`
+- `results/experiments_nova.csv`
+- `results/experiments_delta.csv`
+- `results/meta_flags.csv`
+- `results/canary_results.csv`
+- `results/cost_breakdown.csv`
+- `results/prompt_versions.csv`
 
-### Develop
+## Environment
 
-To develop all apps and packages, run the following command:
+- `DATABASE_URL`: PostgreSQL connection string.
+- `REDIS_URL`: Redis URL used by infra and available to Karma ORM caching.
+- `TEMPORAL_HOST_PORT`: Temporal frontend address, default `localhost:7233` locally or `temporal:7233` in Compose.
+- `GROQ_API_KEY`: Optional Karma AI model key.
+- `VAPI_API_KEY`: Optional Vapi API key. If no borrower phone is available, NOVA uses a mock call ID.
+- `VAPI_ASSISTANT_ID`: Optional existing Vapi assistant.
+- `VAPI_PHONE_NUMBER_ID`: Optional Vapi outbound phone number.
+- `VAPI_WEBHOOK_SECRET`: Optional shared secret checked against `x-vapi-secret`.
+- `NEXT_PUBLIC_API_URL`: Browser-visible API base URL.
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+## Notes
 
-```sh
-cd my-turborepo
-turbo dev
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo dev
-bun exec turbo dev
-bun exec turbo dev
-```
-
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo dev --filter=web
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo dev --filter=web
-bun exec turbo dev --filter=web
-bun exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-bun exec turbo login
-bun exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-bun exec turbo link
-bun exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+- The backend seeds baseline prompts, evaluator versions, demo borrower data, and eight compliance canaries when the API starts.
+- The API records chat and webhook events. Temporal owns stage transitions through `aria_complete`, `nova_complete`, and `delta_complete` signals.
+- The local evaluator is deterministic and zero-cost so `make eval` is reproducible. LLM-backed scoring can be swapped in behind `internal/eval` without changing CSV contracts.
+- Database models live in `services/server/internal/models/schema.go` and follow the Karma ORM field/tag rules in `llm-docs/rules.md`.

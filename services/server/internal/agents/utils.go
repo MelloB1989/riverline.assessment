@@ -1,97 +1,59 @@
 package agents
 
 import (
-	m "riverline_server/internal/models"
-	"time"
+	"math"
+	"strings"
 
-	"github.com/MelloB1989/karma/models"
-	"github.com/MelloB1989/karma/utils"
-	"github.com/MelloB1989/karma/v2/orm"
+	"riverline_server/internal/models"
 )
 
-func generateAIChatHistory(conversationId string) (*models.AIChatHistory, error) {
-	messagesOrm := orm.Load(&m.AgentMessage{})
-	defer messagesOrm.Close()
-
-	var messages []m.AgentMessage
-	if err := messagesOrm.GetByFieldEquals("ConversationId", conversationId).Scan(&messages); err != nil {
-		return nil, err
+func CountTokens(text string) int {
+	if text == "" {
+		return 0
 	}
+	return int(math.Ceil(float64(len([]rune(text))) / 4.0))
+}
 
-	history := &models.AIChatHistory{
-		Messages: make([]models.AIMessage, 0, len(messages)),
+func fallbackReply(agentID models.AgentID, history []models.AgentMessage) string {
+	switch agentID {
+	case models.AgentDelta:
+		return "I am DELTA, an AI final notice agent acting on behalf of Riverline. This conversation is being logged. The final offer is now documented with a hard deadline. Reply ACCEPT to begin the settlement process."
+	case models.AgentNova:
+		return "I am NOVA, an AI resolution agent acting on behalf of Riverline. This call is being recorded. I can present the settlement options already calculated for this account."
+	default:
+		return ariaFallback(history)
 	}
+}
+
+func ariaFallback(history []models.AgentMessage) string {
+	text := strings.ToLower(join(history))
+	missing := []string{}
+	if !strings.Contains(text, "yes") && !strings.Contains(text, "verify") {
+		missing = append(missing, "identity confirmation")
+	}
+	if !strings.Contains(text, "employed") && !strings.Contains(text, "job") && !strings.Contains(text, "unemployed") {
+		missing = append(missing, "employment status")
+	}
+	if !strings.Contains(text, "income") && !strings.Contains(text, "salary") && !strings.Contains(text, "earn") {
+		missing = append(missing, "monthly income")
+	}
+	if !strings.Contains(text, "rent") && !strings.Contains(text, "obligation") && !strings.Contains(text, "expenses") {
+		missing = append(missing, "monthly obligations")
+	}
+	if !strings.Contains(text, "reason") && !strings.Contains(text, "missed") && !strings.Contains(text, "medical") {
+		missing = append(missing, "reason for default")
+	}
+	if len(missing) == 0 {
+		return "Thank you. A resolution specialist will be in touch shortly."
+	}
+	return "I am ARIA, an AI assessment agent acting on behalf of Riverline. This conversation is being logged. Please provide: " + strings.Join(missing, ", ") + "."
+}
+
+func join(messages []models.AgentMessage) string {
+	var b strings.Builder
 	for _, msg := range messages {
-		if msg.Role == m.MessageRoleAgent {
-			history.Messages = append(history.Messages, models.AIMessage{
-				UniqueId:   msg.Id,
-				Role:       models.Assistant,
-				Message:    msg.Content,
-				Timestamp:  msg.CreatedAt,
-				ToolCalls:  msg.ToolCalls,
-				ToolCallId: msg.ToolCallId,
-			})
-		} else {
-			history.Messages = append(history.Messages, models.AIMessage{
-				UniqueId:  msg.Id,
-				Role:      models.User,
-				Message:   msg.Content,
-				Timestamp: msg.CreatedAt,
-				Images:    msg.Images,
-				Files:     msg.Files,
-			})
-		}
+		b.WriteString(msg.Content)
+		b.WriteByte('\n')
 	}
-	return history, nil
-}
-
-func watchAndAppendMessages(history *models.AIChatHistory) {
-	go func(history *models.AIChatHistory) {
-		lastMessageLen := len(history.Messages)
-		for {
-			if len(history.Messages) != lastMessageLen {
-				lastMessageLen = len(history.Messages)
-				lastMessage := history.Messages[lastMessageLen-1]
-				if lastMessage.UniqueId == "" {
-					lastMessage.UniqueId = utils.GenerateID()
-				}
-				if err := pushMessageToDB(toAgentMessage(&lastMessage)); err != nil {
-					return
-				}
-			}
-			time.Sleep(time.Second)
-		}
-	}(history)
-}
-
-func pushMessageToDB(msg *m.AgentMessage) error {
-	messagesOrm := orm.Load(&m.AgentMessage{})
-	defer messagesOrm.Close()
-
-	if err := messagesOrm.Insert(msg); err != nil {
-		return err
-	}
-	return nil
-}
-
-func updateMessageInDB(msg *m.AgentMessage) error {
-	messagesOrm := orm.Load(&m.AgentMessage{})
-	defer messagesOrm.Close()
-
-	if err := messagesOrm.Update(msg, msg.Id); err != nil {
-		return err
-	}
-	return nil
-}
-
-func toAgentMessage(msg *models.AIMessage) *m.AgentMessage {
-	return &m.AgentMessage{
-		Id:         msg.UniqueId,
-		Content:    msg.Message,
-		CreatedAt:  msg.Timestamp,
-		Images:     msg.Images,
-		Files:      msg.Files,
-		ToolCalls:  msg.ToolCalls,
-		ToolCallId: msg.ToolCallId,
-	}
+	return b.String()
 }

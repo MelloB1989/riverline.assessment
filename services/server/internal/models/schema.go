@@ -2,33 +2,20 @@ package models
 
 import (
 	"time"
-
-	"github.com/MelloB1989/karma/models"
 )
 
-type BillingAddress struct {
-	Country string `json:"country"`
-	State   string `json:"state"`
-	City    string `json:"city"`
-	Street  string `json:"street"`
-	Zipcode string `json:"zipcode"`
-}
-
 type User struct {
-	TableName      string         `karma_table:"users" json:"-"`
-	Id             string         `json:"id" karma:"primary"`
-	FirstName      string         `json:"first_name"`
-	LastName       string         `json:"last_name"`
-	Email          string         `json:"email"`
-	Phone          *string        `json:"phone"`
-	Dob            time.Time      `json:"dob"`
-	Gender         string         `json:"gender"`
-	Pfp            *string        `json:"pfp"`
-	Bio            string         `json:"bio"`
-	Extra          map[string]any `json:"extra" db:"extra"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	BillingAddress BillingAddress `json:"billing_address" db:"billing_address"`
+	TableName string         `karma_table:"users" json:"-"`
+	Id        string         `json:"id" karma:"primary"`
+	FirstName string         `json:"first_name"`
+	LastName  string         `json:"last_name"`
+	Email     string         `json:"email"`
+	Phone     *string        `json:"phone"`
+	Dob       time.Time      `json:"dob"`
+	Gender    string         `json:"gender"`
+	Extra     map[string]any `json:"extra" db:"extra"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 type Loan struct {
@@ -50,58 +37,51 @@ type Loan struct {
 }
 
 type BorrowerWorkflow struct {
-	TableName          string     `karma_table:"borrower_workflows" json:"-"`
-	Id                 string     `json:"id" karma:"primary"`
-	UserId             string     `json:"user_id"`
-	LoanId             string     `json:"loan_id"`
-	CurrentStage       AgentID    `json:"current_stage"`
-	AriaAttempts       int        `json:"aria_attempts"`
-	Outcome            *Outcome   `json:"outcome"`
-	AriaSummary        *string    `json:"aria_summary"`
-	NovaSummary        *string    `json:"nova_summary"`
-	FinalOfferAmount   *float64   `json:"final_offer_amount"`
-	FinalOfferDeadline *time.Time `json:"final_offer_deadline"`
-	ResolvedAt         *time.Time `json:"resolved_at"`
-	StopContactFlagged *bool      `json:"stop_contact_flagged"`
-	HardshipFlagged    *bool      `json:"hardship_flagged"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-}
-
-type Assessment struct {
-	TableName              string    `karma_table:"assessments" json:"-"`
-	Id                     string    `json:"id" karma:"primary"`
-	WorkflowId             string    `json:"workflow_id"`
-	UserId                 string    `json:"user_id"`
-	IdentityVerified       *bool     `json:"identity_verified"`
-	EmploymentStatus       *string   `json:"employment_status"`
-	MonthlyIncomeRange     *string   `json:"monthly_income_range"`
-	MonthlyObligations     *float64  `json:"monthly_obligations"`
-	DefaultReason          *string   `json:"default_reason"`
-	BorrowerEmotionalState *Persona  `json:"borrower_emotional_state"`
-	HasSavings             *bool     `json:"has_savings"`
-	HardshipMentioned      *bool     `json:"hardship_mentioned"`
-	CreatedAt              time.Time `json:"created_at"`
+	TableName              string     `karma_table:"borrower_workflows" json:"-"`
+	Id                     string     `json:"id" karma:"primary"`
+	UserId                 string     `json:"user_id"`
+	LoanId                 string     `json:"loan_id"`
+	CurrentStage           AgentID    `json:"current_stage"`
+	AriaAttempts           int        `json:"aria_attempts"`
+	Outcome                *Outcome   `json:"outcome"`
+	IdentityVerified       *bool      `json:"identity_verified"`
+	EmploymentStatus       *string    `json:"employment_status"`
+	MonthlyIncomeRange     *string    `json:"monthly_income_range"`
+	MonthlyObligations     *float64   `json:"monthly_obligations"`
+	DefaultReason          *string    `json:"default_reason"`
+	BorrowerEmotionalState *Persona   `json:"borrower_emotional_state"`
+	HardshipMentioned      *bool      `json:"hardship_mentioned"`
+	AriaSummary            *string    `json:"aria_summary"`
+	ContextForNova         *string    `json:"context_for_nova"`
+	ContextForDelta        *string    `json:"context_for_delta"`
+	FinalOfferAmount       *float64   `json:"final_offer_amount"`
+	FinalOfferDeadline     *time.Time `json:"final_offer_deadline"`
+	ResolvedAt             *time.Time `json:"resolved_at"`
+	StopContactFlagged     *bool      `json:"stop_contact_flagged"`
+	HardshipFlagged        *bool      `json:"hardship_flagged"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
 }
 
 type ResolutionOffer struct {
-	TableName           string     `karma_table:"resolution_offers" json:"-"`
-	Id                  string     `json:"id" karma:"primary"`
-	WorkflowId          string     `json:"workflow_id"`
-	VapiCallId          *string    `json:"vapi_call_id"`
-	CallRecordingUrl    *string    `json:"call_recording_url"`
-	CallTranscript      *string    `json:"call_transcript"`
-	LumpSumOffered      *float64   `json:"lump_sum_offered"`
-	LumpSumDiscountPct  *float64   `json:"lump_sum_discount_pct"`
-	EmiAmount           *float64   `json:"emi_amount"`
-	EmiMonths           *int       `json:"emi_months"`
-	EmiStartDate        *time.Time `json:"emi_start_date"`
-	HardshipOffered     *bool      `json:"hardship_offered"`
-	OfferAccepted       *bool      `json:"offer_accepted"`
-	AcceptedOfferType   *string    `json:"accepted_offer_type"`
-	ObjectionsRaised    []string   `json:"objections_raised" db:"objections_raised"`
-	CallDurationSeconds *int       `json:"call_duration_seconds"`
-	CreatedAt           time.Time  `json:"created_at"`
+	TableName           string         `karma_table:"resolution_offers" json:"-"`
+	Id                  string         `json:"id" karma:"primary"`
+	WorkflowId          string         `json:"workflow_id"`
+	CandidateOffer      map[string]any `json:"candidate_offer" db:"candidate_offer"`
+	VapiCallId          *string        `json:"vapi_call_id"`
+	CallRecordingUrl    *string        `json:"call_recording_url"`
+	CallTranscript      *string        `json:"call_transcript"`
+	CallDurationSeconds *int           `json:"call_duration_seconds"`
+	LumpSumOffered      *float64       `json:"lump_sum_offered"`
+	LumpSumDiscountPct  *float64       `json:"lump_sum_discount_pct"`
+	EmiAmount           *float64       `json:"emi_amount"`
+	EmiMonths           *int           `json:"emi_months"`
+	EmiStartDate        *time.Time     `json:"emi_start_date"`
+	HardshipOffered     *bool          `json:"hardship_offered"`
+	OfferAccepted       *bool          `json:"offer_accepted"`
+	AcceptedOfferType   *string        `json:"accepted_offer_type"`
+	ObjectionsRaised    []string       `json:"objections_raised" db:"objections_raised"`
+	CreatedAt           time.Time      `json:"created_at"`
 }
 
 type AgentConversation struct {
@@ -115,7 +95,6 @@ type AgentConversation struct {
 	Seed            *string    `json:"seed"`
 	PromptVersion   int        `json:"prompt_version"`
 	Outcome         *Outcome   `json:"outcome"`
-	Summary         string     `json:"summary"`
 	TotalTurns      *int       `json:"total_turns"`
 	TotalTokensUsed *int       `json:"total_tokens_used"`
 	StartedAt       time.Time  `json:"started_at"`
@@ -123,30 +102,15 @@ type AgentConversation struct {
 }
 
 type AgentMessage struct {
-	TableName      string                  `karma_table:"agent_messages" json:"-"`
-	Id             string                  `json:"id" karma:"primary"`
-	ConversationId string                  `json:"conversation_id"`
-	WorkflowId     string                  `json:"workflow_id"`
-	UserId         string                  `json:"user_id"`
-	AgentId        AgentID                 `json:"agent_id"`
-	Role           MessageRole             `json:"role"`
-	Content        string                  `json:"content"`
-	ToolCalls      []models.OpenAIToolCall `json:"tools,omitempty"` // Tool calls based on OpenAI standards
-	ToolCallId     string                  `json:"tool_call_id,omitempty"`
-	Images         []string                `json:"images,omitempty"`
-	Files          []string                `json:"files,omitempty"`
-	TokenCount     *int                    `json:"token_count"`
-	CreatedAt      time.Time               `json:"created_at"`
-}
-
-type UserMemory struct {
-	TableName     string         `karma_table:"user_memories" json:"-"`
-	Id            string         `json:"id" karma:"primary"`
-	UserId        string         `json:"user_id"`
-	MemoryToc     map[string]any `json:"memory_toc" db:"memory_toc"`
-	MemoryTree    map[string]any `json:"memory_tree" db:"memory_tree"`
-	TokenEstimate *int           `json:"token_estimate"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	TableName      string      `karma_table:"agent_messages" json:"-"`
+	Id             string      `json:"id" karma:"primary"`
+	ConversationId string      `json:"conversation_id"`
+	WorkflowId     string      `json:"workflow_id"`
+	AgentId        AgentID     `json:"agent_id"`
+	Role           MessageRole `json:"role"`
+	Content        string      `json:"content"`
+	TokenCount     *int        `json:"token_count"`
+	CreatedAt      time.Time   `json:"created_at"`
 }
 
 type PromptVersion struct {
@@ -190,7 +154,6 @@ type ConversationScore struct {
 	ComplianceBreakdown      map[string]any `json:"compliance_breakdown" db:"compliance_breakdown"`
 	CompliancePassed         *bool          `json:"compliance_passed"`
 	JudgeBComposite          *float64       `json:"judge_b_composite"`
-	JudgeBMetricScores       map[string]any `json:"judge_b_metric_scores" db:"judge_b_metric_scores"`
 	JudgeDisagreementDelta   *float64       `json:"judge_disagreement_delta"`
 	EvalCostUsd              *float64       `json:"eval_cost_usd"`
 	EvalModelUsed            *string        `json:"eval_model_used"`
@@ -207,28 +170,20 @@ type PromptExperiment struct {
 	ControlMean             float64   `json:"control_mean"`
 	ControlStddev           float64   `json:"control_stddev"`
 	ControlMedian           float64   `json:"control_median"`
-	ControlP10              *float64  `json:"control_p10"`
-	ControlP90              *float64  `json:"control_p90"`
-	ControlMin              *float64  `json:"control_min"`
-	ControlMax              *float64  `json:"control_max"`
 	ControlComplianceRate   float64   `json:"control_compliance_rate"`
+	ControlScores           []float64 `json:"control_scores" db:"control_scores"`
 	TreatmentN              int       `json:"treatment_n"`
 	TreatmentMean           float64   `json:"treatment_mean"`
 	TreatmentStddev         float64   `json:"treatment_stddev"`
 	TreatmentMedian         float64   `json:"treatment_median"`
-	TreatmentP10            *float64  `json:"treatment_p10"`
-	TreatmentP90            *float64  `json:"treatment_p90"`
-	TreatmentMin            *float64  `json:"treatment_min"`
-	TreatmentMax            *float64  `json:"treatment_max"`
-	TreatmentComplianceRate *float64  `json:"treatment_compliance_rate"`
+	TreatmentComplianceRate float64   `json:"treatment_compliance_rate"`
+	TreatmentScores         []float64 `json:"treatment_scores" db:"treatment_scores"`
 	MeanDelta               float64   `json:"mean_delta"`
 	PValue                  float64   `json:"p_value"`
 	CohensD                 *float64  `json:"cohens_d"`
 	IsSignificant           *bool     `json:"is_significant"`
 	Adopted                 bool      `json:"adopted"`
 	RejectionReason         *string   `json:"rejection_reason"`
-	ControlScores           []float64 `json:"control_scores" db:"control_scores"`
-	TreatmentScores         []float64 `json:"treatment_scores" db:"treatment_scores"`
 	ExperimentCostUsd       *float64  `json:"experiment_cost_usd"`
 	CreatedAt               time.Time `json:"created_at"`
 }
@@ -294,21 +249,4 @@ type LlmCostLog struct {
 	ConversationId   *string   `json:"conversation_id"`
 	ExperimentId     *string   `json:"experiment_id"`
 	CreatedAt        time.Time `json:"created_at"`
-}
-
-type EvalRun struct {
-	TableName             string         `karma_table:"eval_runs" json:"-"`
-	Id                    string         `json:"id" karma:"primary"`
-	RunLabel              string         `json:"run_label"`
-	Seed                  int            `json:"seed"`
-	BatchSize             int            `json:"batch_size"`
-	PersonasUsed          []Persona      `json:"personas_used" db:"personas_used"`
-	AgentIds              []AgentID      `json:"agent_ids" db:"agent_ids"`
-	PromptVersionsUsed    map[string]any `json:"prompt_versions_used" db:"prompt_versions_used"`
-	EvaluatorVersionsUsed map[string]any `json:"evaluator_versions_used" db:"evaluator_versions_used"`
-	TotalConversations    *int           `json:"total_conversations"`
-	TotalCostUsd          *float64       `json:"total_cost_usd"`
-	StartedAt             time.Time      `json:"started_at"`
-	CompletedAt           *time.Time     `json:"completed_at"`
-	ConfigSnapshot        map[string]any `json:"config_snapshot" db:"config_snapshot"`
 }
