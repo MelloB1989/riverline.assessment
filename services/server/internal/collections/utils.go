@@ -1,6 +1,7 @@
 package collections
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -23,7 +24,65 @@ func EnsureDefaults() error {
 	if err := seedEvaluatorVersions(); err != nil {
 		return err
 	}
-	return seedCanaries()
+	if err := seedCanaries(); err != nil {
+		return err
+	}
+	_, _, err := ensureClerkTestBorrower()
+	return err
+}
+
+func EnsureUserFromAuth(userID, email, firstName, lastName, fullName string) error {
+	if strings.TrimSpace(userID) == "" {
+		return errors.New("authenticated user id is required")
+	}
+	now := time.Now().UTC()
+	if strings.TrimSpace(email) == "" {
+		email = userID + "@example.local"
+	}
+	if strings.TrimSpace(firstName) == "" && strings.TrimSpace(lastName) == "" {
+		parts := strings.Fields(fullName)
+		if len(parts) > 0 {
+			firstName = parts[0]
+		}
+		if len(parts) > 1 {
+			lastName = strings.Join(parts[1:], " ")
+		}
+	}
+	if strings.TrimSpace(firstName) == "" {
+		firstName = "Borrower"
+	}
+	if strings.TrimSpace(lastName) == "" {
+		lastName = "User"
+	}
+	userOrm := orm.Load(&models.User{})
+	defer userOrm.Close()
+	var users []models.User
+	if err := userOrm.GetByFieldEquals("Id", userID).Scan(&users); err != nil {
+		return err
+	}
+	if len(users) == 0 {
+		user := models.User{Id: userID, FirstName: firstName, LastName: lastName, Email: email, Dob: time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC), Gender: "unspecified", Extra: map[string]any{"source": "clerk"}, CreatedAt: now, UpdatedAt: now}
+		return userOrm.Insert(&user)
+	}
+	user := users[0]
+	changed := false
+	if strings.TrimSpace(email) != "" && user.Email != email {
+		user.Email = email
+		changed = true
+	}
+	if strings.TrimSpace(firstName) != "" && user.FirstName != firstName {
+		user.FirstName = firstName
+		changed = true
+	}
+	if strings.TrimSpace(lastName) != "" && user.LastName != lastName {
+		user.LastName = lastName
+		changed = true
+	}
+	if changed {
+		user.UpdatedAt = now
+		return userOrm.Update(&user, user.Id)
+	}
+	return nil
 }
 
 func appendNOVACompletedMessage(workflowID, transcript string, accepted bool) error {
@@ -110,11 +169,142 @@ func chatClient(agentID models.AgentID) (*agents.Client, error) {
 	return agents.NewAria()
 }
 
-func handoffForStage(wf models.BorrowerWorkflow) string {
-	if wf.CurrentStage == models.AgentDelta {
-		return derefString(wf.ContextForDelta)
+func agentClient(agentID models.AgentID) (*agents.Client, error) {
+	switch agentID {
+	case models.AgentNova:
+		return agents.NewNova()
+	case models.AgentDelta:
+		return agents.NewDelta()
+	default:
+		return agents.NewAria()
 	}
-	return derefString(wf.AriaSummary)
+}
+
+func handoffForStage(wf models.BorrowerWorkflow) (string, error) {
+	user, err := GetUser(wf.UserId)
+	if err != nil {
+		return "", fmt.Errorf("load borrower for ARIA context: %w", err)
+	}
+	loan, err := GetLoan(wf.LoanId)
+	if err != nil {
+		return "", fmt.Errorf("load loan for ARIA context: %w", err)
+	}
+	offer, _ := firstOffer(wf.Id)
+	chatAgent := chatAgentForStage(wf.CurrentStage)
+	accountSummary := borrowerAccountSummaryFromRecords(*user, *loan)
+	now := time.Now().UTC()
+	payload := map[string]any{
+		"active_chat_agent": chatAgent,
+		"workflow_stage":    wf.CurrentStage,
+		"current_time": map[string]any{
+			"utc":      now.Format(time.RFC3339),
+			"ist":      now.In(collectionsISTLocation()).Format(time.RFC3339),
+			"timezone": "Asia/Kolkata",
+		},
+		"borrower_account_summary": accountSummary,
+		"borrower": map[string]any{
+			"id":         user.Id,
+			"first_name": user.FirstName,
+			"last_name":  user.LastName,
+			"email":      user.Email,
+			"phone":      user.Phone,
+			"dob":        user.Dob.Format("2006-01-02"),
+			"gender":     user.Gender,
+			"extra":      user.Extra,
+		},
+		"loan": map[string]any{
+			"id":                      loan.Id,
+			"account_number_partial":  loan.AccountNumberPartial,
+			"loan_type":               loan.LoanType,
+			"principal_amount":        loan.PrincipalAmount,
+			"outstanding_amount":      loan.OutstandingAmount,
+			"days_overdue":            loan.DaysOverdue,
+			"last_payment_date":       dateStringPtr(loan.LastPaymentDate),
+			"last_payment_amount":     loan.LastPaymentAmount,
+			"interest_rate":           loan.InterestRate,
+			"policy_max_discount_pct": loan.PolicyMaxDiscountPct,
+			"status":                  loan.Status,
+		},
+		"workflow": map[string]any{
+			"id":                       wf.Id,
+			"current_stage":            wf.CurrentStage,
+			"identity_verified":        wf.IdentityVerified,
+			"employment_status":        wf.EmploymentStatus,
+			"monthly_income_range":     wf.MonthlyIncomeRange,
+			"monthly_obligations":      wf.MonthlyObligations,
+			"default_reason":           wf.DefaultReason,
+			"borrower_emotional_state": wf.BorrowerEmotionalState,
+			"hardship_mentioned":       wf.HardshipMentioned,
+			"stop_contact_flagged":     wf.StopContactFlagged,
+			"hardship_flagged":         wf.HardshipFlagged,
+			"final_offer_amount":       wf.FinalOfferAmount,
+			"final_offer_deadline":     wf.FinalOfferDeadline,
+			"outcome":                  wf.Outcome,
+		},
+		"resolution_offer":  offer,
+		"aria_summary":      wf.AriaSummary,
+		"context_for_nova":  wf.ContextForNova,
+		"context_for_delta": wf.ContextForDelta,
+	}
+	if chatAgent == models.AgentDelta {
+		payload["agent_instruction"] = "DELTA is now the user-facing chat agent. Use context_for_delta plus user, loan, offer, and workflow fields."
+	} else if wf.CurrentStage == models.AgentNova {
+		payload["agent_instruction"] = "ARIA remains the user-facing chat agent while NOVA is pending or active. Use all user and loan data. If the borrower asks to change the NOVA call time, call reschedule_nova_call with the exact scheduled_call_at ARIA chooses from the borrower request and current_time."
+	} else {
+		payload["agent_instruction"] = "ARIA is collecting assessment data. Use all user and loan data. Do not ask for facts already present here unless needed for identity verification."
+	}
+	data, _ := json.Marshal(payload)
+	return string(data), nil
+}
+
+func borrowerAccountSummary(userID, loanID string) (string, error) {
+	user, err := GetUser(userID)
+	if err != nil {
+		return "", fmt.Errorf("load borrower for account summary: %w", err)
+	}
+	loan, err := GetLoan(loanID)
+	if err != nil {
+		return "", fmt.Errorf("load loan for account summary: %w", err)
+	}
+	return borrowerAccountSummaryFromRecords(*user, *loan), nil
+}
+
+func borrowerAccountSummaryFromRecords(user models.User, loan models.Loan) string {
+	lastPayment := "not recorded"
+	if loan.LastPaymentDate != nil {
+		lastPayment = loan.LastPaymentDate.Format("January 2, 2006")
+	}
+	lastPaymentAmount := "not recorded"
+	if loan.LastPaymentAmount != nil {
+		lastPaymentAmount = fmt.Sprintf("%.2f", *loan.LastPaymentAmount)
+	}
+	interestRate := "not recorded"
+	if loan.InterestRate != nil {
+		interestRate = fmt.Sprintf("%.2f%%", *loan.InterestRate)
+	}
+	return fmt.Sprintf(
+		"Borrower %s %s has a %s loan ending %s. Outstanding amount is %.2f. Principal amount is %.2f. The loan is %d days overdue. Last payment was %s for %s. Interest rate is %s. Policy max discount is %.2f%%. Account status is %s.",
+		user.FirstName,
+		user.LastName,
+		loan.LoanType,
+		loan.AccountNumberPartial,
+		loan.OutstandingAmount,
+		loan.PrincipalAmount,
+		loan.DaysOverdue,
+		lastPayment,
+		lastPaymentAmount,
+		interestRate,
+		loan.PolicyMaxDiscountPct,
+		loan.Status,
+	)
+}
+
+func dateStringPtr(v *time.Time) *string {
+	if v == nil {
+		return nil
+	}
+	formatted := v.Format("2006-01-02")
+	return &formatted
 }
 
 func getOrCreateConversation(wf models.BorrowerWorkflow, agentID models.AgentID, promptVersion int) (models.AgentConversation, error) {
@@ -153,6 +343,10 @@ func firstOffer(workflowID string) (*models.ResolutionOffer, error) {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
 	return &rows[0], nil
+}
+
+func GetResolutionOffer(workflowID string) (*models.ResolutionOffer, error) {
+	return firstOffer(workflowID)
 }
 
 func getConversationByID(id string) (*models.AgentConversation, error) {
@@ -298,7 +492,7 @@ func seedEvaluatorVersions() error {
 }
 
 func generateInitialEvaluatorPrompt(agentID models.AgentID) (string, error) {
-	client, err := handoffClient(agentID)
+	client, err := agentClient(agentID)
 	if err != nil {
 		return "", err
 	}
@@ -326,7 +520,7 @@ Return only the judge prompt text.`, agentID)
 	if err != nil {
 		return "", fmt.Errorf("generate evaluator prompt for %s: %w", agentID, err)
 	}
-	if err := LogCost("evaluator_prompt_generation", &agentID, "groq/llama-3.3-70b", resp.InputTokens, resp.OutputTokens, nil, nil); err != nil {
+	if err := LogCost("evaluator_prompt_generation", &agentID, client.ModelUsed(), resp.InputTokens, resp.OutputTokens, nil, nil); err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(resp.AIResponse), nil
@@ -365,13 +559,78 @@ func seedCanaries() error {
 func ensureDemoBorrower() (string, string, error) {
 	userID := "demo-user"
 	loanID := "demo-loan"
+	return ensureSeedBorrower(seedBorrower{
+		userID:               userID,
+		loanID:               loanID,
+		firstName:            "Jordan",
+		lastName:             "Taylor",
+		email:                "jordan@example.com",
+		phone:                "+15555550100",
+		accountNumberPartial: "1234",
+		loanType:             "personal",
+		principalAmount:      10000,
+		outstandingAmount:    7425,
+		daysOverdue:          67,
+		lastPaymentAmount:    250,
+		interestRate:         13.5,
+		policyMaxDiscountPct: 20,
+		extra:                map[string]any{"segment": "demo", "preferred_contact": "phone"},
+	})
+}
+
+type seedBorrower struct {
+	userID               string
+	loanID               string
+	firstName            string
+	lastName             string
+	email                string
+	phone                string
+	accountNumberPartial string
+	loanType             string
+	principalAmount      float64
+	outstandingAmount    float64
+	daysOverdue          int
+	lastPaymentAmount    float64
+	interestRate         float64
+	policyMaxDiscountPct float64
+	extra                map[string]any
+}
+
+func ensureClerkTestBorrower() (string, string, error) {
+	return ensureSeedBorrower(seedBorrower{
+		userID:               "user_3DM3NuFOJFhDFiMk6L8b8zKsAM3",
+		loanID:               "loan_user_3DM3NuFOJFhDFiMk6L8b8zKsAM3",
+		firstName:            "Test",
+		lastName:             "Borrower",
+		email:                "test.borrower@example.com",
+		phone:                "+15555550101",
+		accountNumberPartial: "6789",
+		loanType:             "personal",
+		principalAmount:      15000,
+		outstandingAmount:    9825,
+		daysOverdue:          74,
+		lastPaymentAmount:    300,
+		interestRate:         14.25,
+		policyMaxDiscountPct: 22,
+		extra: map[string]any{
+			"source":            "clerk_seed",
+			"preferred_contact": "phone",
+			"notes":             "Seeded borrower for Clerk-authenticated chat testing",
+		},
+	})
+}
+
+func ensureSeedBorrower(seed seedBorrower) (string, string, error) {
 	userOrm := orm.Load(&models.User{})
 	defer userOrm.Close()
 	var users []models.User
-	if err := userOrm.GetByFieldEquals("Id", userID).Scan(&users); err == nil && len(users) == 0 {
+	if err := userOrm.GetByFieldEquals("Id", seed.userID).Scan(&users); err != nil {
+		return "", "", err
+	}
+	if len(users) == 0 {
 		now := time.Now().UTC()
-		phone := "+15555550100"
-		user := models.User{Id: userID, FirstName: "Jordan", LastName: "Taylor", Email: "jordan@example.com", Phone: &phone, Dob: time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC), Gender: "unspecified", Extra: map[string]any{"segment": "demo", "preferred_contact": "phone"}, CreatedAt: now, UpdatedAt: now}
+		phone := seed.phone
+		user := models.User{Id: seed.userID, FirstName: seed.firstName, LastName: seed.lastName, Email: seed.email, Phone: &phone, Dob: time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC), Gender: "unspecified", Extra: seed.extra, CreatedAt: now, UpdatedAt: now}
 		if err := userOrm.Insert(&user); err != nil {
 			return "", "", err
 		}
@@ -379,17 +638,34 @@ func ensureDemoBorrower() (string, string, error) {
 	loanOrm := orm.Load(&models.Loan{})
 	defer loanOrm.Close()
 	var loans []models.Loan
-	if err := loanOrm.GetByFieldEquals("Id", loanID).Scan(&loans); err == nil && len(loans) == 0 {
+	if err := loanOrm.GetByFieldEquals("Id", seed.loanID).Scan(&loans); err != nil {
+		return "", "", err
+	}
+	if len(loans) == 0 {
 		now := time.Now().UTC()
 		lastPaymentDate := now.AddDate(0, -3, 0)
-		lastPaymentAmount := 250.0
-		interestRate := 13.5
-		loan := models.Loan{Id: loanID, UserId: userID, AccountNumberPartial: "1234", LoanType: "personal", PrincipalAmount: 10000, OutstandingAmount: 7425, DaysOverdue: 67, LastPaymentDate: &lastPaymentDate, LastPaymentAmount: &lastPaymentAmount, InterestRate: &interestRate, PolicyMaxDiscountPct: 20, Status: models.BorrowerStatusPending, CreatedAt: now, UpdatedAt: now}
+		lastPaymentAmount := seed.lastPaymentAmount
+		interestRate := seed.interestRate
+		loan := models.Loan{Id: seed.loanID, UserId: seed.userID, AccountNumberPartial: seed.accountNumberPartial, LoanType: seed.loanType, PrincipalAmount: seed.principalAmount, OutstandingAmount: seed.outstandingAmount, DaysOverdue: seed.daysOverdue, LastPaymentDate: &lastPaymentDate, LastPaymentAmount: &lastPaymentAmount, InterestRate: &interestRate, PolicyMaxDiscountPct: seed.policyMaxDiscountPct, Status: models.BorrowerStatusPending, CreatedAt: now, UpdatedAt: now}
 		if err := loanOrm.Insert(&loan); err != nil {
 			return "", "", err
 		}
 	}
-	return userID, loanID, nil
+	return seed.userID, seed.loanID, nil
+}
+
+func firstLoanForUser(userID string) (*models.Loan, error) {
+	loanOrm := orm.Load(&models.Loan{})
+	defer loanOrm.Close()
+	var loans []models.Loan
+	if err := loanOrm.GetByFieldEquals("UserId", userID).Scan(&loans); err != nil {
+		return nil, err
+	}
+	if len(loans) == 0 {
+		return nil, fmt.Errorf("no loan found for user %s", userID)
+	}
+	sort.Slice(loans, func(i, j int) bool { return loans[i].CreatedAt.Before(loans[j].CreatedAt) })
+	return &loans[0], nil
 }
 
 func totalMessageTokens(messages []models.AgentMessage) int {

@@ -1,7 +1,8 @@
 package mailer
 
 import (
-	"github.com/MelloB1989/karma/config"
+	"riverline_server/constants"
+
 	"github.com/MelloB1989/karma/mails"
 	m "github.com/MelloB1989/karma/models"
 )
@@ -14,7 +15,7 @@ type Template struct {
 }
 
 func (t *Template) Send() error {
-	from := config.GetEnvRaw("MAILER_ADDRESS")
+	from := constants.AppCfg.Get().MailerAddress
 	if from == "" || t.ToEmail == "" {
 		return nil
 	}

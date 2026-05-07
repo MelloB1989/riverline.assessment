@@ -1,13 +1,11 @@
 package constants
 
-import "os"
-
 func GetAllowedOrigins() []string {
 	origins := []string{
 		"https://riverline.mellob.in",
 	}
 
-	if os.Getenv("ENV") == "DEV" {
+	if AppCfg.Get().Environment == "DEV" {
 		origins = append(origins,
 			"http://localhost:3000",
 		)

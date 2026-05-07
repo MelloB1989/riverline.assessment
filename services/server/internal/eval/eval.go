@@ -33,6 +33,7 @@ type generatedTranscript struct {
 	InputTokens  int
 	OutputTokens int
 	TotalTokens  int
+	ModelUsed    string
 }
 
 type MetricScores struct {
@@ -59,6 +60,7 @@ type EvaluationResult struct {
 	Metrics          MetricScores
 	EvaluatorVersion models.EvaluatorVersion
 	Tokens           int
+	ModelUsed        string
 }
 
 func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
@@ -110,7 +112,7 @@ func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
 			if err := convOrm.Insert(&conv); err != nil {
 				return nil, err
 			}
-			if err := collections.LogCost("simulation", &cfg.AgentID, "groq/llama-3.3-70b", transcript.InputTokens, transcript.OutputTokens, &conv.Id, nil); err != nil {
+			if err := collections.LogCost("simulation", &cfg.AgentID, transcript.ModelUsed, transcript.InputTokens, transcript.OutputTokens, &conv.Id, nil); err != nil {
 				return nil, err
 			}
 			msg := models.AgentMessage{Id: utils.GenerateID(), ConversationId: conv.Id, WorkflowId: conv.WorkflowId, AgentId: cfg.AgentID, Role: models.MessageRoleAgent, Content: transcript.Content, TokenCount: intPtr(transcript.OutputTokens), CreatedAt: time.Now().UTC()}
@@ -147,6 +149,7 @@ Requirements:
 		InputTokens:  resp.InputTokens,
 		OutputTokens: resp.OutputTokens,
 		TotalTokens:  resp.Tokens,
+		ModelUsed:    client.ModelUsed(),
 	}, nil
 }
 
@@ -180,7 +183,7 @@ func Evaluate(agentID models.AgentID, transcript string) (*EvaluationResult, err
 		return nil, fmt.Errorf("evaluate %s conversation: %w", agentID, err)
 	}
 	normalizeMetrics(&metrics)
-	return &EvaluationResult{Metrics: metrics, EvaluatorVersion: *evaluator, Tokens: tokens}, nil
+	return &EvaluationResult{Metrics: metrics, EvaluatorVersion: *evaluator, Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
 }
 
 func activeEvaluatorVersion(agentID models.AgentID) (*models.EvaluatorVersion, error) {
@@ -328,14 +331,14 @@ func SaveScore(conv models.AgentConversation, evaluation *EvaluationResult) erro
 		CompliancePassed:         &passed,
 		JudgeBComposite:          &score.JudgeBComposite,
 		JudgeDisagreementDelta:   &score.JudgeDisagreement,
-		EvalModelUsed:            stringPtr("groq/llama-3.3-70b"),
+		EvalModelUsed:            stringPtr(evaluation.ModelUsed),
 		EvalCostUsd:              floatPtr(0),
 		CreatedAt:                time.Now().UTC(),
 	}
 	if err := o.Insert(&row); err != nil {
 		return err
 	}
-	return collections.LogCost("evaluation", &conv.AgentId, "groq/llama-3.3-70b", evaluation.Tokens, 0, &conv.Id, nil)
+	return collections.LogCost("evaluation", &conv.AgentId, evaluation.ModelUsed, evaluation.Tokens, 0, &conv.Id, nil)
 }
 
 func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptExperiment, error) {
@@ -460,7 +463,7 @@ func saveCandidatePrompt(agentID models.AgentID, version int, adopted bool, reje
 	}
 	now := time.Now().UTC()
 	adoptionReason := "candidate improved deterministic treatment scores"
-	candidatePrompt, tokens, err := generateCandidatePrompt(agentID, current.PromptText)
+	candidatePrompt, tokens, modelUsed, err := generateCandidatePrompt(agentID, current.PromptText)
 	if err != nil {
 		return err
 	}
@@ -490,13 +493,13 @@ func saveCandidatePrompt(agentID models.AgentID, version int, adopted bool, reje
 	if err := o.Insert(&candidate); err != nil {
 		return err
 	}
-	return collections.LogCost("prompt_generation", &agentID, "groq/llama-3.3-70b", tokens, 0, nil, nil)
+	return collections.LogCost("prompt_generation", &agentID, modelUsed, tokens, 0, nil, nil)
 }
 
-func generateCandidatePrompt(agentID models.AgentID, currentPrompt string) (string, int, error) {
+func generateCandidatePrompt(agentID models.AgentID, currentPrompt string) (string, int, string, error) {
 	client, err := evaluatorClient(agentID)
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 	prompt := fmt.Sprintf(`Generate an improved production system prompt for the %s collections agent.
 
@@ -507,9 +510,9 @@ Keep the same agent role and system boundaries, but improve compliance clarity, 
 Return only the complete replacement system prompt.`, agentID, currentPrompt)
 	resp, err := client.GenerateText(prompt)
 	if err != nil {
-		return "", 0, fmt.Errorf("generate candidate prompt for %s: %w", agentID, err)
+		return "", 0, "", fmt.Errorf("generate candidate prompt for %s: %w", agentID, err)
 	}
-	return strings.TrimSpace(resp.AIResponse), resp.Tokens, nil
+	return strings.TrimSpace(resp.AIResponse), resp.Tokens, client.ModelUsed(), nil
 }
 
 func resolveMetaFlag(flag *models.MetaFlag) error {
@@ -517,7 +520,7 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	after := 2
 	active := true
 	changeReason := "Generated from meta-evaluation flag " + flag.Id
-	judgePrompt, tokens, err := generateEvaluatorRevision(derefAgent(flag.AgentId), *flag)
+	judgePrompt, tokens, modelUsed, err := generateEvaluatorRevision(derefAgent(flag.AgentId), *flag)
 	if err != nil {
 		return err
 	}
@@ -560,13 +563,13 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	if err := flagOrm.Update(flag, flag.Id); err != nil {
 		return err
 	}
-	return collections.LogCost("evaluator_prompt_generation", flag.AgentId, "groq/llama-3.3-70b", tokens, 0, nil, nil)
+	return collections.LogCost("evaluator_prompt_generation", flag.AgentId, modelUsed, tokens, 0, nil, nil)
 }
 
-func generateEvaluatorRevision(agentID models.AgentID, flag models.MetaFlag) (string, int, error) {
+func generateEvaluatorRevision(agentID models.AgentID, flag models.MetaFlag) (string, int, string, error) {
 	client, err := evaluatorClient(agentID)
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 	evidence, _ := json.Marshal(flag.Evidence)
 	prompt := fmt.Sprintf(`Generate a revised evaluator judge prompt for the %s collections agent.
@@ -584,9 +587,9 @@ The revised prompt must:
 Return only the revised judge prompt text.`, agentID, flag.FlagType, string(evidence), derefString(flag.ProposedAction))
 	resp, err := client.GenerateText(prompt)
 	if err != nil {
-		return "", 0, fmt.Errorf("generate evaluator revision for %s: %w", agentID, err)
+		return "", 0, "", fmt.Errorf("generate evaluator revision for %s: %w", agentID, err)
 	}
-	return strings.TrimSpace(resp.AIResponse), resp.Tokens, nil
+	return strings.TrimSpace(resp.AIResponse), resp.Tokens, client.ModelUsed(), nil
 }
 
 func WelchTTest(a, b []float64) float64 {

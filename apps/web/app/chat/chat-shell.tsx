@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useAuth } from "@clerk/nextjs";
 import { Bot, Send, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -24,42 +25,59 @@ type ConversationView = {
 };
 
 const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9000";
+const clerkJwtTemplate = process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE;
 
 export default function ChatShell() {
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const [workflowId, setWorkflowId] = React.useState<string>("");
   const [messages, setMessages] = React.useState<AgentMessage[]>([]);
   const [input, setInput] = React.useState("");
   const [isLoading, setIsLoading] = React.useState(false);
   const [stage, setStage] = React.useState<"aria" | "nova" | "delta">("aria");
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const optimisticIdRef = React.useRef(0);
+  const didStartRef = React.useRef(false);
 
-  React.useEffect(() => {
-    startWorkflow();
-  }, []);
+  const authHeaders = React.useCallback(async (): Promise<HeadersInit> => {
+    const token = await getToken(clerkJwtTemplate ? { template: clerkJwtTemplate } : undefined);
+    if (!token) {
+      return { "content-type": "application/json" };
+    }
+    return { "content-type": "application/json", authorization: `Bearer ${token}` };
+  }, [getToken]);
 
-  React.useEffect(() => {
-    if (!workflowId) return;
-    const timer = window.setInterval(() => {
-      void loadConversation(workflowId);
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [workflowId]);
+  const loadConversation = React.useCallback(async (id: string) => {
+    const headers = await authHeaders();
+    const res = await fetch(`${apiBase}/api/v1/conversations/${id}`, { headers, cache: "no-store" });
+    if (!res.ok) return;
+    const data = (await res.json()) as ConversationView;
+    setStage(data.workflow?.current_stage ?? "aria");
+    if (data.messages?.length) {
+      setMessages(data.messages);
+    }
+  }, [authHeaders]);
 
-  React.useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
-
-  async function startWorkflow() {
+  const startWorkflow = React.useCallback(async () => {
     setIsLoading(true);
+    const headers = await authHeaders();
     const res = await fetch(`${apiBase}/api/v1/workflows/start`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify({}),
     });
+    if (!res.ok) {
+      setIsLoading(false);
+      return;
+    }
     const data = await res.json();
     const id = data.workflow.id as string;
     setWorkflowId(id);
     setStage(data.workflow.current_stage ?? "aria");
+    if (data.existing) {
+      await loadConversation(id);
+      setIsLoading(false);
+      return;
+    }
     setMessages([
       {
         id: "local-welcome",
@@ -71,25 +89,16 @@ export default function ChatShell() {
       },
     ]);
     setIsLoading(false);
-  }
+  }, [authHeaders, loadConversation]);
 
-  async function loadConversation(id: string) {
-    const res = await fetch(`${apiBase}/api/v1/conversations/${id}`, { cache: "no-store" });
-    if (!res.ok) return;
-    const data = (await res.json()) as ConversationView;
-    setStage(data.workflow?.current_stage ?? "aria");
-    if (data.messages?.length) {
-      setMessages(data.messages);
-    }
-  }
-
-  async function sendMessage() {
+  const sendMessage = React.useCallback(async () => {
     const message = input.trim();
     if (!message || !workflowId || isLoading) return;
     setInput("");
     setIsLoading(true);
+    optimisticIdRef.current += 1;
     const optimistic: AgentMessage = {
-      id: `local-${Date.now()}`,
+      id: `local-${optimisticIdRef.current}`,
       role: "borrower",
       agent_id: stage,
       content: message,
@@ -98,14 +107,36 @@ export default function ChatShell() {
     setMessages((prev) => [...prev, optimistic]);
     const res = await fetch(`${apiBase}/api/v1/chat/${workflowId}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await authHeaders(),
       body: JSON.stringify({ message }),
     });
     if (res.ok) {
       await loadConversation(workflowId);
     }
     setIsLoading(false);
-  }
+  }, [authHeaders, input, isLoading, loadConversation, stage, workflowId]);
+
+  React.useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+    if (didStartRef.current) return;
+    didStartRef.current = true;
+    const timer = window.setTimeout(() => {
+      void startWorkflow();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [isLoaded, isSignedIn, startWorkflow]);
+
+  React.useEffect(() => {
+    if (!workflowId) return;
+    const timer = window.setInterval(() => {
+      void loadConversation(workflowId);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [loadConversation, workflowId]);
+
+  React.useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages]);
 
   return (
     <main className="min-h-screen bg-[#f4efe4] text-[#18211d]">

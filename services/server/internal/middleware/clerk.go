@@ -37,9 +37,21 @@ func ClerkAuth() fiber.Handler {
 		}
 
 		// Store user info in context
-		c.Locals("uid", claims.UserID)
+		userID := strings.TrimSpace(claims.UserID)
+		if userID == "" {
+			userID = strings.TrimSpace(claims.Subject)
+		}
+		if userID == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Missing Clerk user id",
+			})
+		}
+		name := firstNonEmpty(claims.FullName, claims.Name, strings.TrimSpace(claims.FirstName+" "+claims.LastName), claims.Username)
+		c.Locals("uid", userID)
 		c.Locals("email", claims.Email)
-		c.Locals("name", claims.FullName)
+		c.Locals("firstName", claims.FirstName)
+		c.Locals("lastName", claims.LastName)
+		c.Locals("name", name)
 		c.Locals("imageUrl", claims.ImageURL)
 
 		return c.Next()
@@ -97,6 +109,30 @@ func GetUserEmail(c *fiber.Ctx) string {
 func GetUserName(c *fiber.Ctx) string {
 	if name, ok := c.Locals("name").(string); ok {
 		return name
+	}
+	return ""
+}
+
+func GetUserFirstName(c *fiber.Ctx) string {
+	if name, ok := c.Locals("firstName").(string); ok {
+		return name
+	}
+	return ""
+}
+
+func GetUserLastName(c *fiber.Ctx) string {
+	if name, ok := c.Locals("lastName").(string); ok {
+		return name
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
 	}
 	return ""
 }

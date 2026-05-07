@@ -5,43 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1778098822936,
-      "tag": "0000_huge_invisible_woman",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1778100508662,
-      "tag": "0001_adorable_tony_stark",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1778103270623,
-      "tag": "0002_curved_ultimates",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1778131200000,
-      "tag": "0003_remove_dead_message_attachment_columns",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1778133000000,
-      "tag": "0004_align_borrower_flow_schema",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1778164557124,
-      "tag": "0005_curly_ser_duncan",
+      "when": 1778184885193,
+      "tag": "0000_mysterious_supernaut",
       "breakpoints": true
     }
   ]

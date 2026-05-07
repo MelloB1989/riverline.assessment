@@ -3,13 +3,16 @@ package handlers
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"riverline_server/constants"
 	"riverline_server/internal/collections"
+	"riverline_server/internal/middleware"
 	"riverline_server/internal/models"
+	"riverline_server/internal/temporalclient"
 	"riverline_server/internal/workflows"
 
 	"github.com/MelloB1989/karma/v2/orm"
@@ -18,7 +21,6 @@ import (
 )
 
 type startWorkflowRequest struct {
-	UserID string `json:"user_id"`
 	LoanID string `json:"loan_id"`
 }
 
@@ -39,29 +41,32 @@ type vapiWebhook struct {
 func StartWorkflow(c *fiber.Ctx) error {
 	var req startWorkflowRequest
 	_ = c.BodyParser(&req)
-	wf, err := collections.StartWorkflow(req.UserID, req.LoanID)
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		return fiber.NewError(fiber.StatusUnauthorized, "missing authenticated user")
+	}
+	if err := collections.EnsureUserFromAuth(userID, middleware.GetUserEmail(c), middleware.GetUserFirstName(c), middleware.GetUserLastName(c), middleware.GetUserName(c)); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	if active, err := collections.ActiveWorkflowForUser(userID); err == nil {
+		return c.JSON(fiber.Map{"workflow": active, "existing": true})
+	} else if !errors.Is(err, collections.ErrActiveWorkflowNotFound) {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	wf, err := collections.StartWorkflow(userID, req.LoanID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
-	temporalClient, err := temporalClient()
-	if err != nil {
-		return fiber.NewError(fiber.StatusServiceUnavailable, err.Error())
-	}
-	defer temporalClient.Close()
-	_, err = temporalClient.ExecuteWorkflow(c.Context(), client.StartWorkflowOptions{
-		ID:        wf.Id,
-		TaskQueue: workflows.BorrowerCollectionsTaskQueue,
-	}, workflows.BorrowerCollectionsWorkflow, workflows.BorrowerWorkflowInput{WorkflowID: wf.Id, UserID: wf.UserId, LoanID: wf.LoanId})
-	if err != nil {
-		return fiber.NewError(fiber.StatusServiceUnavailable, err.Error())
-	}
-	return c.JSON(fiber.Map{"workflow": wf})
+	return c.JSON(fiber.Map{"workflow": wf, "existing": false})
 }
 
 func GetWorkflow(c *fiber.Ctx) error {
 	wf, err := collections.GetWorkflow(c.Params("id"))
 	if err != nil {
 		return fiber.NewError(fiber.StatusNotFound, err.Error())
+	}
+	if wf.UserId != middleware.GetUserID(c) {
+		return fiber.NewError(fiber.StatusForbidden, "workflow does not belong to authenticated user")
 	}
 	return c.JSON(fiber.Map{"workflow": wf})
 }
@@ -71,16 +76,27 @@ func PostChat(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	resp, err := collections.HandleChat(c.Params("workflowId"), req.Message)
+	wf, err := collections.GetWorkflow(c.Params("workflowId"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusNotFound, err.Error())
+	}
+	if wf.UserId != middleware.GetUserID(c) {
+		return fiber.NewError(fiber.StatusForbidden, "workflow does not belong to authenticated user")
+	}
+	resp, err := collections.HandleChat(wf.Id, req.Message)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	if resp.StageComplete {
-		signalName := "aria_complete"
-		if resp.Conversation.AgentId == "delta" {
-			signalName = "delta_complete"
+	if resp.StageComplete && resp.Conversation.AgentId == models.AgentAria {
+		workflowID := c.Params("workflowId")
+		if err := startTemporalWorkflow(c, workflowID+"-aria-handoff", workflows.AriaHandoffWorkflow, workflowID); err != nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, err.Error())
 		}
-		if err := signalWorkflow(c, c.Params("workflowId"), signalName, nil); err != nil {
+	}
+	if resp.NovaCallRescheduled && resp.NovaScheduledCallAt != nil {
+		workflowID := c.Params("workflowId")
+		signal := workflows.RescheduleNovaCallSignal{ScheduledCallAt: *resp.NovaScheduledCallAt, Reason: derefString(resp.NovaRescheduleReason)}
+		if err := signalTemporalWorkflow(c, workflowID+"-aria-handoff", workflows.RescheduleNovaCallSignalName, signal); err != nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, err.Error())
 		}
 	}
@@ -92,11 +108,21 @@ func GetConversation(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusNotFound, err.Error())
 	}
+	if view.Workflow.UserId != middleware.GetUserID(c) {
+		return fiber.NewError(fiber.StatusForbidden, "conversation does not belong to authenticated user")
+	}
 	return c.JSON(view)
 }
 
 func StreamChat(c *fiber.Ctx) error {
 	workflowID := c.Params("workflowId")
+	wf, err := collections.GetWorkflow(workflowID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusNotFound, err.Error())
+	}
+	if wf.UserId != middleware.GetUserID(c) {
+		return fiber.NewError(fiber.StatusForbidden, "workflow does not belong to authenticated user")
+	}
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
 	c.Set("Connection", "keep-alive")
@@ -135,7 +161,7 @@ func VapiWebhook(c *fiber.Ctx) error {
 	}
 	if strings.Contains(eventType, "ended") || eventType == "call.ended" || transcript != "" {
 		signal := workflows.NovaCompleteSignal{CallID: callID, Transcript: transcript, RecordingURL: recordingURL}
-		if err := signalWorkflow(c, workflowID, "nova_complete", signal); err != nil {
+		if err := signalWithStartTemporalWorkflow(c, workflows.NovaCompletionWorkflowID(workflowID), workflows.NovaCompleteSignalName, signal, workflows.NovaCompletionWorkflow, workflowID); err != nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, err.Error())
 		}
 	}
@@ -174,20 +200,39 @@ func AdminEvalSummary(c *fiber.Ctx) error {
 	})
 }
 
-func signalWorkflow(c *fiber.Ctx, workflowID, signalName string, payload any) error {
-	temporalClient, err := temporalClient()
+func startTemporalWorkflow(c *fiber.Ctx, id string, workflow any, args ...any) error {
+	temporalClient, err := temporalclient.Dial()
 	if err != nil {
 		return err
 	}
 	defer temporalClient.Close()
-	if payload == nil {
-		payload = struct{}{}
+	_, err = temporalClient.ExecuteWorkflow(c.Context(), client.StartWorkflowOptions{
+		ID:        id,
+		TaskQueue: workflows.BorrowerCollectionsTaskQueue,
+	}, workflow, args...)
+	return err
+}
+
+func signalTemporalWorkflow(c *fiber.Ctx, workflowID, signalName string, payload any) error {
+	temporalClient, err := temporalclient.Dial()
+	if err != nil {
+		return err
 	}
+	defer temporalClient.Close()
 	return temporalClient.SignalWorkflow(c.Context(), workflowID, "", signalName, payload)
 }
 
-func temporalClient() (client.Client, error) {
-	return client.Dial(client.Options{HostPort: constants.AppCfg.Get().TemporalHostPort})
+func signalWithStartTemporalWorkflow(c *fiber.Ctx, workflowID, signalName string, payload any, wf any, args ...any) error {
+	temporalClient, err := temporalclient.Dial()
+	if err != nil {
+		return err
+	}
+	defer temporalClient.Close()
+	_, err = temporalClient.SignalWithStartWorkflow(c.Context(), workflowID, signalName, payload, client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: workflows.BorrowerCollectionsTaskQueue,
+	}, wf, args...)
+	return err
 }
 
 func firstString(values ...string) string {
@@ -215,4 +260,11 @@ func nestedString(m map[string]any, path string) string {
 		return s
 	}
 	return ""
+}
+
+func derefString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }

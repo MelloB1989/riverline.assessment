@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 
 	"riverline_server/internal/models"
 
@@ -18,13 +19,22 @@ func newClient(agentID models.AgentID, cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.Model == "" {
+		cfg.Model = ai.Llama33_70B
+	}
+	if cfg.Provider == "" {
+		cfg.Provider = ai.Groq
+	}
+	modelCfg := ai.ModelConfig{BaseModel: cfg.Model, Provider: cfg.Provider}
 	return &Client{
 		agentID:       agentID,
 		promptVersion: prompt.VersionNumber,
 		prompt:        prompt.PromptText,
+		modelID:       modelCfg.GetModelString(),
+		providerID:    string(cfg.Provider),
 		aiClient: ai.NewKarmaAI(
-			ai.Llama33_70B,
-			ai.Groq,
+			cfg.Model,
+			cfg.Provider,
 			ai.WithMaxTokens(500),
 			ai.WithSystemMessage(prompt.PromptText),
 			ai.WithTemperature(cfg.Temperature),
@@ -42,16 +52,61 @@ func (c *Client) PromptVersion() int {
 	return c.promptVersion
 }
 
+func (c *Client) ModelID() string {
+	return c.modelID
+}
+
+func (c *Client) ProviderID() string {
+	return c.providerID
+}
+
+func (c *Client) ModelUsed() string {
+	if c.providerID == "" {
+		return c.modelID
+	}
+	return c.providerID + "/" + c.modelID
+}
+
 func (c *Client) Converse(handoff string, history []models.AgentMessage) (*karmaModels.AIChatResponse, error) {
-	chatHistory := toKarmaHistory(handoff, history)
+	restoreSystemPrompt := c.useRuntimeSystemPrompt(handoff)
+	defer restoreSystemPrompt()
+	chatHistory := toKarmaHistory(history)
 	resp, err := c.aiClient.ChatCompletionManaged(chatHistory)
-	if err == nil && strings.TrimSpace(resp.AIResponse) != "" {
+	if err == nil && (strings.TrimSpace(resp.AIResponse) != "" || len(resp.ToolCalls) > 0) {
 		return resp, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	return nil, errors.New("empty AI response")
+}
+
+func (c *Client) useRuntimeSystemPrompt(handoff string) func() {
+	previous := c.aiClient.SystemMessage
+	c.aiClient.SystemMessage = c.systemPrompt(handoff)
+	return func() {
+		c.aiClient.SystemMessage = previous
+	}
+}
+
+func (c *Client) systemPrompt(handoff string) string {
+	handoff = strings.TrimSpace(handoff)
+	if handoff == "" {
+		return c.prompt
+	}
+	return c.prompt + "\n\n" + runtimeContextMessage(handoff)
+}
+
+func (c *Client) ConverseWithTools(handoff string, history []models.AgentMessage, tools ...ai.GoFunctionTool) (*karmaModels.AIChatResponse, error) {
+	c.aiClient.ClearGoFunctionTools()
+	defer c.aiClient.ClearGoFunctionTools()
+	c.aiClient.EnableTools()
+	for _, tool := range tools {
+		if err := c.aiClient.AddGoFunctionTool(tool); err != nil {
+			return nil, err
+		}
+	}
+	return c.Converse(handoff, history)
 }
 
 func (c *Client) GenerateText(prompt string) (*karmaModels.AIChatResponse, error) {
@@ -75,6 +130,21 @@ func (c *Client) ParseHandoff(prompt string, output any) (int, error) {
 	return c.ParseStructured(prompt, output)
 }
 
+func MessagesForCompletion(messages []models.AgentMessage) []models.AgentMessage {
+	out := make([]models.AgentMessage, 0, len(messages))
+	for _, msg := range messages {
+		msg.Content = messageForCompletion(msg)
+		out = append(out, msg)
+	}
+	return out
+}
+
+const (
+	ToolCreateAriaHandoff  = "create_aria_handoff"
+	ToolRescheduleNovaCall = "reschedule_nova_call"
+	ToolEndNovaCall        = "end_nova_call_create_handoff"
+)
+
 func activePrompt(agentID models.AgentID) (*models.PromptVersion, error) {
 	o := orm.Load(&models.PromptVersion{})
 	defer o.Close()
@@ -89,9 +159,8 @@ func activePrompt(agentID models.AgentID) (*models.PromptVersion, error) {
 	return &rows[0], nil
 }
 
-func toKarmaHistory(handoff string, messages []models.AgentMessage) *karmaModels.AIChatHistory {
+func toKarmaHistory(messages []models.AgentMessage) *karmaModels.AIChatHistory {
 	h := &karmaModels.AIChatHistory{
-		Context:  handoff,
 		Messages: make([]karmaModels.AIMessage, 0, len(messages)),
 	}
 	for _, msg := range messages {
@@ -102,9 +171,32 @@ func toKarmaHistory(handoff string, messages []models.AgentMessage) *karmaModels
 		h.Messages = append(h.Messages, karmaModels.AIMessage{
 			UniqueId:  msg.Id,
 			Role:      role,
-			Message:   msg.Content,
+			Message:   messageForCompletion(msg),
 			Timestamp: msg.CreatedAt,
 		})
 	}
 	return h
+}
+
+func runtimeContextMessage(context string) string {
+	return "RUNTIME CONTEXT - authoritative borrower, loan, workflow, and handoff data. Use exact values from this context. Do not output field names or placeholders. If a value is present here, do not say it is unavailable.\n" + context
+}
+
+func messageForCompletion(msg models.AgentMessage) string {
+	if msg.Role != models.MessageRoleBorrower {
+		return msg.Content
+	}
+	return formatISTMessage(msg.CreatedAt, msg.Content)
+}
+
+func formatISTMessage(createdAt time.Time, content string) string {
+	return "[IST " + createdAt.In(istLocation()).Format("2006-01-02 15:04:05 MST") + "] " + content
+}
+
+func istLocation() *time.Location {
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	if err == nil {
+		return loc
+	}
+	return time.FixedZone("IST", 5*60*60+30*60)
 }

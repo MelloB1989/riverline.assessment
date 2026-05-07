@@ -72,6 +72,7 @@ type ResolutionOffer struct {
 	CallRecordingUrl    *string        `json:"call_recording_url"`
 	CallTranscript      *string        `json:"call_transcript"`
 	CallDurationSeconds *int           `json:"call_duration_seconds"`
+	ScheduledCallAt     *time.Time     `json:"scheduled_call_at"`
 	LumpSumOffered      *float64       `json:"lump_sum_offered"`
 	LumpSumDiscountPct  *float64       `json:"lump_sum_discount_pct"`
 	EmiAmount           *float64       `json:"emi_amount"`

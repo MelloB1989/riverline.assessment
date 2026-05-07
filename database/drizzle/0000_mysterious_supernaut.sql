@@ -35,7 +35,7 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
- CREATE TYPE "public"."persona" AS ENUM('cooperative', 'combative', 'evasive', 'distressed');
+ CREATE TYPE "public"."persona" AS ENUM('cooperative', 'combative', 'evasive', 'distressed', 'confused');
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
@@ -45,10 +45,10 @@ CREATE TABLE IF NOT EXISTS "agent_conversations" (
 	"workflow_id" varchar NOT NULL,
 	"user_id" varchar NOT NULL,
 	"agent_id" "agent_id" NOT NULL,
+	"prompt_version" integer NOT NULL,
 	"is_simulated" boolean DEFAULT false,
 	"persona_type" "persona",
 	"seed" varchar,
-	"prompt_version" integer NOT NULL,
 	"outcome" "outcome",
 	"total_turns" integer DEFAULT 0,
 	"total_tokens_used" integer DEFAULT 0,
@@ -60,26 +60,10 @@ CREATE TABLE IF NOT EXISTS "agent_messages" (
 	"id" varchar PRIMARY KEY NOT NULL,
 	"conversation_id" varchar NOT NULL,
 	"workflow_id" varchar NOT NULL,
-	"user_id" varchar NOT NULL,
 	"agent_id" "agent_id" NOT NULL,
 	"role" "message_role" NOT NULL,
 	"content" text NOT NULL,
 	"token_count" integer,
-	"created_at" timestamp DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE IF NOT EXISTS "assessments" (
-	"id" varchar PRIMARY KEY NOT NULL,
-	"workflow_id" varchar NOT NULL,
-	"user_id" varchar NOT NULL,
-	"identity_verified" boolean DEFAULT false,
-	"employment_status" varchar,
-	"monthly_income_range" varchar,
-	"monthly_obligations" numeric,
-	"default_reason" varchar,
-	"borrower_emotional_state" "persona",
-	"has_savings" boolean,
-	"hardship_mentioned" boolean DEFAULT false,
 	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -90,9 +74,17 @@ CREATE TABLE IF NOT EXISTS "borrower_workflows" (
 	"current_stage" "agent_id" DEFAULT 'aria' NOT NULL,
 	"aria_attempts" integer DEFAULT 0 NOT NULL,
 	"outcome" "outcome",
+	"identity_verified" boolean DEFAULT false,
+	"employment_status" varchar,
+	"monthly_income_range" varchar,
+	"monthly_obligations" real,
+	"default_reason" varchar,
+	"borrower_emotional_state" "persona",
+	"hardship_mentioned" boolean DEFAULT false,
 	"aria_summary" text,
-	"nova_summary" text,
-	"final_offer_amount" numeric,
+	"context_for_nova" text,
+	"context_for_delta" text,
+	"final_offer_amount" real,
 	"final_offer_deadline" timestamp,
 	"resolved_at" timestamp,
 	"stop_contact_flagged" boolean DEFAULT false,
@@ -130,43 +122,26 @@ CREATE TABLE IF NOT EXISTS "conversation_scores" (
 	"is_simulated" boolean DEFAULT true,
 	"persona_type" "persona",
 	"seed" varchar,
-	"composite_score" numeric NOT NULL,
-	"score_identity_verified" numeric,
-	"score_info_completeness" numeric,
-	"score_no_redundancy" numeric,
-	"score_tone_appropriateness" numeric,
-	"score_offer_clarity" numeric,
-	"score_objection_handling" numeric,
-	"score_commitment_attempt" numeric,
-	"score_context_continuity" numeric,
-	"score_consequence_accuracy" numeric,
-	"score_deadline_specificity" numeric,
-	"score_no_negotiation_drift" numeric,
-	"score_compliance_pass" numeric,
-	"compliance_breakdown" jsonb DEFAULT '{}'::jsonb,
+	"composite_score" real NOT NULL,
+	"score_identity_verified" real,
+	"score_info_completeness" real,
+	"score_no_redundancy" real,
+	"score_tone_appropriateness" real,
+	"score_offer_clarity" real,
+	"score_objection_handling" real,
+	"score_commitment_attempt" real,
+	"score_context_continuity" real,
+	"score_consequence_accuracy" real,
+	"score_deadline_specificity" real,
+	"score_no_negotiation_drift" real,
+	"score_compliance_pass" real,
 	"compliance_passed" boolean,
-	"judge_b_composite" numeric,
-	"judge_b_metric_scores" jsonb DEFAULT '{}'::jsonb,
-	"judge_disagreement_delta" numeric,
-	"eval_cost_usd" numeric,
+	"compliance_breakdown" jsonb DEFAULT '{}'::jsonb,
+	"judge_b_composite" real,
+	"judge_disagreement_delta" real,
+	"eval_cost_usd" real,
 	"eval_model_used" varchar,
 	"created_at" timestamp DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE IF NOT EXISTS "eval_runs" (
-	"id" varchar PRIMARY KEY NOT NULL,
-	"run_label" varchar NOT NULL,
-	"seed" integer NOT NULL,
-	"batch_size" integer NOT NULL,
-	"personas_used" jsonb DEFAULT '[]'::jsonb,
-	"agent_ids" jsonb DEFAULT '[]'::jsonb,
-	"prompt_versions_used" jsonb DEFAULT '{}'::jsonb,
-	"evaluator_versions_used" jsonb DEFAULT '{}'::jsonb,
-	"total_conversations" integer,
-	"total_cost_usd" numeric,
-	"started_at" timestamp DEFAULT now() NOT NULL,
-	"completed_at" timestamp,
-	"config_snapshot" jsonb DEFAULT '{}'::jsonb
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "evaluator_versions" (
@@ -188,7 +163,7 @@ CREATE TABLE IF NOT EXISTS "llm_cost_log" (
 	"prompt_tokens" integer NOT NULL,
 	"completion_tokens" integer NOT NULL,
 	"total_tokens" integer NOT NULL,
-	"cost_usd" numeric NOT NULL,
+	"cost_usd" real NOT NULL,
 	"conversation_id" varchar,
 	"experiment_id" varchar,
 	"created_at" timestamp DEFAULT now() NOT NULL
@@ -199,13 +174,13 @@ CREATE TABLE IF NOT EXISTS "loans" (
 	"user_id" varchar NOT NULL,
 	"account_number_partial" varchar NOT NULL,
 	"loan_type" varchar NOT NULL,
-	"principal_amount" numeric NOT NULL,
-	"outstanding_amount" numeric NOT NULL,
+	"principal_amount" real NOT NULL,
+	"outstanding_amount" real NOT NULL,
 	"days_overdue" integer NOT NULL,
 	"last_payment_date" timestamp,
-	"last_payment_amount" numeric,
-	"interest_rate" numeric,
-	"policy_max_discount_pct" numeric NOT NULL,
+	"last_payment_amount" real,
+	"interest_rate" real,
+	"policy_max_discount_pct" real NOT NULL,
 	"status" "borrower_status" DEFAULT 'pending' NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
@@ -231,32 +206,24 @@ CREATE TABLE IF NOT EXISTS "prompt_experiments" (
 	"control_version" integer NOT NULL,
 	"candidate_version" integer NOT NULL,
 	"control_n" integer NOT NULL,
-	"control_mean" numeric NOT NULL,
-	"control_stddev" numeric NOT NULL,
-	"control_median" numeric NOT NULL,
-	"control_p10" numeric,
-	"control_p90" numeric,
-	"control_min" numeric,
-	"control_max" numeric,
-	"control_compliance_rate" numeric,
+	"control_mean" real NOT NULL,
+	"control_stddev" real NOT NULL,
+	"control_median" real NOT NULL,
+	"control_compliance_rate" real NOT NULL,
+	"control_scores" jsonb DEFAULT '[]'::jsonb,
 	"treatment_n" integer NOT NULL,
-	"treatment_mean" numeric NOT NULL,
-	"treatment_stddev" numeric NOT NULL,
-	"treatment_median" numeric NOT NULL,
-	"treatment_p10" numeric,
-	"treatment_p90" numeric,
-	"treatment_min" numeric,
-	"treatment_max" numeric,
-	"treatment_compliance_rate" numeric,
-	"mean_delta" numeric NOT NULL,
-	"p_value" numeric NOT NULL,
-	"cohens_d" numeric,
+	"treatment_mean" real NOT NULL,
+	"treatment_stddev" real NOT NULL,
+	"treatment_median" real NOT NULL,
+	"treatment_compliance_rate" real NOT NULL,
+	"treatment_scores" jsonb DEFAULT '[]'::jsonb,
+	"mean_delta" real NOT NULL,
+	"p_value" real NOT NULL,
+	"cohens_d" real,
 	"is_significant" boolean,
 	"adopted" boolean NOT NULL,
 	"rejection_reason" text,
-	"control_scores" jsonb DEFAULT '[]'::jsonb,
-	"treatment_scores" jsonb DEFAULT '[]'::jsonb,
-	"experiment_cost_usd" numeric,
+	"experiment_cost_usd" real,
 	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -276,29 +243,22 @@ CREATE TABLE IF NOT EXISTS "prompt_versions" (
 CREATE TABLE IF NOT EXISTS "resolution_offers" (
 	"id" varchar PRIMARY KEY NOT NULL,
 	"workflow_id" varchar NOT NULL,
+	"candidate_offer" jsonb DEFAULT '{}'::jsonb,
 	"vapi_call_id" varchar,
 	"call_recording_url" varchar,
 	"call_transcript" text,
-	"lump_sum_offered" numeric,
-	"lump_sum_discount_pct" numeric,
-	"emi_amount" numeric,
+	"call_duration_seconds" integer,
+	"scheduled_call_at" timestamp,
+	"lump_sum_offered" real,
+	"lump_sum_discount_pct" real,
+	"emi_amount" real,
 	"emi_months" integer,
 	"emi_start_date" timestamp,
 	"hardship_offered" boolean DEFAULT false,
 	"offer_accepted" boolean,
 	"accepted_offer_type" varchar,
-	"objections_raised" json DEFAULT '[]'::json,
-	"call_duration_seconds" integer,
+	"objections_raised" jsonb DEFAULT '[]'::jsonb,
 	"created_at" timestamp DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE IF NOT EXISTS "user_memories" (
-	"id" varchar PRIMARY KEY NOT NULL,
-	"user_id" varchar NOT NULL,
-	"memory_toc" json DEFAULT '{}'::json,
-	"memory_tree" json DEFAULT '{}'::json,
-	"token_estimate" integer DEFAULT 0,
-	"updated_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "users" (
@@ -309,12 +269,9 @@ CREATE TABLE IF NOT EXISTS "users" (
 	"phone" varchar,
 	"dob" timestamp NOT NULL,
 	"gender" varchar NOT NULL,
-	"pfp" varchar DEFAULT '',
-	"bio" text NOT NULL,
-	"extra" json DEFAULT '{}'::json,
+	"extra" jsonb DEFAULT '{}'::jsonb,
 	"created_at" timestamp DEFAULT now() NOT NULL,
-	"updated_at" timestamp DEFAULT now() NOT NULL,
-	"billing_address" json DEFAULT '{"country":"IN","state":"","city":"","street":"","zipcode":""}'::json
+	"updated_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 DO $$ BEGIN
@@ -337,24 +294,6 @@ END $$;
 --> statement-breakpoint
 DO $$ BEGIN
  ALTER TABLE "agent_messages" ADD CONSTRAINT "agent_messages_workflow_id_borrower_workflows_id_fk" FOREIGN KEY ("workflow_id") REFERENCES "public"."borrower_workflows"("id") ON DELETE no action ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
---> statement-breakpoint
-DO $$ BEGIN
- ALTER TABLE "agent_messages" ADD CONSTRAINT "agent_messages_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
---> statement-breakpoint
-DO $$ BEGIN
- ALTER TABLE "assessments" ADD CONSTRAINT "assessments_workflow_id_borrower_workflows_id_fk" FOREIGN KEY ("workflow_id") REFERENCES "public"."borrower_workflows"("id") ON DELETE no action ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
---> statement-breakpoint
-DO $$ BEGIN
- ALTER TABLE "assessments" ADD CONSTRAINT "assessments_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
@@ -401,8 +340,4 @@ EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
-DO $$ BEGIN
- ALTER TABLE "user_memories" ADD CONSTRAINT "user_memories_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS "borrower_workflows_one_active_per_user_idx" ON "borrower_workflows" USING btree ("user_id") WHERE "borrower_workflows"."outcome" IS NULL AND "borrower_workflows"."resolved_at" IS NULL;

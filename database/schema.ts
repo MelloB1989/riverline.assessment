@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   varchar,
@@ -6,7 +7,8 @@ import {
   timestamp,
   integer,
   boolean,
-  numeric,
+  real,
+  uniqueIndex,
   pgEnum,
   jsonb,
 } from "drizzle-orm/pg-core";
@@ -89,13 +91,13 @@ export const loans = pgTable("loans", {
     .references(() => users.id),
   account_number_partial: varchar("account_number_partial").notNull(), // last 4 digits only
   loan_type: varchar("loan_type").notNull(),
-  principal_amount: numeric("principal_amount").notNull(),
-  outstanding_amount: numeric("outstanding_amount").notNull(),
+  principal_amount: real("principal_amount").notNull(),
+  outstanding_amount: real("outstanding_amount").notNull(),
   days_overdue: integer("days_overdue").notNull(),
   last_payment_date: timestamp("last_payment_date"),
-  last_payment_amount: numeric("last_payment_amount"),
-  interest_rate: numeric("interest_rate"),
-  policy_max_discount_pct: numeric("policy_max_discount_pct").notNull(), // Nova cannot exceed this
+  last_payment_amount: real("last_payment_amount"),
+  interest_rate: real("interest_rate"),
+  policy_max_discount_pct: real("policy_max_discount_pct").notNull(), // Nova cannot exceed this
   status: borrowerStatusEnum("status").default("pending").notNull(),
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
@@ -106,51 +108,61 @@ export const loans = pgTable("loans", {
 // One row per borrower journey. ID = Temporal workflow ID.
 // Aria's collected assessment fields live here.
 // Context snapshots are immutable once written; aria_summary is the mutable re-entry context.
-export const borrower_workflows = pgTable("borrower_workflows", {
-  id: varchar("id").primaryKey().notNull(), // Temporal workflow ID
-  user_id: varchar("user_id")
-    .notNull()
-    .references(() => users.id),
-  loan_id: varchar("loan_id")
-    .notNull()
-    .references(() => loans.id),
+export const borrower_workflows = pgTable(
+  "borrower_workflows",
+  {
+    id: varchar("id").primaryKey().notNull(), // Temporal workflow ID
+    user_id: varchar("user_id")
+      .notNull()
+      .references(() => users.id),
+    loan_id: varchar("loan_id")
+      .notNull()
+      .references(() => loans.id),
 
-  current_stage: agentIdEnum("current_stage").default("aria").notNull(),
-  aria_attempts: integer("aria_attempts").default(0).notNull(),
-  outcome: outcomeEnum("outcome"),
+    current_stage: agentIdEnum("current_stage").default("aria").notNull(),
+    aria_attempts: integer("aria_attempts").default(0).notNull(),
+    outcome: outcomeEnum("outcome"),
 
-  // ── Aria collected fields (written at end of Aria stage) ──
-  identity_verified: boolean("identity_verified").default(false),
-  employment_status: varchar("employment_status"), // "employed" | "unemployed" | "self_employed" | "retired"
-  monthly_income_range: varchar("monthly_income_range"), // e.g. "20000-30000"
-  monthly_obligations: numeric("monthly_obligations"), // existing EMIs / rent
-  default_reason: varchar("default_reason"), // borrower's stated reason
-  borrower_emotional_state: personaEnum("borrower_emotional_state"),
-  hardship_mentioned: boolean("hardship_mentioned").default(false),
+    // ── Aria collected fields (written at end of Aria stage) ──
+    identity_verified: boolean("identity_verified").default(false),
+    employment_status: varchar("employment_status"), // "employed" | "unemployed" | "self_employed" | "retired"
+    monthly_income_range: varchar("monthly_income_range"), // e.g. "20000-30000"
+    monthly_obligations: real("monthly_obligations"), // existing EMIs / rent
+    default_reason: varchar("default_reason"), // borrower's stated reason
+    borrower_emotional_state: personaEnum("borrower_emotional_state"),
+    hardship_mentioned: boolean("hardship_mentioned").default(false),
 
-  // ── Context summaries (≤500 tokens each, enforced in application code) ──
-  // aria_summary: mutable. Updated by Nova ("Nova already called") and Delta
-  //   ("Delta already sent final notice") so re-entering borrowers get full picture.
-  aria_summary: text("aria_summary"),
+    // ── Context summaries (≤500 tokens each, enforced in application code) ──
+    // aria_summary: mutable. Updated by Nova ("Nova already called") and Delta
+    //   ("Delta already sent final notice") so re-entering borrowers get full picture.
+    aria_summary: text("aria_summary"),
 
-  // context_for_nova: immutable snapshot written just before Nova is triggered.
-  //   Contains identity, financials, emotional state. Nova's system prompt gets this.
-  context_for_nova: text("context_for_nova"),
+    // context_for_nova: immutable snapshot written just before Nova is triggered.
+    //   Contains identity, financials, emotional state. Nova's system prompt gets this.
+    context_for_nova: text("context_for_nova"),
 
-  // context_for_delta: immutable snapshot written just before Delta is triggered.
-  //   Contains everything from Aria + Nova call summary.
-  context_for_delta: text("context_for_delta"),
+    // context_for_delta: immutable snapshot written just before Delta is triggered.
+    //   Contains everything from Aria + Nova call summary.
+    context_for_delta: text("context_for_delta"),
 
-  // ── Outcome tracking ──
-  final_offer_amount: numeric("final_offer_amount"),
-  final_offer_deadline: timestamp("final_offer_deadline"),
-  resolved_at: timestamp("resolved_at"),
-  stop_contact_flagged: boolean("stop_contact_flagged").default(false),
-  hardship_flagged: boolean("hardship_flagged").default(false),
+    // ── Outcome tracking ──
+    final_offer_amount: real("final_offer_amount"),
+    final_offer_deadline: timestamp("final_offer_deadline"),
+    resolved_at: timestamp("resolved_at"),
+    stop_contact_flagged: boolean("stop_contact_flagged").default(false),
+    hardship_flagged: boolean("hardship_flagged").default(false),
 
-  created_at: timestamp("created_at").defaultNow().notNull(),
-  updated_at: timestamp("updated_at").defaultNow().notNull(),
-});
+    created_at: timestamp("created_at").defaultNow().notNull(),
+    updated_at: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    one_active_per_user: uniqueIndex(
+      "borrower_workflows_one_active_per_user_idx",
+    )
+      .on(table.user_id)
+      .where(sql`${table.outcome} IS NULL AND ${table.resolved_at} IS NULL`),
+  }),
+);
 
 // Nova's call record. One row per workflow.
 // candidate_offer: what Nova planned before calling (from Aria's context).
@@ -170,11 +182,12 @@ export const resolution_offers = pgTable("resolution_offers", {
   call_recording_url: varchar("call_recording_url"),
   call_transcript: text("call_transcript"),
   call_duration_seconds: integer("call_duration_seconds"),
+  scheduled_call_at: timestamp("scheduled_call_at"),
 
   // Post-call actuals
-  lump_sum_offered: numeric("lump_sum_offered"),
-  lump_sum_discount_pct: numeric("lump_sum_discount_pct"),
-  emi_amount: numeric("emi_amount"),
+  lump_sum_offered: real("lump_sum_offered"),
+  lump_sum_discount_pct: real("lump_sum_discount_pct"),
+  emi_amount: real("emi_amount"),
   emi_months: integer("emi_months"),
   emi_start_date: timestamp("emi_start_date"),
   hardship_offered: boolean("hardship_offered").default(false),
@@ -258,37 +271,37 @@ export const conversation_scores = pgTable("conversation_scores", {
   persona_type: personaEnum("persona_type"),
   seed: varchar("seed"),
 
-  composite_score: numeric("composite_score").notNull(), // 0–100
+  composite_score: real("composite_score").notNull(), // 0–100
 
   // Aria metrics (each 0–10)
-  score_identity_verified: numeric("score_identity_verified"),
-  score_info_completeness: numeric("score_info_completeness"),
-  score_no_redundancy: numeric("score_no_redundancy"),
-  score_tone_appropriateness: numeric("score_tone_appropriateness"),
+  score_identity_verified: real("score_identity_verified"),
+  score_info_completeness: real("score_info_completeness"),
+  score_no_redundancy: real("score_no_redundancy"),
+  score_tone_appropriateness: real("score_tone_appropriateness"),
 
   // Nova metrics (each 0–10)
-  score_offer_clarity: numeric("score_offer_clarity"),
-  score_objection_handling: numeric("score_objection_handling"),
-  score_commitment_attempt: numeric("score_commitment_attempt"),
-  score_context_continuity: numeric("score_context_continuity"),
+  score_offer_clarity: real("score_offer_clarity"),
+  score_objection_handling: real("score_objection_handling"),
+  score_commitment_attempt: real("score_commitment_attempt"),
+  score_context_continuity: real("score_context_continuity"),
 
   // Delta metrics (each 0–10)
-  score_consequence_accuracy: numeric("score_consequence_accuracy"),
-  score_deadline_specificity: numeric("score_deadline_specificity"),
-  score_no_negotiation_drift: numeric("score_no_negotiation_drift"),
+  score_consequence_accuracy: real("score_consequence_accuracy"),
+  score_deadline_specificity: real("score_deadline_specificity"),
+  score_no_negotiation_drift: real("score_no_negotiation_drift"),
 
   // Shared (0 or 10 — hard pass/fail)
-  score_compliance_pass: numeric("score_compliance_pass"),
+  score_compliance_pass: real("score_compliance_pass"),
   compliance_passed: boolean("compliance_passed"),
   compliance_breakdown: jsonb("compliance_breakdown").default({}),
   // { identity_disclosure: true, no_false_threats: false, ... }
 
   // Second judge — composite only; delta triggers judge_disagreement meta-flag
-  judge_b_composite: numeric("judge_b_composite"),
-  judge_disagreement_delta: numeric("judge_disagreement_delta"), // |judgeA - judgeB|
+  judge_b_composite: real("judge_b_composite"),
+  judge_disagreement_delta: real("judge_disagreement_delta"), // |judgeA - judgeB|
 
   // Cost tracking for this eval call
-  eval_cost_usd: numeric("eval_cost_usd"),
+  eval_cost_usd: real("eval_cost_usd"),
   eval_model_used: varchar("eval_model_used"),
 
   created_at: timestamp("created_at").defaultNow().notNull(),
@@ -303,24 +316,24 @@ export const prompt_experiments = pgTable("prompt_experiments", {
 
   // Control batch
   control_n: integer("control_n").notNull(),
-  control_mean: numeric("control_mean").notNull(),
-  control_stddev: numeric("control_stddev").notNull(),
-  control_median: numeric("control_median").notNull(),
-  control_compliance_rate: numeric("control_compliance_rate").notNull(), // 0.0–1.0
+  control_mean: real("control_mean").notNull(),
+  control_stddev: real("control_stddev").notNull(),
+  control_median: real("control_median").notNull(),
+  control_compliance_rate: real("control_compliance_rate").notNull(), // 0.0–1.0
   control_scores: jsonb("control_scores").default([]), // raw array for rerun
 
   // Candidate batch
   treatment_n: integer("treatment_n").notNull(),
-  treatment_mean: numeric("treatment_mean").notNull(),
-  treatment_stddev: numeric("treatment_stddev").notNull(),
-  treatment_median: numeric("treatment_median").notNull(),
-  treatment_compliance_rate: numeric("treatment_compliance_rate").notNull(),
+  treatment_mean: real("treatment_mean").notNull(),
+  treatment_stddev: real("treatment_stddev").notNull(),
+  treatment_median: real("treatment_median").notNull(),
+  treatment_compliance_rate: real("treatment_compliance_rate").notNull(),
   treatment_scores: jsonb("treatment_scores").default([]),
 
   // Statistical test
-  mean_delta: numeric("mean_delta").notNull(), // treatment_mean - control_mean
-  p_value: numeric("p_value").notNull(), // Welch t-test
-  cohens_d: numeric("cohens_d"), // effect size
+  mean_delta: real("mean_delta").notNull(), // treatment_mean - control_mean
+  p_value: real("p_value").notNull(), // Welch t-test
+  cohens_d: real("cohens_d"), // effect size
   is_significant: boolean("is_significant"), // p < 0.05 AND cohens_d > 0.2
 
   // Decision
@@ -328,7 +341,7 @@ export const prompt_experiments = pgTable("prompt_experiments", {
   rejection_reason: text("rejection_reason"),
   // e.g. "p=0.12, not significant" | "compliance dropped 1.0→0.85"
 
-  experiment_cost_usd: numeric("experiment_cost_usd"),
+  experiment_cost_usd: real("experiment_cost_usd"),
   created_at: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -405,7 +418,7 @@ export const llm_cost_log = pgTable("llm_cost_log", {
   prompt_tokens: integer("prompt_tokens").notNull(),
   completion_tokens: integer("completion_tokens").notNull(),
   total_tokens: integer("total_tokens").notNull(),
-  cost_usd: numeric("cost_usd").notNull(),
+  cost_usd: real("cost_usd").notNull(),
   conversation_id: varchar("conversation_id"),
   experiment_id: varchar("experiment_id"),
   created_at: timestamp("created_at").defaultNow().notNull(),

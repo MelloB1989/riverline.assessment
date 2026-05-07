@@ -1,5 +1,5 @@
 {
-  "id": "779c5443-1e11-425c-b5e6-6d198aa680a8",
+  "id": "8c5cb0cc-137c-4cd7-bf42-9186c84ce61a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -33,6 +33,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "prompt_version": {
+          "name": "prompt_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
         "is_simulated": {
           "name": "is_simulated",
           "type": "boolean",
@@ -52,12 +58,6 @@
           "type": "varchar",
           "primaryKey": false,
           "notNull": false
-        },
-        "prompt_version": {
-          "name": "prompt_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
         },
         "outcome": {
           "name": "outcome",
@@ -148,12 +148,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "user_id": {
-          "name": "user_id",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
         "agent_id": {
           "name": "agent_id",
           "type": "agent_id",
@@ -215,132 +209,6 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "agent_messages_user_id_users_id_fk": {
-          "name": "agent_messages_user_id_users_id_fk",
-          "tableFrom": "agent_messages",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
-    },
-    "public.assessments": {
-      "name": "assessments",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "workflow_id": {
-          "name": "workflow_id",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "identity_verified": {
-          "name": "identity_verified",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": false
-        },
-        "employment_status": {
-          "name": "employment_status",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "monthly_income_range": {
-          "name": "monthly_income_range",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "monthly_obligations": {
-          "name": "monthly_obligations",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "default_reason": {
-          "name": "default_reason",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "borrower_emotional_state": {
-          "name": "borrower_emotional_state",
-          "type": "persona",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "has_savings": {
-          "name": "has_savings",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "hardship_mentioned": {
-          "name": "hardship_mentioned",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "assessments_workflow_id_borrower_workflows_id_fk": {
-          "name": "assessments_workflow_id_borrower_workflows_id_fk",
-          "tableFrom": "assessments",
-          "tableTo": "borrower_workflows",
-          "columnsFrom": [
-            "workflow_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "assessments_user_id_users_id_fk": {
-          "name": "assessments_user_id_users_id_fk",
-          "tableFrom": "assessments",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -390,21 +258,72 @@
           "primaryKey": false,
           "notNull": false
         },
+        "identity_verified": {
+          "name": "identity_verified",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "employment_status": {
+          "name": "employment_status",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "monthly_income_range": {
+          "name": "monthly_income_range",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "monthly_obligations": {
+          "name": "monthly_obligations",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "default_reason": {
+          "name": "default_reason",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "borrower_emotional_state": {
+          "name": "borrower_emotional_state",
+          "type": "persona",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hardship_mentioned": {
+          "name": "hardship_mentioned",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
         "aria_summary": {
           "name": "aria_summary",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "nova_summary": {
-          "name": "nova_summary",
+        "context_for_nova": {
+          "name": "context_for_nova",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "context_for_delta": {
+          "name": "context_for_delta",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
         "final_offer_amount": {
           "name": "final_offer_amount",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
@@ -449,7 +368,24 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "borrower_workflows_one_active_per_user_idx": {
+          "name": "borrower_workflows_one_active_per_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"borrower_workflows\".\"outcome\" IS NULL AND \"borrower_workflows\".\"resolved_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "borrower_workflows_user_id_users_id_fk": {
           "name": "borrower_workflows_user_id_users_id_fk",
@@ -661,79 +597,85 @@
         },
         "composite_score": {
           "name": "composite_score",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
         "score_identity_verified": {
           "name": "score_identity_verified",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_info_completeness": {
           "name": "score_info_completeness",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_no_redundancy": {
           "name": "score_no_redundancy",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_tone_appropriateness": {
           "name": "score_tone_appropriateness",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_offer_clarity": {
           "name": "score_offer_clarity",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_objection_handling": {
           "name": "score_objection_handling",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_commitment_attempt": {
           "name": "score_commitment_attempt",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_context_continuity": {
           "name": "score_context_continuity",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_consequence_accuracy": {
           "name": "score_consequence_accuracy",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_deadline_specificity": {
           "name": "score_deadline_specificity",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_no_negotiation_drift": {
           "name": "score_no_negotiation_drift",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "score_compliance_pass": {
           "name": "score_compliance_pass",
-          "type": "numeric",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "compliance_passed": {
+          "name": "compliance_passed",
+          "type": "boolean",
           "primaryKey": false,
           "notNull": false
         },
@@ -744,34 +686,21 @@
           "notNull": false,
           "default": "'{}'::jsonb"
         },
-        "compliance_passed": {
-          "name": "compliance_passed",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false
-        },
         "judge_b_composite": {
           "name": "judge_b_composite",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
-        },
-        "judge_b_metric_scores": {
-          "name": "judge_b_metric_scores",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'{}'::jsonb"
         },
         "judge_disagreement_delta": {
           "name": "judge_disagreement_delta",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "eval_cost_usd": {
           "name": "eval_cost_usd",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
@@ -805,100 +734,6 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
-    },
-    "public.eval_runs": {
-      "name": "eval_runs",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "run_label": {
-          "name": "run_label",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "seed": {
-          "name": "seed",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "batch_size": {
-          "name": "batch_size",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "personas_used": {
-          "name": "personas_used",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'[]'::jsonb"
-        },
-        "agent_ids": {
-          "name": "agent_ids",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'[]'::jsonb"
-        },
-        "prompt_versions_used": {
-          "name": "prompt_versions_used",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'{}'::jsonb"
-        },
-        "evaluator_versions_used": {
-          "name": "evaluator_versions_used",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'{}'::jsonb"
-        },
-        "total_conversations": {
-          "name": "total_conversations",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "total_cost_usd": {
-          "name": "total_cost_usd",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "config_snapshot": {
-          "name": "config_snapshot",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'{}'::jsonb"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {}
     },
@@ -1026,7 +861,7 @@
         },
         "cost_usd": {
           "name": "cost_usd",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
@@ -1085,13 +920,13 @@
         },
         "principal_amount": {
           "name": "principal_amount",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
         "outstanding_amount": {
           "name": "outstanding_amount",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
@@ -1109,19 +944,19 @@
         },
         "last_payment_amount": {
           "name": "last_payment_amount",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "interest_rate": {
           "name": "interest_rate",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "policy_max_discount_pct": {
           "name": "policy_max_discount_pct",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
@@ -1285,51 +1120,34 @@
         },
         "control_mean": {
           "name": "control_mean",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
         "control_stddev": {
           "name": "control_stddev",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
         "control_median": {
           "name": "control_median",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
-        "control_p10": {
-          "name": "control_p10",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "control_p90": {
-          "name": "control_p90",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "control_min": {
-          "name": "control_min",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "control_max": {
-          "name": "control_max",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
         "control_compliance_rate": {
           "name": "control_compliance_rate",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
+        },
+        "control_scores": {
+          "name": "control_scores",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
         },
         "treatment_n": {
           "name": "treatment_n",
@@ -1339,67 +1157,50 @@
         },
         "treatment_mean": {
           "name": "treatment_mean",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
         "treatment_stddev": {
           "name": "treatment_stddev",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
         "treatment_median": {
           "name": "treatment_median",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
-        "treatment_p10": {
-          "name": "treatment_p10",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "treatment_p90": {
-          "name": "treatment_p90",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "treatment_min": {
-          "name": "treatment_min",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "treatment_max": {
-          "name": "treatment_max",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
         "treatment_compliance_rate": {
           "name": "treatment_compliance_rate",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
+        },
+        "treatment_scores": {
+          "name": "treatment_scores",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
         },
         "mean_delta": {
           "name": "mean_delta",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
         "p_value": {
           "name": "p_value",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": true
         },
         "cohens_d": {
           "name": "cohens_d",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
@@ -1421,23 +1222,9 @@
           "primaryKey": false,
           "notNull": false
         },
-        "control_scores": {
-          "name": "control_scores",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'[]'::jsonb"
-        },
-        "treatment_scores": {
-          "name": "treatment_scores",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'[]'::jsonb"
-        },
         "experiment_cost_usd": {
           "name": "experiment_cost_usd",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
@@ -1543,6 +1330,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "candidate_offer": {
+          "name": "candidate_offer",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'{}'::jsonb"
+        },
         "vapi_call_id": {
           "name": "vapi_call_id",
           "type": "varchar",
@@ -1561,21 +1355,33 @@
           "primaryKey": false,
           "notNull": false
         },
+        "call_duration_seconds": {
+          "name": "call_duration_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "scheduled_call_at": {
+          "name": "scheduled_call_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
         "lump_sum_offered": {
           "name": "lump_sum_offered",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "lump_sum_discount_pct": {
           "name": "lump_sum_discount_pct",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
         "emi_amount": {
           "name": "emi_amount",
-          "type": "numeric",
+          "type": "real",
           "primaryKey": false,
           "notNull": false
         },
@@ -1612,16 +1418,10 @@
         },
         "objections_raised": {
           "name": "objections_raised",
-          "type": "json",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false,
-          "default": "'[]'::json"
-        },
-        "call_duration_seconds": {
-          "name": "call_duration_seconds",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
+          "default": "'[]'::jsonb"
         },
         "created_at": {
           "name": "created_at",
@@ -1639,70 +1439,6 @@
           "tableTo": "borrower_workflows",
           "columnsFrom": [
             "workflow_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
-    },
-    "public.user_memories": {
-      "name": "user_memories",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "memory_toc": {
-          "name": "memory_toc",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'{}'::json"
-        },
-        "memory_tree": {
-          "name": "memory_tree",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'{}'::json"
-        },
-        "token_estimate": {
-          "name": "token_estimate",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "default": 0
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "user_memories_user_id_users_id_fk": {
-          "name": "user_memories_user_id_users_id_fk",
-          "tableFrom": "user_memories",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
           ],
           "columnsTo": [
             "id"
@@ -1760,25 +1496,12 @@
           "primaryKey": false,
           "notNull": true
         },
-        "pfp": {
-          "name": "pfp",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "''"
-        },
-        "bio": {
-          "name": "bio",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "extra": {
           "name": "extra",
-          "type": "json",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false,
-          "default": "'{}'::json"
+          "default": "'{}'::jsonb"
         },
         "created_at": {
           "name": "created_at",
@@ -1793,13 +1516,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "billing_address": {
-          "name": "billing_address",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'{\"country\":\"IN\",\"state\":\"\",\"city\":\"\",\"street\":\"\",\"zipcode\":\"\"}'::json"
         }
       },
       "indexes": {},
@@ -1884,7 +1600,8 @@
         "cooperative",
         "combative",
         "evasive",
-        "distressed"
+        "distressed",
+        "confused"
       ]
     }
   },

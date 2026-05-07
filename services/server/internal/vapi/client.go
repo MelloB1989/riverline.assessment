@@ -18,15 +18,26 @@ type HandoffContext struct {
 	Offers         map[string]any `json:"offers"`
 }
 
+type CallDetails struct {
+	ID              string
+	Status          string
+	EndedReason     string
+	Transcript      string
+	Summary         string
+	RecordingURL    string
+	DurationSeconds *int
+}
+
 type Client struct {
 	APIKey        string
 	BaseURL       string
 	PhoneNumberID string
 	AssistantID   string
+	DryRun        bool
 	HTTPClient    *http.Client
 }
 
-func New(apiKey, baseURL, phoneNumberID, assistantID string) *Client {
+func New(apiKey, baseURL, phoneNumberID, assistantID string, dryRun bool) *Client {
 	if baseURL == "" {
 		baseURL = "https://api.vapi.ai"
 	}
@@ -35,12 +46,13 @@ func New(apiKey, baseURL, phoneNumberID, assistantID string) *Client {
 		BaseURL:       strings.TrimRight(baseURL, "/"),
 		PhoneNumberID: phoneNumberID,
 		AssistantID:   assistantID,
+		DryRun:        dryRun,
 		HTTPClient:    &http.Client{Timeout: 20 * time.Second},
 	}
 }
 
 func (c *Client) StartCall(ctx context.Context, phone string, context HandoffContext) (string, error) {
-	if c.APIKey == "" || phone == "" {
+	if c.DryRun || c.APIKey == "" || phone == "" || isReservedTestPhone(phone) {
 		return "mock-vapi-" + time.Now().UTC().Format("20060102150405"), nil
 	}
 	body := map[string]any{
@@ -77,6 +89,11 @@ func (c *Client) StartCall(ctx context.Context, phone string, context HandoffCon
 	return "", fmt.Errorf("vapi response missing id")
 }
 
+func isReservedTestPhone(phone string) bool {
+	compact := strings.ReplaceAll(strings.TrimSpace(phone), " ", "")
+	return strings.HasPrefix(compact, "+1555555")
+}
+
 func (c *Client) GetTranscript(ctx context.Context, callID string) (string, error) {
 	payload, err := c.getCall(ctx, callID)
 	if err != nil {
@@ -90,6 +107,31 @@ func (c *Client) GetTranscript(ctx context.Context, callID string) (string, erro
 	return "", nil
 }
 
+func (c *Client) GetCallDetails(ctx context.Context, callID string) (*CallDetails, error) {
+	payload, err := c.getCall(ctx, callID)
+	if err != nil {
+		return nil, err
+	}
+	details := &CallDetails{
+		ID:          firstPayloadString(payload, "id"),
+		Status:      firstPayloadString(payload, "status"),
+		EndedReason: firstPayloadString(payload, "endedReason", "ended_reason"),
+		Transcript:  firstPayloadString(payload, "transcript"),
+		Summary:     firstPayloadString(payload, "summary"),
+		RecordingURL: firstPayloadString(payload,
+			"recordingUrl",
+			"stereoRecordingUrl",
+			"recording_url",
+			"stereo_recording_url",
+		),
+		DurationSeconds: firstPayloadInt(payload, "durationSeconds", "duration_seconds"),
+	}
+	if details.Transcript == "" {
+		details.Transcript = details.Summary
+	}
+	return details, nil
+}
+
 func (c *Client) GetRecordingURL(ctx context.Context, callID string) (string, error) {
 	payload, err := c.getCall(ctx, callID)
 	if err != nil {
@@ -101,6 +143,31 @@ func (c *Client) GetRecordingURL(ctx context.Context, callID string) (string, er
 		}
 	}
 	return "", nil
+}
+
+func firstPayloadString(payload map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := payload[key].(string); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstPayloadInt(payload map[string]any, keys ...string) *int {
+	for _, key := range keys {
+		switch value := payload[key].(type) {
+		case int:
+			return &value
+		case int64:
+			v := int(value)
+			return &v
+		case float64:
+			v := int(value)
+			return &v
+		}
+	}
+	return nil
 }
 
 func (c *Client) getCall(ctx context.Context, callID string) (map[string]any, error) {

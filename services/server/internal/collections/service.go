@@ -16,11 +16,14 @@ import (
 const handoffTokenBudget = 500
 
 type ChatResponse struct {
-	Workflow      models.BorrowerWorkflow  `json:"workflow"`
-	Conversation  models.AgentConversation `json:"conversation"`
-	UserMessage   models.AgentMessage      `json:"user_message"`
-	AgentMessage  models.AgentMessage      `json:"agent_message"`
-	StageComplete bool                     `json:"stage_complete"`
+	Workflow             models.BorrowerWorkflow  `json:"workflow"`
+	Conversation         models.AgentConversation `json:"conversation"`
+	UserMessage          models.AgentMessage      `json:"user_message"`
+	AgentMessage         models.AgentMessage      `json:"agent_message"`
+	StageComplete        bool                     `json:"stage_complete"`
+	NovaCallRescheduled  bool                     `json:"nova_call_rescheduled"`
+	NovaScheduledCallAt  *time.Time               `json:"nova_scheduled_call_at,omitempty"`
+	NovaRescheduleReason *string                  `json:"nova_reschedule_reason,omitempty"`
 }
 
 type ConversationView struct {
@@ -34,19 +37,45 @@ func StartWorkflow(userID, loanID string) (*models.BorrowerWorkflow, error) {
 	if err := EnsureDefaults(); err != nil {
 		return nil, err
 	}
-	if userID == "" || loanID == "" {
+	authenticatedUserID := strings.TrimSpace(userID)
+	if authenticatedUserID != "" {
+		active, err := ActiveWorkflowForUser(authenticatedUserID)
+		if err == nil {
+			return active, nil
+		}
+		if !errors.Is(err, ErrActiveWorkflowNotFound) {
+			return nil, err
+		}
+	}
+	if userID == "" {
 		seedUserID, seedLoanID, err := ensureDemoBorrower()
 		if err != nil {
 			return nil, err
 		}
-		if userID == "" {
-			userID = seedUserID
-		}
+		userID = seedUserID
 		if loanID == "" {
 			loanID = seedLoanID
 		}
 	}
+	if loanID == "" {
+		loan, err := firstLoanForUser(userID)
+		if err != nil {
+			return nil, err
+		}
+		loanID = loan.Id
+	}
+	loan, err := GetLoan(loanID)
+	if err != nil {
+		return nil, err
+	}
+	if loan.UserId != userID {
+		return nil, errors.New("loan does not belong to authenticated user")
+	}
 	now := time.Now().UTC()
+	ariaSummary, err := borrowerAccountSummary(userID, loanID)
+	if err != nil {
+		return nil, err
+	}
 	wf := &models.BorrowerWorkflow{
 		Id:                 utils.GenerateID(),
 		UserId:             userID,
@@ -54,6 +83,7 @@ func StartWorkflow(userID, loanID string) (*models.BorrowerWorkflow, error) {
 		CurrentStage:       models.AgentAria,
 		AriaAttempts:       0,
 		IdentityVerified:   boolPtr(false),
+		AriaSummary:        stringPtr(ariaSummary),
 		HardshipMentioned:  boolPtr(false),
 		StopContactFlagged: boolPtr(false),
 		HardshipFlagged:    boolPtr(false),
@@ -62,7 +92,16 @@ func StartWorkflow(userID, loanID string) (*models.BorrowerWorkflow, error) {
 	}
 	o := orm.Load(&models.BorrowerWorkflow{})
 	defer o.Close()
-	return wf, o.Insert(wf)
+	if err := o.Insert(wf); err != nil {
+		if authenticatedUserID != "" {
+			active, activeErr := ActiveWorkflowForUser(authenticatedUserID)
+			if activeErr == nil {
+				return active, nil
+			}
+		}
+		return nil, err
+	}
+	return wf, nil
 }
 
 func HandleChat(workflowID, content string) (*ChatResponse, error) {
@@ -74,12 +113,12 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	client, err := chatClient(wf.CurrentStage)
+	chatAgent := chatAgentForStage(wf.CurrentStage)
+	client, err := chatClient(chatAgent)
 	if err != nil {
 		return nil, err
 	}
-	conversation, err := getOrCreateConversation(*wf, wf.CurrentStage, client.PromptVersion())
+	conversation, err := getOrCreateConversation(*wf, chatAgent, client.PromptVersion())
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +129,7 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 		Id:             utils.GenerateID(),
 		ConversationId: conversation.Id,
 		WorkflowId:     wf.Id,
-		AgentId:        wf.CurrentStage,
+		AgentId:        chatAgent,
 		Role:           models.MessageRoleBorrower,
 		Content:        content,
 		CreatedAt:      now,
@@ -102,8 +141,11 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	handoff := handoffForStage(*wf)
-	resp, err := client.Converse(handoff, messages)
+	handoff, err := handoffForStage(*wf)
+	if err != nil {
+		return nil, err
+	}
+	toolResults, resp, err := converseForStage(client, *wf, chatAgent, handoff, messages)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +153,7 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 		Id:             utils.GenerateID(),
 		ConversationId: conversation.Id,
 		WorkflowId:     wf.Id,
-		AgentId:        wf.CurrentStage,
+		AgentId:        chatAgent,
 		Role:           models.MessageRoleAgent,
 		Content:        resp.AIResponse,
 		TokenCount:     intPtr(resp.OutputTokens),
@@ -123,33 +165,17 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 	messages = append(messages, agentMsg)
 	stageComplete := false
 	handoffTokens := 0
-	if wf.CurrentStage == models.AgentAria {
-		handoffCall, err := GenerateHandoff(models.AgentAria, *wf, messages, "")
-		if err != nil {
+	if wf.CurrentStage == models.AgentAria && toolResults.AriaHandoff != nil {
+		handoffTokens = toolResults.AriaHandoff.Tokens
+		applyAriaHandoff(wf, toolResults.AriaHandoff.Result)
+		if err := setInitialNovaSchedule(wf, toolResults.AriaHandoff.Result); err != nil {
 			return nil, err
 		}
-		handoffTokens = handoffCall.Tokens
-		applyAssessmentHandoff(wf, handoffCall.Result)
-		stageComplete = handoffCall.Result.StageComplete
+		stageComplete = true
 		if err := updateWorkflow(wf); err != nil {
 			return nil, err
 		}
-		if err := LogCost("summarization", &wf.CurrentStage, "karma-llama3.3-70b", handoffCall.Tokens, 0, &conversation.Id, nil); err != nil {
-			return nil, err
-		}
-	}
-	if wf.CurrentStage == models.AgentDelta {
-		handoffCall, err := GenerateHandoff(models.AgentDelta, *wf, messages, "")
-		if err != nil {
-			return nil, err
-		}
-		handoffTokens = handoffCall.Tokens
-		applyDeltaHandoff(wf, handoffCall.Result)
-		stageComplete = handoffCall.Result.StageComplete
-		if err := updateWorkflow(wf); err != nil {
-			return nil, err
-		}
-		if err := LogCost("summarization", &wf.CurrentStage, "karma-llama3.3-70b", handoffCall.Tokens, 0, &conversation.Id, nil); err != nil {
+		if err := LogCost("summarization", &chatAgent, toolResults.AriaHandoff.ModelUsed, toolResults.AriaHandoff.Tokens, 0, &conversation.Id, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -167,10 +193,38 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 	if err := updateConversation(&conversation); err != nil {
 		return nil, err
 	}
-	if err := LogCost("agent_response", &wf.CurrentStage, "karma-llama3.3-70b", resp.InputTokens, resp.OutputTokens, &conversation.Id, nil); err != nil {
+	if err := LogCost("agent_response", &chatAgent, client.ModelUsed(), resp.InputTokens, resp.OutputTokens, &conversation.Id, nil); err != nil {
 		return nil, err
 	}
-	return &ChatResponse{Workflow: *wf, Conversation: conversation, UserMessage: userMsg, AgentMessage: agentMsg, StageComplete: stageComplete}, nil
+	out := &ChatResponse{Workflow: *wf, Conversation: conversation, UserMessage: userMsg, AgentMessage: agentMsg, StageComplete: stageComplete}
+	if toolResults.NovaReschedule != nil {
+		out.NovaCallRescheduled = true
+		out.NovaScheduledCallAt = &toolResults.NovaReschedule.ScheduledCallAt
+		out.NovaRescheduleReason = stringPtr(toolResults.NovaReschedule.Reason)
+	}
+	return out, nil
+}
+
+var ErrActiveWorkflowNotFound = errors.New("active workflow not found")
+
+func ActiveWorkflowForUser(userID string) (*models.BorrowerWorkflow, error) {
+	o := orm.Load(&models.BorrowerWorkflow{})
+	defer o.Close()
+	var rows []models.BorrowerWorkflow
+	if err := o.GetByFieldEquals("UserId", userID).Scan(&rows); err != nil {
+		return nil, err
+	}
+	active := make([]models.BorrowerWorkflow, 0, len(rows))
+	for _, row := range rows {
+		if row.Outcome == nil && row.ResolvedAt == nil {
+			active = append(active, row)
+		}
+	}
+	if len(active) == 0 {
+		return nil, ErrActiveWorkflowNotFound
+	}
+	sort.Slice(active, func(i, j int) bool { return active[i].CreatedAt.After(active[j].CreatedAt) })
+	return &active[0], nil
 }
 
 func GetWorkflow(id string) (*models.BorrowerWorkflow, error) {
@@ -282,4 +336,11 @@ func LogCost(callType string, agentID *models.AgentID, modelUsed string, promptT
 	o := orm.Load(&models.LlmCostLog{})
 	defer o.Close()
 	return o.Insert(&row)
+}
+
+func chatAgentForStage(stage models.AgentID) models.AgentID {
+	if stage == models.AgentDelta {
+		return models.AgentDelta
+	}
+	return models.AgentAria
 }
