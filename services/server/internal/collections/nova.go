@@ -36,6 +36,11 @@ func PrepareNOVA(workflowID string) (*models.ResolutionOffer, error) {
 	if offer.EmiStartDate == nil {
 		offer.EmiStartDate = timePtr(now.Add(7 * 24 * time.Hour))
 	}
+	runtimeContext, err := GenerateNovaRuntimeContext(*wf, offer)
+	if err != nil {
+		return nil, err
+	}
+	wf.ContextForNova = stringPtr(runtimeContext.Result)
 	wf.UpdatedAt = now
 	if err := updateWorkflow(wf); err != nil {
 		return nil, err
@@ -59,6 +64,7 @@ func PrepareNOVA(workflowID string) (*models.ResolutionOffer, error) {
 		}
 		agentID := models.AgentNova
 		_ = LogCost("summarization", &agentID, handoff.ModelUsed, handoff.Tokens, 0, nil, nil)
+		_ = LogCost("summarization", &agentID, runtimeContext.ModelUsed, runtimeContext.Tokens, 0, nil, nil)
 		return &existing[0], nil
 	}
 	if err := o.Insert(offer); err != nil {
@@ -66,6 +72,7 @@ func PrepareNOVA(workflowID string) (*models.ResolutionOffer, error) {
 	}
 	agentID := models.AgentNova
 	_ = LogCost("summarization", &agentID, handoff.ModelUsed, handoff.Tokens, 0, nil, nil)
+	_ = LogCost("summarization", &agentID, runtimeContext.ModelUsed, runtimeContext.Tokens, 0, nil, nil)
 	return offer, nil
 }
 
@@ -280,12 +287,20 @@ func CompleteNOVA(workflowID, callID, transcript, recordingURL string, durationS
 			deadline := now.Add(48 * time.Hour)
 			wf.FinalOfferDeadline = &deadline
 		}
+		deltaRuntime, err := GenerateDeltaRuntimeContext(*wf, offer)
+		if err != nil {
+			return "", err
+		}
+		applyDeltaRuntimeContext(wf, deltaRuntime.Result)
 		deltaHandoff, err := GenerateDeltaHandoff(*wf, nil)
 		if err != nil {
 			return "", err
 		}
 		applyDeltaDraftHandoff(wf, deltaHandoff.Result)
 		agentID := models.AgentDelta
+		if err := LogCost("summarization", &agentID, deltaRuntime.ModelUsed, deltaRuntime.Tokens, 0, nil, nil); err != nil {
+			return "", err
+		}
 		if err := LogCost("summarization", &agentID, deltaHandoff.ModelUsed, deltaHandoff.Tokens, 0, nil, nil); err != nil {
 			return "", err
 		}

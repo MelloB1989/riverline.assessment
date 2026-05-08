@@ -280,7 +280,7 @@ func ConversationByIDOrWorkflow(id string) (*ConversationView, error) {
 		msgs, _ := ListMessages(conv.Id, conv.WorkflowId)
 		return conversationView(*wf, *conv, msgs), nil
 	}
-	conv, err := latestConversation(wf.Id)
+	conv, err := latestConversationForAgent(wf.Id, chatAgentForStage(wf.CurrentStage))
 	if err != nil {
 		return &ConversationView{Workflow: *wf, Messages: []models.AgentMessage{}}, nil
 	}

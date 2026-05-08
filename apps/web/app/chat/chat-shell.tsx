@@ -1,10 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { useAuth } from "@clerk/nextjs";
 import { Bot, Send, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { loadConversationAction, sendChatMessageAction, startWorkflowAction } from "./actions";
 
 type AgentMessage = {
   id: string;
@@ -24,11 +24,7 @@ type ConversationView = {
   messages?: AgentMessage[];
 };
 
-const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9000";
-const clerkJwtTemplate = process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE;
-
 export default function ChatShell() {
-  const { getToken, isLoaded, isSignedIn } = useAuth();
   const [workflowId, setWorkflowId] = React.useState<string>("");
   const [messages, setMessages] = React.useState<AgentMessage[]>([]);
   const [input, setInput] = React.useState("");
@@ -37,39 +33,24 @@ export default function ChatShell() {
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const optimisticIdRef = React.useRef(0);
   const didStartRef = React.useRef(false);
-
-  const authHeaders = React.useCallback(async (): Promise<HeadersInit> => {
-    const token = await getToken(clerkJwtTemplate ? { template: clerkJwtTemplate } : undefined);
-    if (!token) {
-      return { "content-type": "application/json" };
-    }
-    return { "content-type": "application/json", authorization: `Bearer ${token}` };
-  }, [getToken]);
+  const activeChatAgent = stage === "delta" ? "delta" : "aria";
 
   const loadConversation = React.useCallback(async (id: string) => {
-    const headers = await authHeaders();
-    const res = await fetch(`${apiBase}/api/v1/conversations/${id}`, { headers, cache: "no-store" });
-    if (!res.ok) return;
-    const data = (await res.json()) as ConversationView;
+    const data = (await loadConversationAction(id)) as ConversationView | null;
+    if (!data) return;
     setStage(data.workflow?.current_stage ?? "aria");
     if (data.messages?.length) {
       setMessages(data.messages);
     }
-  }, [authHeaders]);
+  }, []);
 
   const startWorkflow = React.useCallback(async () => {
     setIsLoading(true);
-    const headers = await authHeaders();
-    const res = await fetch(`${apiBase}/api/v1/workflows/start`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({}),
-    });
-    if (!res.ok) {
+    const data = await startWorkflowAction() as { workflow?: { id: string; current_stage?: "aria" | "nova" | "delta" }; existing?: boolean } | null;
+    if (!data?.workflow) {
       setIsLoading(false);
       return;
     }
-    const data = await res.json();
     const id = data.workflow.id as string;
     setWorkflowId(id);
     setStage(data.workflow.current_stage ?? "aria");
@@ -89,7 +70,7 @@ export default function ChatShell() {
       },
     ]);
     setIsLoading(false);
-  }, [authHeaders, loadConversation]);
+  }, [loadConversation]);
 
   const sendMessage = React.useCallback(async () => {
     const message = input.trim();
@@ -100,31 +81,26 @@ export default function ChatShell() {
     const optimistic: AgentMessage = {
       id: `local-${optimisticIdRef.current}`,
       role: "borrower",
-      agent_id: stage,
+      agent_id: activeChatAgent,
       content: message,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimistic]);
-    const res = await fetch(`${apiBase}/api/v1/chat/${workflowId}`, {
-      method: "POST",
-      headers: await authHeaders(),
-      body: JSON.stringify({ message }),
-    });
-    if (res.ok) {
+    const res = await sendChatMessageAction(workflowId, message);
+    if (res) {
       await loadConversation(workflowId);
     }
     setIsLoading(false);
-  }, [authHeaders, input, isLoading, loadConversation, stage, workflowId]);
+  }, [activeChatAgent, input, isLoading, loadConversation, workflowId]);
 
   React.useEffect(() => {
-    if (!isLoaded || !isSignedIn) return;
     if (didStartRef.current) return;
     didStartRef.current = true;
     const timer = window.setTimeout(() => {
       void startWorkflow();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [isLoaded, isSignedIn, startWorkflow]);
+  }, [startWorkflow]);
 
   React.useEffect(() => {
     if (!workflowId) return;
@@ -153,7 +129,7 @@ export default function ChatShell() {
             </div>
             <div className="flex items-center gap-2 rounded-full bg-[#17231d] px-4 py-2 text-sm font-medium text-[#fffaf0]">
               <Bot className="size-4" />
-              Active agent: {stage.toUpperCase()}
+              Active chat: {activeChatAgent.toUpperCase()}
             </div>
           </div>
           <div className="mt-5 flex items-start gap-3 rounded-2xl border border-[#c68632]/25 bg-[#fff3d4] px-4 py-3 text-sm text-[#5f3c18]">

@@ -9,10 +9,7 @@ func TestNovaSystemPromptIncludesDynamicVariables(t *testing.T) {
 	prompt := NovaSystemPrompt("base nova prompt")
 	for _, token := range []string{
 		"base nova prompt",
-		"{{borrower_context}}",
-		"{{loan_context}}",
 		"{{context_for_nova}}",
-		"{{resolution_offer_context}}",
 		"{{current_ist_timestamp}}",
 	} {
 		if !strings.Contains(prompt, token) {
@@ -28,9 +25,8 @@ func TestExtractNovaStructuredOutput(t *testing.T) {
 				"output-id": map[string]any{
 					"name": NovaStructuredOutputName,
 					"result": map[string]any{
-						"offer_accepted":    true,
-						"outcome":           "committed",
-						"context_for_delta": "",
+						"offer_accepted": true,
+						"outcome":        "committed",
 					},
 				},
 			},

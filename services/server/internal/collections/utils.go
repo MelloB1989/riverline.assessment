@@ -1,7 +1,6 @@
 package collections
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -181,80 +180,48 @@ func agentClient(agentID models.AgentID) (*agents.Client, error) {
 }
 
 func handoffForStage(wf models.BorrowerWorkflow) (string, error) {
-	user, err := GetUser(wf.UserId)
-	if err != nil {
-		return "", fmt.Errorf("load borrower for ARIA context: %w", err)
-	}
-	loan, err := GetLoan(wf.LoanId)
-	if err != nil {
-		return "", fmt.Errorf("load loan for ARIA context: %w", err)
-	}
-	offer, _ := firstOffer(wf.Id)
 	chatAgent := chatAgentForStage(wf.CurrentStage)
-	accountSummary := borrowerAccountSummaryFromRecords(*user, *loan)
 	now := time.Now().UTC()
-	payload := map[string]any{
-		"active_chat_agent": chatAgent,
-		"workflow_stage":    wf.CurrentStage,
-		"current_time": map[string]any{
-			"utc":      now.Format(time.RFC3339),
-			"ist":      now.In(collectionsISTLocation()).Format(time.RFC3339),
-			"timezone": "Asia/Kolkata",
-		},
-		"borrower_account_summary": accountSummary,
-		"borrower": map[string]any{
-			"id":         user.Id,
-			"first_name": user.FirstName,
-			"last_name":  user.LastName,
-			"email":      user.Email,
-			"phone":      user.Phone,
-			"dob":        user.Dob.Format("2006-01-02"),
-			"gender":     user.Gender,
-			"extra":      user.Extra,
-		},
-		"loan": map[string]any{
-			"id":                      loan.Id,
-			"account_number_partial":  loan.AccountNumberPartial,
-			"loan_type":               loan.LoanType,
-			"principal_amount":        loan.PrincipalAmount,
-			"outstanding_amount":      loan.OutstandingAmount,
-			"days_overdue":            loan.DaysOverdue,
-			"last_payment_date":       dateStringPtr(loan.LastPaymentDate),
-			"last_payment_amount":     loan.LastPaymentAmount,
-			"interest_rate":           loan.InterestRate,
-			"policy_max_discount_pct": loan.PolicyMaxDiscountPct,
-			"status":                  loan.Status,
-		},
-		"workflow": map[string]any{
-			"id":                       wf.Id,
-			"current_stage":            wf.CurrentStage,
-			"identity_verified":        wf.IdentityVerified,
-			"employment_status":        wf.EmploymentStatus,
-			"monthly_income_range":     wf.MonthlyIncomeRange,
-			"monthly_obligations":      wf.MonthlyObligations,
-			"default_reason":           wf.DefaultReason,
-			"borrower_emotional_state": wf.BorrowerEmotionalState,
-			"hardship_mentioned":       wf.HardshipMentioned,
-			"stop_contact_flagged":     wf.StopContactFlagged,
-			"hardship_flagged":         wf.HardshipFlagged,
-			"final_offer_amount":       wf.FinalOfferAmount,
-			"final_offer_deadline":     wf.FinalOfferDeadline,
-			"outcome":                  wf.Outcome,
-		},
-		"resolution_offer":  offer,
-		"aria_summary":      wf.AriaSummary,
-		"context_for_nova":  wf.ContextForNova,
-		"context_for_delta": wf.ContextForDelta,
+	istNow := now.In(collectionsISTLocation()).Format(time.RFC3339)
+	lines := []string{
+		fmt.Sprintf("Active chat agent: %s. Workflow stage: %s. Current IST time: %s.", chatAgent, wf.CurrentStage, istNow),
 	}
 	if chatAgent == models.AgentDelta {
-		payload["agent_instruction"] = "DELTA is now the user-facing chat agent. Use context_for_delta plus user, loan, offer, and workflow fields."
+		lines = append(lines,
+			"Runtime summary: "+derefString(wf.ContextForDelta),
+		)
 	} else if wf.CurrentStage == models.AgentNova {
-		payload["agent_instruction"] = "ARIA remains the user-facing chat agent while NOVA is pending or active. Use all user and loan data. If the borrower asks to change the NOVA call time, call reschedule_nova_call with the exact scheduled_call_at ARIA chooses from the borrower request and current_time."
+		lines = append(lines,
+			"Runtime summary: "+derefString(wf.ContextForNova),
+		)
 	} else {
-		payload["agent_instruction"] = "ARIA is collecting assessment data. Use all user and loan data. Do not ask for facts already present here unless needed for identity verification."
+		user, err := GetUser(wf.UserId)
+		if err != nil {
+			return "", fmt.Errorf("load borrower for ARIA context: %w", err)
+		}
+		loan, err := GetLoan(wf.LoanId)
+		if err != nil {
+			return "", fmt.Errorf("load loan for ARIA context: %w", err)
+		}
+		lines = append(lines,
+			"Account context: "+borrowerAccountSummaryFromRecords(*user, *loan),
+			"Known assessment state: "+assessmentContextLine(wf),
+		)
 	}
-	data, _ := json.Marshal(payload)
-	return string(data), nil
+	return strings.Join(lines, "\n"), nil
+}
+
+func assessmentContextLine(wf models.BorrowerWorkflow) string {
+	parts := []string{
+		"identity_verified=" + fmt.Sprint(wf.IdentityVerified),
+		"employment_status=" + derefString(wf.EmploymentStatus),
+		"monthly_income_range=" + derefString(wf.MonthlyIncomeRange),
+		"monthly_obligations=" + fmt.Sprint(wf.MonthlyObligations),
+		"default_reason=" + derefString(wf.DefaultReason),
+		"hardship_mentioned=" + fmt.Sprint(wf.HardshipMentioned),
+		"stop_contact_flagged=" + fmt.Sprint(wf.StopContactFlagged),
+	}
+	return strings.Join(parts, "; ")
 }
 
 func borrowerAccountSummary(userID, loanID string) (string, error) {
@@ -297,14 +264,6 @@ func borrowerAccountSummaryFromRecords(user models.User, loan models.Loan) strin
 		loan.PolicyMaxDiscountPct,
 		loan.Status,
 	)
-}
-
-func dateStringPtr(v *time.Time) *string {
-	if v == nil {
-		return nil
-	}
-	formatted := v.Format("2006-01-02")
-	return &formatted
 }
 
 func getOrCreateConversation(wf models.BorrowerWorkflow, agentID models.AgentID, promptVersion int) (models.AgentConversation, error) {

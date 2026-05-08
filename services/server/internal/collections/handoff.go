@@ -47,7 +47,6 @@ type NovaCallHandoffResult struct {
 	ObjectionsRaised        []string        `json:"objections_raised"`
 	Outcome                 *models.Outcome `json:"outcome"`
 	AriaSummary             string          `json:"aria_summary"`
-	ContextForDelta         string          `json:"context_for_delta"`
 	FinalOfferAmount        *float64        `json:"final_offer_amount"`
 	FinalOfferDeadlineHours *int            `json:"final_offer_deadline_hours"`
 }
@@ -60,6 +59,10 @@ type DeltaHandoffResult struct {
 	FinalOfferDeadlineHours *int            `json:"final_offer_deadline_hours"`
 }
 
+type DeltaRuntimeContextResult struct {
+	ContextForDelta string `json:"context_for_delta"`
+}
+
 func GenerateAriaHandoff(wf models.BorrowerWorkflow, messages []models.AgentMessage) (*HandoffCall[AriaHandoffResult], error) {
 	client, err := agents.NewAria()
 	if err != nil {
@@ -67,11 +70,14 @@ func GenerateAriaHandoff(wf models.BorrowerWorkflow, messages []models.AgentMess
 	}
 	user, _ := GetUser(wf.UserId)
 	loan, _ := GetLoan(wf.LoanId)
+	accountSummary := ""
+	if user != nil && loan != nil {
+		accountSummary = borrowerAccountSummaryFromRecords(*user, *loan)
+	}
 	payload := map[string]any{
-		"workflow": wf,
-		"messages": agents.MessagesForCompletion(messages),
-		"user":     user,
-		"loan":     loan,
+		"account_summary":  accountSummary,
+		"assessment_state": conciseAssessmentState(wf),
+		"messages":         agents.MessagesForCompletion(messages),
 	}
 	prompt := buildStructuredPrompt("ARIA assessment handoff", payload, `{
   "identity_verified": boolean|null,
@@ -100,14 +106,10 @@ func GenerateNovaOffer(wf models.BorrowerWorkflow) (*HandoffCall[NovaOfferResult
 	if err != nil {
 		return nil, err
 	}
-	user, _ := GetUser(wf.UserId)
 	loan, _ := GetLoan(wf.LoanId)
 	payload := map[string]any{
-		"workflow":         wf,
-		"user":             user,
-		"loan":             loan,
-		"aria_summary":     wf.AriaSummary,
-		"context_for_nova": wf.ContextForNova,
+		"aria_handoff": derefString(wf.ContextForNova),
+		"aria_summary": derefString(wf.AriaSummary),
 	}
 	if loan != nil {
 		payload["offer_policy"] = map[string]any{
@@ -122,9 +124,8 @@ func GenerateNovaOffer(wf models.BorrowerWorkflow) (*HandoffCall[NovaOfferResult
   "lump_sum_discount_pct": number|null,
   "emi_amount": number|null,
   "emi_months": number|null,
-  "hardship_offered": boolean|null,
-  "context_for_nova": string
-}`, `Generate the offer NOVA should present from ARIA context, loan facts, and policy only. Keep context_for_nova <= 500 tokens. Do not mark a call outcome.`)
+  "hardship_offered": boolean|null
+}`, `Generate only the offer NOVA should present from ARIA context, loan facts, and policy. Do not generate runtime context and do not mark a call outcome.`)
 	var result NovaOfferResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
@@ -133,17 +134,38 @@ func GenerateNovaOffer(wf models.BorrowerWorkflow) (*HandoffCall[NovaOfferResult
 	return &HandoffCall[NovaOfferResult]{Result: result, Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
 }
 
+func GenerateNovaRuntimeContext(wf models.BorrowerWorkflow, offer *models.ResolutionOffer) (*HandoffCall[string], error) {
+	client, err := agents.NewNova()
+	if err != nil {
+		return nil, err
+	}
+	payload := map[string]any{
+		"aria_handoff":     derefString(wf.ContextForNova),
+		"aria_summary":     derefString(wf.AriaSummary),
+		"resolution_offer": conciseOfferState(offer),
+	}
+	prompt := buildStructuredPrompt("NOVA runtime context", payload, `{
+  "context_for_nova": string
+	}`, `NOVA must generate its own runtime summary. Generate only the <= 500 token voice-call context NOVA needs from ARIA's handoff and NOVA's generated offer. Include borrower/account identifiers only as partial identifiers, ARIA assessment facts, scheduled callback timing if relevant, and exact offer terms. Do not include raw JSON or unrelated workflow fields.`)
+	var result struct {
+		ContextForNova string `json:"context_for_nova"`
+	}
+	tokens, err := client.ParseHandoff(prompt, &result)
+	if err != nil {
+		return nil, fmt.Errorf("parse nova runtime context: %w", err)
+	}
+	return &HandoffCall[string]{Result: strings.TrimSpace(result.ContextForNova), Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
+}
+
 func GenerateNovaCallHandoff(wf models.BorrowerWorkflow, offer *models.ResolutionOffer, transcript string) (*HandoffCall[NovaCallHandoffResult], error) {
 	client, err := agents.NewNova()
 	if err != nil {
 		return nil, err
 	}
 	payload := map[string]any{
-		"workflow":         wf,
-		"resolution_offer": offer,
+		"nova_context":     derefString(wf.ContextForNova),
+		"resolution_offer": conciseOfferState(offer),
 		"call_transcript":  transcript,
-		"aria_summary":     wf.AriaSummary,
-		"context_for_nova": wf.ContextForNova,
 	}
 	prompt := buildStructuredPrompt("NOVA call completion handoff", payload, `{
   "offer_accepted": boolean|null,
@@ -151,10 +173,9 @@ func GenerateNovaCallHandoff(wf models.BorrowerWorkflow, offer *models.Resolutio
   "objections_raised": array,
   "outcome": "committed"|"rejected"|"no_response"|"hardship"|"stop_contact"|"escalated"|null,
   "aria_summary": string,
-  "context_for_delta": string,
   "final_offer_amount": number|null,
   "final_offer_deadline_hours": number|null
-}`, `Use the call transcript and persisted offer only. Summarize the call outcome, update ARIA memory, and create <= 500 token context_for_delta if the account must continue to DELTA.`)
+}`, `Use the NOVA call transcript and persisted offer only. Summarize the call outcome and update ARIA memory with what NOVA already offered and how the borrower reacted. Do not generate DELTA runtime context here; DELTA generates its own runtime summary in a separate step.`)
 	var result NovaCallHandoffResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
@@ -187,8 +208,7 @@ func NovaCallHandoffFromStructuredOutput(output map[string]any) (*HandoffCall[No
 func hasNovaStructuredHandoffFields(output map[string]any) bool {
 	_, hasAccepted := output["offer_accepted"]
 	_, hasOutcome := output["outcome"]
-	_, hasContext := output["context_for_delta"]
-	return hasAccepted && hasOutcome && hasContext
+	return hasAccepted && hasOutcome
 }
 
 func GenerateDeltaHandoff(wf models.BorrowerWorkflow, messages []models.AgentMessage) (*HandoffCall[DeltaHandoffResult], error) {
@@ -196,17 +216,9 @@ func GenerateDeltaHandoff(wf models.BorrowerWorkflow, messages []models.AgentMes
 	if err != nil {
 		return nil, err
 	}
-	user, _ := GetUser(wf.UserId)
-	loan, _ := GetLoan(wf.LoanId)
-	offer, _ := firstOffer(wf.Id)
 	payload := map[string]any{
-		"workflow":          wf,
-		"user":              user,
-		"loan":              loan,
-		"resolution_offer":  offer,
-		"messages":          agents.MessagesForCompletion(messages),
-		"aria_summary":      wf.AriaSummary,
-		"context_for_delta": wf.ContextForDelta,
+		"delta_runtime_summary": derefString(wf.ContextForDelta),
+		"delta_messages":        agents.MessagesForCompletion(messages),
 	}
 	prompt := buildStructuredPrompt("DELTA final handoff", payload, `{
   "stage_complete": boolean,
@@ -214,13 +226,50 @@ func GenerateDeltaHandoff(wf models.BorrowerWorkflow, messages []models.AgentMes
   "delta_summary": string,
   "final_offer_amount": number|null,
   "final_offer_deadline_hours": number|null
-}`, `Use prior ARIA/NOVA context and any DELTA messages if present. If no DELTA messages are present, draft the one-time final offer handoff for email, keep stage_complete false, and leave outcome null. If DELTA messages are present, decide whether the final notice stage is complete. Always produce a <= 500 token delta_summary for ARIA memory.`)
+}`, `Use only DELTA's runtime summary and any DELTA messages if present. If no DELTA messages are present, draft the one-time final offer handoff for email, keep stage_complete false, and leave outcome null. If DELTA messages are present, decide whether the final notice stage is complete. Always produce a <= 500 token delta_summary for ARIA memory.`)
 	var result DeltaHandoffResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
 		return nil, fmt.Errorf("parse delta handoff: %w", err)
 	}
 	return &HandoffCall[DeltaHandoffResult]{Result: result, Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
+}
+
+func GenerateDeltaRuntimeContext(wf models.BorrowerWorkflow, offer *models.ResolutionOffer) (*HandoffCall[DeltaRuntimeContextResult], error) {
+	client, err := agents.NewDelta()
+	if err != nil {
+		return nil, err
+	}
+	payload := map[string]any{
+		"nova_handoff":     novaOutcomeForDelta(wf, offer),
+		"resolution_offer": conciseOfferState(offer),
+		"final_offer":      conciseFinalOfferState(wf),
+	}
+	prompt := buildStructuredPrompt("DELTA runtime context", payload, `{
+  "context_for_delta": string
+}`, `DELTA must generate its own runtime summary. Generate only the <= 500 token chat context DELTA needs from NOVA's handoff/outcome. Include what NOVA offered, whether the borrower accepted or rejected, objections, final offer amount/deadline, and any hardship or stop-contact flags. Do not include raw JSON or unrelated account data.`)
+	var result DeltaRuntimeContextResult
+	tokens, err := client.ParseHandoff(prompt, &result)
+	if err != nil {
+		return nil, fmt.Errorf("parse delta runtime context: %w", err)
+	}
+	result.ContextForDelta = strings.TrimSpace(result.ContextForDelta)
+	return &HandoffCall[DeltaRuntimeContextResult]{Result: result, Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
+}
+
+func novaOutcomeForDelta(wf models.BorrowerWorkflow, offer *models.ResolutionOffer) map[string]any {
+	out := map[string]any{
+		"aria_memory_after_nova": wf.AriaSummary,
+		"workflow_outcome":       wf.Outcome,
+		"hardship_flagged":       wf.HardshipFlagged,
+		"stop_contact_flagged":   wf.StopContactFlagged,
+	}
+	if offer != nil {
+		out["offer_accepted"] = offer.OfferAccepted
+		out["accepted_offer_type"] = offer.AcceptedOfferType
+		out["objections_raised"] = offer.ObjectionsRaised
+	}
+	return out
 }
 
 func buildStructuredPrompt(name string, payload map[string]any, schema string, rules string) string {
@@ -236,6 +285,49 @@ Rules:
 
 INPUT JSON:
 %s`, name, rules, schema, string(data))
+}
+
+func conciseAssessmentState(wf models.BorrowerWorkflow) map[string]any {
+	return map[string]any{
+		"workflow_id":              wf.Id,
+		"stage":                    wf.CurrentStage,
+		"identity_verified":        wf.IdentityVerified,
+		"employment_status":        wf.EmploymentStatus,
+		"monthly_income_range":     wf.MonthlyIncomeRange,
+		"monthly_obligations":      wf.MonthlyObligations,
+		"default_reason":           wf.DefaultReason,
+		"borrower_emotional_state": wf.BorrowerEmotionalState,
+		"hardship_mentioned":       wf.HardshipMentioned,
+		"stop_contact_flagged":     wf.StopContactFlagged,
+	}
+}
+
+func conciseOfferState(offer *models.ResolutionOffer) map[string]any {
+	if offer == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"scheduled_call_at":     offer.ScheduledCallAt,
+		"lump_sum_offered":      offer.LumpSumOffered,
+		"lump_sum_discount_pct": offer.LumpSumDiscountPct,
+		"emi_amount":            offer.EmiAmount,
+		"emi_months":            offer.EmiMonths,
+		"emi_start_date":        offer.EmiStartDate,
+		"hardship_offered":      offer.HardshipOffered,
+		"offer_accepted":        offer.OfferAccepted,
+		"accepted_offer_type":   offer.AcceptedOfferType,
+		"objections_raised":     offer.ObjectionsRaised,
+	}
+}
+
+func conciseFinalOfferState(wf models.BorrowerWorkflow) map[string]any {
+	return map[string]any{
+		"outcome":              wf.Outcome,
+		"final_offer_amount":   wf.FinalOfferAmount,
+		"final_offer_deadline": wf.FinalOfferDeadline,
+		"hardship_flagged":     wf.HardshipFlagged,
+		"stop_contact_flagged": wf.StopContactFlagged,
+	}
 }
 
 func applyAriaHandoff(wf *models.BorrowerWorkflow, result AriaHandoffResult) {
@@ -264,9 +356,6 @@ func applyNovaOffer(wf *models.BorrowerWorkflow, offer *models.ResolutionOffer, 
 	offer.EmiAmount = result.EmiAmount
 	offer.EmiMonths = result.EmiMonths
 	offer.HardshipOffered = result.HardshipOffered
-	if strings.TrimSpace(result.ContextForNova) != "" {
-		wf.ContextForNova = stringPtr(strings.TrimSpace(result.ContextForNova))
-	}
 }
 
 func applyNovaCallHandoff(wf *models.BorrowerWorkflow, offer *models.ResolutionOffer, result NovaCallHandoffResult) {
@@ -276,9 +365,6 @@ func applyNovaCallHandoff(wf *models.BorrowerWorkflow, offer *models.ResolutionO
 	if strings.TrimSpace(result.AriaSummary) != "" {
 		wf.AriaSummary = stringPtr(strings.TrimSpace(result.AriaSummary))
 	}
-	if strings.TrimSpace(result.ContextForDelta) != "" {
-		wf.ContextForDelta = stringPtr(strings.TrimSpace(result.ContextForDelta))
-	}
 	if result.FinalOfferAmount != nil {
 		wf.FinalOfferAmount = result.FinalOfferAmount
 	} else if offer.LumpSumOffered != nil {
@@ -287,6 +373,12 @@ func applyNovaCallHandoff(wf *models.BorrowerWorkflow, offer *models.ResolutionO
 	if result.FinalOfferDeadlineHours != nil && *result.FinalOfferDeadlineHours > 0 {
 		deadline := time.Now().UTC().Add(time.Duration(*result.FinalOfferDeadlineHours) * time.Hour)
 		wf.FinalOfferDeadline = &deadline
+	}
+}
+
+func applyDeltaRuntimeContext(wf *models.BorrowerWorkflow, result DeltaRuntimeContextResult) {
+	if strings.TrimSpace(result.ContextForDelta) != "" {
+		wf.ContextForDelta = stringPtr(strings.TrimSpace(result.ContextForDelta))
 	}
 }
 

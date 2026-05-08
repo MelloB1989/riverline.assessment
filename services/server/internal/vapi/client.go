@@ -15,19 +15,12 @@ import (
 const NovaStructuredOutputName = "Riverline NOVA Handoff"
 
 type HandoffContext struct {
-	WorkflowID             string         `json:"workflow_id"`
-	BorrowerName           string         `json:"borrower_name"`
-	BorrowerFirstName      string         `json:"borrower_first_name"`
-	BorrowerEmail          string         `json:"borrower_email"`
-	AccountNumberPartial   string         `json:"account_number_partial"`
-	BorrowerContext        string         `json:"borrower_context"`
-	LoanContext            string         `json:"loan_context"`
-	AriaSummary            string         `json:"aria_summary"`
-	ContextForNova         string         `json:"context_for_nova"`
-	ResolutionOfferContext string         `json:"resolution_offer_context"`
-	Offers                 map[string]any `json:"offers"`
-	CurrentISTTimestamp    string         `json:"current_ist_timestamp"`
-	CurrentUTCTimestamp    string         `json:"current_utc_timestamp"`
+	WorkflowID           string `json:"workflow_id"`
+	BorrowerFirstName    string `json:"borrower_first_name"`
+	AccountNumberPartial string `json:"account_number_partial"`
+	ContextForNova       string `json:"context_for_nova"`
+	CurrentISTTimestamp  string `json:"current_ist_timestamp"`
+	CurrentUTCTimestamp  string `json:"current_utc_timestamp"`
 }
 
 type CallDetails struct {
@@ -69,31 +62,18 @@ func (c *Client) StartCall(ctx context.Context, phone string, context HandoffCon
 		return "mock-vapi-" + time.Now().UTC().Format("20060102150405"), nil
 	}
 	customer := map[string]any{"number": phone}
-	if context.BorrowerName != "" {
-		customer["name"] = context.BorrowerName
-	}
-	if context.BorrowerEmail != "" {
-		customer["email"] = context.BorrowerEmail
-	}
 	body := map[string]any{
 		"phoneNumberId": c.PhoneNumberID,
 		"assistantId":   c.AssistantID,
 		"customer":      customer,
 		"assistantOverrides": map[string]any{
 			"variableValues": map[string]any{
-				"workflow_id":              context.WorkflowID,
-				"borrower_name":            context.BorrowerName,
-				"borrower_first_name":      context.BorrowerFirstName,
-				"borrower_email":           context.BorrowerEmail,
-				"account_number_partial":   context.AccountNumberPartial,
-				"borrower_context":         context.BorrowerContext,
-				"loan_context":             context.LoanContext,
-				"aria_summary":             context.AriaSummary,
-				"context_for_nova":         context.ContextForNova,
-				"resolution_offer_context": context.ResolutionOfferContext,
-				"offers":                   context.Offers,
-				"current_ist_timestamp":    context.CurrentISTTimestamp,
-				"current_utc_timestamp":    context.CurrentUTCTimestamp,
+				"workflow_id":            context.WorkflowID,
+				"borrower_first_name":    context.BorrowerFirstName,
+				"account_number_partial": context.AccountNumberPartial,
+				"context_for_nova":       context.ContextForNova,
+				"current_ist_timestamp":  context.CurrentISTTimestamp,
+				"current_utc_timestamp":  context.CurrentUTCTimestamp,
 			},
 		},
 		"metadata": map[string]any{
@@ -439,10 +419,6 @@ func novaStructuredOutputSchema() map[string]any {
 				"type":        "string",
 				"description": "Updated memory summary preserving ARIA context plus relevant NOVA call facts.",
 			},
-			"context_for_delta": map[string]any{
-				"type":        "string",
-				"description": "Concise downstream context for DELTA if the account continues to final follow-up.",
-			},
 			"final_offer_amount": map[string]any{
 				"type":        nullableNumber,
 				"description": "Final amount to use for DELTA or commitment confirmation when applicable.",
@@ -452,7 +428,7 @@ func novaStructuredOutputSchema() map[string]any {
 				"description": "Deadline window in hours for the final offer, when applicable.",
 			},
 		},
-		"required": []string{"offer_accepted", "objections_raised", "outcome", "aria_summary", "context_for_delta"},
+		"required": []string{"offer_accepted", "objections_raised", "outcome", "aria_summary"},
 	}
 }
 
@@ -460,19 +436,14 @@ func NovaSystemPrompt(basePrompt string) string {
 	return strings.TrimSpace(basePrompt) + `
 
 [Vapi Voice Runtime Context]
-You are speaking with the borrower over {{transport.conversationType}}. Treat the following dynamic variables as authoritative runtime context for this exact call:
+You are speaking with the borrower over {{transport.conversationType}}. Treat the following dynamic variables as the only authoritative runtime context for this exact NOVA call:
 - Current IST timestamp: {{current_ist_timestamp}}
 - Workflow ID: {{workflow_id}}
-- Borrower name: {{borrower_name}}
-- Borrower profile JSON: {{borrower_context}}
-- Loan profile JSON: {{loan_context}}
-- ARIA assessment summary: {{aria_summary}}
-- NOVA call context: {{context_for_nova}}
-- Resolution offer JSON: {{resolution_offer_context}}
+- NOVA context summary: {{context_for_nova}}
 
 [Voice Requirements]
-- Use the borrower profile, loan profile, ARIA summary, NOVA context, and resolution offer before asking questions.
-- Do not say that loan amount, overdue days, account context, or offer details are unavailable when they are present in the runtime context.
+- Use only the NOVA context summary for borrower/account facts, ARIA handoff facts, and exact offer terms.
+- Do not say that loan amount, overdue days, account context, or offer details are unavailable when they are present in the NOVA context summary.
 - Speak naturally for a phone call; do not use Markdown.
 - Ask one question at a time and keep turns concise.
 - If the borrower disputes identity, requests no contact, reports hardship, accepts an offer, rejects all offers, or the call should end, close politely. The backend will consume Vapi structured outputs after the call ends.`
@@ -533,9 +504,8 @@ func extractNovaStructuredOutputFromValue(value any) map[string]any {
 
 func looksLikeNovaHandoff(value map[string]any) bool {
 	_, hasOutcome := value["outcome"]
-	_, hasContext := value["context_for_delta"]
 	_, hasAccepted := value["offer_accepted"]
-	return hasOutcome && hasContext && hasAccepted
+	return hasOutcome && hasAccepted
 }
 
 func nestedAny(m map[string]any, path string) any {
