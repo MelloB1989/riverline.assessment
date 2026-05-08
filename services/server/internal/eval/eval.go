@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -131,6 +132,7 @@ type MetricAggregate struct {
 }
 
 func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
+	start := time.Now()
 	if err := collections.EnsureDefaults(); err != nil {
 		return nil, err
 	}
@@ -144,6 +146,7 @@ func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
 	if len(cfg.Personas) == 0 {
 		cfg.Personas = defaultPersonas()
 	}
+	log.Printf("[eval] simulation batch start agent=%s batch_size=%d personas=%d max_turns=%d overrides=%d", cfg.AgentID, cfg.BatchSize, len(cfg.Personas), cfg.MaxTurnsPerAgent, len(cfg.PromptOverrides))
 	persona, err := newPersonaSimulator(slCfg)
 	if err != nil {
 		return nil, err
@@ -152,13 +155,18 @@ func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
 	for _, personaType := range cfg.Personas {
 		for i := 0; i < cfg.BatchSize; i++ {
 			seed := simulationSeed(cfg.Seed, personaType, i)
+			itemStart := time.Now()
+			log.Printf("[eval] simulation start persona=%s index=%d/%d seed=%s", personaType, i+1, cfg.BatchSize, seed)
 			sim, err := runOneSimulation(context.Background(), persona, cfg, personaType, seed)
 			if err != nil {
+				log.Printf("[eval] simulation failed persona=%s index=%d seed=%s duration=%s err=%v", personaType, i+1, seed, time.Since(itemStart), err)
 				return nil, err
 			}
+			log.Printf("[eval] simulation done persona=%s index=%d seed=%s workflow=%s convs=%d duration=%s", personaType, i+1, seed, sim.Workflow.Id, len(sim.Conversations), time.Since(itemStart))
 			out = append(out, sim)
 		}
 	}
+	log.Printf("[eval] simulation batch done agent=%s total=%d duration=%s", cfg.AgentID, len(out), time.Since(start))
 	return out, nil
 }
 
@@ -175,8 +183,12 @@ func ScoreAll(conversations []SimulatedConversation) ([]float64, error) {
 }
 
 func ScoreSimulations(conversations []SimulatedConversation, judges []constants.EvaluatorJudgeConfig) ([]SimulationScore, error) {
+	start := time.Now()
+	log.Printf("[eval] scoring simulations start count=%d judges=%d", len(conversations), len(judges))
 	out := make([]SimulationScore, 0, len(conversations))
-	for _, sim := range conversations {
+	for simIndex, sim := range conversations {
+		simStart := time.Now()
+		log.Printf("[eval] scoring simulation start index=%d/%d workflow=%s seed=%s persona=%s convs=%d", simIndex+1, len(conversations), sim.Workflow.Id, sim.Seed, sim.Persona, len(sim.Conversations))
 		var scores []float64
 		compliancePassed := 0
 		for _, conv := range sim.Conversations {
@@ -184,13 +196,17 @@ func ScoreSimulations(conversations []SimulatedConversation, judges []constants.
 			if strings.TrimSpace(transcript) == "" {
 				continue
 			}
+			convStart := time.Now()
+			log.Printf("[eval] scoring conversation start workflow=%s conversation=%s agent=%s prompt_version=%d transcript_chars=%d", conv.WorkflowId, conv.Id, conv.AgentId, conv.PromptVersion, len(transcript))
 			evaluation, err := EvaluateWithJudges(conv.AgentId, transcript, judges)
 			if err != nil {
+				log.Printf("[eval] scoring conversation failed conversation=%s agent=%s duration=%s err=%v", conv.Id, conv.AgentId, time.Since(convStart), err)
 				return nil, err
 			}
 			if err := SaveScore(conv, evaluation); err != nil {
 				return nil, err
 			}
+			log.Printf("[eval] scoring conversation done conversation=%s agent=%s score=%.2f compliance=%.0f duration=%s", conv.Id, conv.AgentId, evaluation.Metrics.CompositeScore, evaluation.Metrics.CompliancePass, time.Since(convStart))
 			scores = append(scores, evaluation.Metrics.CompositeScore)
 			if evaluation.Metrics.CompliancePass > 0 {
 				compliancePassed++
@@ -208,7 +224,9 @@ func ScoreSimulations(conversations []SimulatedConversation, judges []constants.
 			Mean:           Mean(scores),
 			ComplianceRate: rate,
 		})
+		log.Printf("[eval] scoring simulation done index=%d/%d workflow=%s mean=%.2f compliance_rate=%.2f duration=%s", simIndex+1, len(conversations), sim.Workflow.Id, Mean(scores), rate, time.Since(simStart))
 	}
+	log.Printf("[eval] scoring simulations done count=%d duration=%s", len(conversations), time.Since(start))
 	return out, nil
 }
 
@@ -217,6 +235,7 @@ func Evaluate(agentID models.AgentID, transcript string) (*EvaluationResult, err
 }
 
 func EvaluateWithJudges(agentID models.AgentID, transcript string, judges []constants.EvaluatorJudgeConfig) (*EvaluationResult, error) {
+	start := time.Now()
 	evaluator, err := activeEvaluatorVersion(agentID)
 	if err != nil {
 		return nil, err
@@ -225,12 +244,17 @@ func EvaluateWithJudges(agentID models.AgentID, transcript string, judges []cons
 		judges = constants.DefaultSelfLearningConfig().Judges
 	}
 	judges = normalizeJudges(judges)
+	log.Printf("[eval] judges start agent=%s evaluator_version=%d judges=%d transcript_chars=%d", agentID, evaluator.VersionNumber, len(judges), len(transcript))
 	results := make([]JudgeResult, 0, len(judges))
 	for _, judge := range judges {
+		judgeStart := time.Now()
+		log.Printf("[eval] judge start agent=%s judge=%s provider=%s model=%s", agentID, judge.Name, judge.Provider, judge.Model)
 		metrics, tokens, modelUsed, err := evaluateWithJudge(*evaluator, transcript, judge)
 		if err != nil {
+			log.Printf("[eval] judge failed agent=%s judge=%s duration=%s err=%v", agentID, judge.Name, time.Since(judgeStart), err)
 			return nil, err
 		}
+		log.Printf("[eval] judge done agent=%s judge=%s score=%.2f compliance=%.0f tokens=%d model=%s duration=%s", agentID, judge.Name, metrics.CompositeScore, metrics.CompliancePass, tokens, modelUsed, time.Since(judgeStart))
 		results = append(results, JudgeResult{
 			Name:      judge.Name,
 			Provider:  judge.Provider,
@@ -248,13 +272,15 @@ func EvaluateWithJudges(agentID models.AgentID, transcript string, judges []cons
 		tokens += result.Tokens
 		modelsUsed = append(modelsUsed, result.ModelUsed)
 	}
-	return &EvaluationResult{
+	result := &EvaluationResult{
 		Metrics:          aggregated,
 		EvaluatorVersion: *evaluator,
 		Tokens:           tokens,
 		ModelUsed:        strings.Join(modelsUsed, ","),
 		JudgeResults:     results,
-	}, nil
+	}
+	log.Printf("[eval] judges done agent=%s aggregate_score=%.2f tokens=%d duration=%s", agentID, aggregated.CompositeScore, tokens, time.Since(start))
+	return result, nil
 }
 
 func SaveScore(conv models.AgentConversation, evaluation *EvaluationResult) error {
@@ -307,6 +333,7 @@ func SaveScore(conv models.AgentConversation, evaluation *EvaluationResult) erro
 }
 
 func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptExperiment, error) {
+	start := time.Now()
 	if err := collections.EnsureDefaults(); err != nil {
 		return nil, err
 	}
@@ -318,32 +345,43 @@ func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptE
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[eval] experiment start agent=%s control_version=%d candidate_version=%d batch_size=%d personas=%d", agentID, current.VersionNumber, candidateVersion, cfg.BatchSize, len(cfg.Personas))
+	log.Printf("[eval] candidate prompt generation start agent=%s", agentID)
 	candidatePrompt, tokens, modelUsed, err := generateCandidatePrompt(agentID, current.PromptText)
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[eval] candidate prompt generation done agent=%s candidate_version=%d tokens=%d model=%s prompt_chars=%d", agentID, candidateVersion, tokens, modelUsed, len(candidatePrompt))
 	cfg.AgentID = agentID
 	cfg.PromptOverrides = nil
+	log.Printf("[eval] control simulations start agent=%s", agentID)
 	control, err := RunSimulation(cfg)
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[eval] control simulations done agent=%s count=%d", agentID, len(control))
+	log.Printf("[eval] control scoring start agent=%s", agentID)
 	controlStats, err := ScoreSimulations(control, cfg.Judges)
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[eval] control scoring done agent=%s count=%d", agentID, len(controlStats))
 	treatmentCfg := cfg
 	treatmentCfg.PromptOverrides = map[models.AgentID]PromptOverride{
 		agentID: {VersionNumber: candidateVersion, PromptText: candidatePrompt},
 	}
+	log.Printf("[eval] treatment simulations start agent=%s candidate_version=%d", agentID, candidateVersion)
 	treatment, err := RunSimulation(treatmentCfg)
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[eval] treatment simulations done agent=%s count=%d", agentID, len(treatment))
+	log.Printf("[eval] treatment scoring start agent=%s", agentID)
 	treatmentStats, err := ScoreSimulations(treatment, cfg.Judges)
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[eval] treatment scoring done agent=%s count=%d", agentID, len(treatmentStats))
 	controlScores := aggregateSimulationMeans(controlStats)
 	treatmentScores := aggregateSimulationMeans(treatmentStats)
 	controlCompliance := aggregateComplianceRate(controlStats)
@@ -396,6 +434,7 @@ func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptE
 	if err := collections.LogCost("prompt_generation", &agentID, modelUsed, tokens, 0, nil, &exp.Id); err != nil {
 		return nil, err
 	}
+	log.Printf("[eval] experiment done agent=%s experiment=%s delta=%.2f p=%.4f d=%.2f adopted=%t duration=%s", agentID, exp.Id, exp.MeanDelta, exp.PValue, derefFloat(exp.CohensD), exp.Adopted, time.Since(start))
 	return exp, nil
 }
 
@@ -640,6 +679,7 @@ func runOneSimulation(ctx context.Context, persona *personaSimulator, cfg SimCon
 	if err != nil {
 		return SimulatedConversation{}, err
 	}
+	log.Printf("[eval] workflow created workflow=%s user=%s loan=%s persona=%s seed=%s", wf.Id, wf.UserId, wf.LoanId, personaType, seed)
 	result := SimulatedConversation{
 		Workflow:         *wf,
 		Conversations:    []models.AgentConversation{},
@@ -652,10 +692,12 @@ func runOneSimulation(ctx context.Context, persona *personaSimulator, cfg SimCon
 	if err != nil {
 		return result, err
 	}
+	log.Printf("[eval] stage begin workflow=%s stage=%s", wf.Id, models.AgentAria)
 	ariaConv, ariaComplete, err := simulateAria(ctx, persona, wf, ariaClient, personaType, seed, cfg.MaxTurnsPerAgent)
 	if err != nil {
 		return result, err
 	}
+	log.Printf("[eval] stage end workflow=%s stage=%s complete=%t conversation=%s", wf.Id, models.AgentAria, ariaComplete, ariaConv.Id)
 	result.Conversations = append(result.Conversations, ariaConv)
 	result.Conversation = ariaConv
 	result.AgentTranscripts[models.AgentAria] = conversationTranscript(ariaConv)
@@ -668,6 +710,7 @@ func runOneSimulation(ctx context.Context, persona *personaSimulator, cfg SimCon
 	if err != nil {
 		return result, err
 	}
+	log.Printf("[eval] workflow stage check workflow=%s current_stage=%s resolved=%t", wf.Id, wf.CurrentStage, wf.ResolvedAt != nil)
 	if wf.CurrentStage == models.AgentNova {
 		novaClient, err := clientForSimulation(models.AgentNova, cfg.PromptOverrides)
 		if err != nil {
@@ -677,10 +720,12 @@ func runOneSimulation(ctx context.Context, persona *personaSimulator, cfg SimCon
 		if err != nil {
 			return result, err
 		}
+		log.Printf("[eval] stage begin workflow=%s stage=%s", wf.Id, models.AgentNova)
 		novaConv, err := simulateNovaText(ctx, persona, wf, novaClient, deltaClient, personaType, seed, cfg.MaxTurnsPerAgent)
 		if err != nil {
 			return result, err
 		}
+		log.Printf("[eval] stage end workflow=%s stage=%s conversation=%s", wf.Id, models.AgentNova, novaConv.Id)
 		result.Conversations = append(result.Conversations, novaConv)
 		result.AgentTranscripts[models.AgentNova] = conversationTranscript(novaConv)
 	}
@@ -688,15 +733,18 @@ func runOneSimulation(ctx context.Context, persona *personaSimulator, cfg SimCon
 	if err != nil {
 		return result, err
 	}
+	log.Printf("[eval] workflow stage check workflow=%s current_stage=%s resolved=%t", wf.Id, wf.CurrentStage, wf.ResolvedAt != nil)
 	if wf.CurrentStage == models.AgentDelta && wf.ResolvedAt == nil {
 		deltaClient, err := clientForSimulation(models.AgentDelta, cfg.PromptOverrides)
 		if err != nil {
 			return result, err
 		}
+		log.Printf("[eval] stage begin workflow=%s stage=%s", wf.Id, models.AgentDelta)
 		deltaConv, err := simulateDelta(ctx, persona, wf, deltaClient, personaType, seed, cfg.MaxTurnsPerAgent)
 		if err != nil {
 			return result, err
 		}
+		log.Printf("[eval] stage end workflow=%s stage=%s conversation=%s", wf.Id, models.AgentDelta, deltaConv.Id)
 		result.Conversations = append(result.Conversations, deltaConv)
 		result.AgentTranscripts[models.AgentDelta] = conversationTranscript(deltaConv)
 	}
@@ -710,12 +758,16 @@ func simulateAria(ctx context.Context, persona *personaSimulator, wf *models.Bor
 	if err != nil {
 		return conv, false, err
 	}
+	log.Printf("[eval] aria conversation created workflow=%s conversation=%s prompt_version=%d", wf.Id, conv.Id, client.PromptVersion())
 	messages := []models.AgentMessage{}
-	nextBorrower, err := persona.Next(ctx, personaType, seed, models.AgentAria, "", personaOpeningInstruction(*wf, models.AgentAria))
+	nextBorrower, err := persona.Next(ctx, personaType, seed, models.AgentAria, "", personaOpeningInstruction(*wf, models.AgentAria), borrowerPersonaContext(*wf))
 	if err != nil {
 		return conv, false, err
 	}
+	log.Printf("[eval] aria opening persona=%s seed=%s text=%q", personaType, seed, previewText(nextBorrower, 120))
 	for turn := 0; turn < maxTurns; turn++ {
+		turnStart := time.Now()
+		log.Printf("[eval] aria turn start workflow=%s conversation=%s turn=%d/%d borrower_chars=%d", wf.Id, conv.Id, turn+1, maxTurns, len(nextBorrower))
 		borrowerMsg, err := insertMessage(conv, models.MessageRoleBorrower, nextBorrower, 0)
 		if err != nil {
 			return conv, false, err
@@ -739,6 +791,7 @@ func simulateAria(ctx context.Context, persona *personaSimulator, wf *models.Bor
 		}
 		messages = append(messages, agentMsg)
 		_ = collections.LogCost("agent_response", &conv.AgentId, client.ModelUsed(), resp.InputTokens, resp.OutputTokens, &conv.Id, nil)
+		log.Printf("[eval] aria turn agent workflow=%s conversation=%s turn=%d response_chars=%d tokens_in=%d tokens_out=%d handoff=%t duration=%s", wf.Id, conv.Id, turn+1, len(agentText), resp.InputTokens, resp.OutputTokens, toolResults.AriaHandoff != nil, time.Since(turnStart))
 		if toolResults.AriaHandoff != nil {
 			if err := collections.ApplyAriaHandoffForSimulation(wf, toolResults.AriaHandoff.Result); err != nil {
 				return conv, false, err
@@ -749,27 +802,32 @@ func simulateAria(ctx context.Context, persona *personaSimulator, wf *models.Bor
 			if err := finishConversation(conv.Id, countRole(messages, models.MessageRoleBorrower), totalTokens(messages)+toolResults.AriaHandoff.Tokens, nil); err != nil {
 				return conv, false, err
 			}
+			log.Printf("[eval] aria handoff applied workflow=%s conversation=%s turns=%d handoff_tokens=%d", wf.Id, conv.Id, turn+1, toolResults.AriaHandoff.Tokens)
 			conv = mustConversation(conv.Id, conv)
 			return conv, true, nil
 		}
 		transcript := transcriptFromMessages(messages)
-		nextBorrower, err = persona.Next(ctx, personaType, seed, models.AgentAria, transcript, personaReplyInstruction(*wf, models.AgentAria))
+		nextBorrower, err = persona.Next(ctx, personaType, seed, models.AgentAria, transcript, personaReplyInstruction(*wf, models.AgentAria), borrowerPersonaContext(*wf))
 		if err != nil {
 			return conv, false, err
 		}
+		log.Printf("[eval] aria turn borrower next workflow=%s conversation=%s turn=%d next_chars=%d text=%q", wf.Id, conv.Id, turn+1, len(nextBorrower), previewText(nextBorrower, 120))
 	}
 	outcome := models.OutcomeNoResponse
 	_ = finishConversation(conv.Id, countRole(messages, models.MessageRoleBorrower), totalTokens(messages), &outcome)
+	log.Printf("[eval] aria max turns reached workflow=%s conversation=%s max_turns=%d", wf.Id, conv.Id, maxTurns)
 	conv = mustConversation(conv.Id, conv)
 	return conv, false, nil
 }
 
 func simulateNovaText(ctx context.Context, persona *personaSimulator, wf *models.BorrowerWorkflow, novaClient *agents.Client, deltaClient *agents.Client, personaType models.Persona, seed string, maxTurns int) (models.AgentConversation, error) {
+	log.Printf("[eval] nova prepare start workflow=%s", wf.Id)
 	offer, err := collections.PrepareNOVAWithClient(wf.Id, novaClient)
 	if err != nil {
 		return models.AgentConversation{}, err
 	}
 	_ = offer
+	log.Printf("[eval] nova prepare done workflow=%s", wf.Id)
 	wf, err = collections.GetWorkflow(wf.Id)
 	if err != nil {
 		return models.AgentConversation{}, err
@@ -778,11 +836,15 @@ func simulateNovaText(ctx context.Context, persona *personaSimulator, wf *models
 	if err != nil {
 		return conv, err
 	}
+	log.Printf("[eval] nova conversation created workflow=%s conversation=%s prompt_version=%d context_chars=%d", wf.Id, conv.Id, novaClient.PromptVersion(), len(derefString(wf.ContextForNova)))
 	handoff := novaSimulationHandoff(*wf)
+	firstStart := time.Now()
+	log.Printf("[eval] nova first turn start workflow=%s conversation=%s handoff_chars=%d", wf.Id, conv.Id, len(handoff))
 	first, err := novaClient.GenerateTextWithContext(handoff, "The outbound call has connected. Produce NOVA's first borrower-facing spoken turn only.")
 	if err != nil {
 		return conv, err
 	}
+	log.Printf("[eval] nova first turn done workflow=%s conversation=%s response_chars=%d tokens_in=%d tokens_out=%d duration=%s", wf.Id, conv.Id, len(strings.TrimSpace(first.AIResponse)), first.InputTokens, first.OutputTokens, time.Since(firstStart))
 	agentMsg, err := insertMessage(conv, models.MessageRoleAgent, strings.TrimSpace(first.AIResponse), first.OutputTokens)
 	if err != nil {
 		return conv, err
@@ -790,7 +852,9 @@ func simulateNovaText(ctx context.Context, persona *personaSimulator, wf *models
 	messages := []models.AgentMessage{agentMsg}
 	_ = collections.LogCost("agent_response", &conv.AgentId, novaClient.ModelUsed(), first.InputTokens, first.OutputTokens, &conv.Id, nil)
 	for turn := 0; turn < maxTurns; turn++ {
-		borrowerText, err := persona.Next(ctx, personaType, seed, models.AgentNova, transcriptFromMessages(messages), personaReplyInstruction(*wf, models.AgentNova))
+		turnStart := time.Now()
+		log.Printf("[eval] nova turn start workflow=%s conversation=%s turn=%d/%d", wf.Id, conv.Id, turn+1, maxTurns)
+		borrowerText, err := persona.Next(ctx, personaType, seed, models.AgentNova, transcriptFromMessages(messages), personaReplyInstruction(*wf, models.AgentNova), borrowerPersonaContext(*wf))
 		if err != nil {
 			return conv, err
 		}
@@ -809,11 +873,14 @@ func simulateNovaText(ctx context.Context, persona *personaSimulator, wf *models
 		}
 		messages = append(messages, agentMsg)
 		_ = collections.LogCost("agent_response", &conv.AgentId, novaClient.ModelUsed(), resp.InputTokens, resp.OutputTokens, &conv.Id, nil)
+		log.Printf("[eval] nova turn done workflow=%s conversation=%s turn=%d borrower_chars=%d response_chars=%d tokens_in=%d tokens_out=%d duration=%s", wf.Id, conv.Id, turn+1, len(borrowerText), len(strings.TrimSpace(resp.AIResponse)), resp.InputTokens, resp.OutputTokens, time.Since(turnStart))
 	}
 	transcript := transcriptFromMessages(messages)
+	log.Printf("[eval] nova complete start workflow=%s conversation=%s transcript_chars=%d", wf.Id, conv.Id, len(transcript))
 	if _, err := collections.CompleteNOVAWithClients(wf.Id, "simulated-"+seed, transcript, "", nil, nil, novaClient, deltaClient); err != nil {
 		return conv, err
 	}
+	log.Printf("[eval] nova complete done workflow=%s conversation=%s", wf.Id, conv.Id)
 	if err := finishConversation(conv.Id, countRole(messages, models.MessageRoleBorrower), totalTokens(messages), nil); err != nil {
 		return conv, err
 	}
@@ -825,14 +892,18 @@ func simulateDelta(ctx context.Context, persona *personaSimulator, wf *models.Bo
 	if err != nil {
 		return conv, err
 	}
+	log.Printf("[eval] delta conversation created workflow=%s conversation=%s prompt_version=%d", wf.Id, conv.Id, client.PromptVersion())
 	handoff, err := collections.HandoffForStage(*wf)
 	if err != nil {
 		return conv, err
 	}
+	firstStart := time.Now()
+	log.Printf("[eval] delta first turn start workflow=%s conversation=%s handoff_chars=%d", wf.Id, conv.Id, len(handoff))
 	first, err := client.GenerateTextWithContext(handoff, "Start the final notice chat now. Produce only the borrower-facing Riverline message.")
 	if err != nil {
 		return conv, err
 	}
+	log.Printf("[eval] delta first turn done workflow=%s conversation=%s response_chars=%d tokens_in=%d tokens_out=%d duration=%s", wf.Id, conv.Id, len(strings.TrimSpace(first.AIResponse)), first.InputTokens, first.OutputTokens, time.Since(firstStart))
 	agentMsg, err := insertMessage(conv, models.MessageRoleAgent, strings.TrimSpace(first.AIResponse), first.OutputTokens)
 	if err != nil {
 		return conv, err
@@ -840,7 +911,9 @@ func simulateDelta(ctx context.Context, persona *personaSimulator, wf *models.Bo
 	messages := []models.AgentMessage{agentMsg}
 	_ = collections.LogCost("agent_response", &conv.AgentId, client.ModelUsed(), first.InputTokens, first.OutputTokens, &conv.Id, nil)
 	for turn := 0; turn < maxTurns/2; turn++ {
-		borrowerText, err := persona.Next(ctx, personaType, seed, models.AgentDelta, transcriptFromMessages(messages), personaReplyInstruction(*wf, models.AgentDelta))
+		turnStart := time.Now()
+		log.Printf("[eval] delta turn start workflow=%s conversation=%s turn=%d/%d", wf.Id, conv.Id, turn+1, maxTurns/2)
+		borrowerText, err := persona.Next(ctx, personaType, seed, models.AgentDelta, transcriptFromMessages(messages), personaReplyInstruction(*wf, models.AgentDelta), borrowerPersonaContext(*wf))
 		if err != nil {
 			return conv, err
 		}
@@ -859,10 +932,13 @@ func simulateDelta(ctx context.Context, persona *personaSimulator, wf *models.Bo
 		}
 		messages = append(messages, agentMsg)
 		_ = collections.LogCost("agent_response", &conv.AgentId, client.ModelUsed(), resp.InputTokens, resp.OutputTokens, &conv.Id, nil)
+		log.Printf("[eval] delta turn done workflow=%s conversation=%s turn=%d borrower_chars=%d response_chars=%d tokens_in=%d tokens_out=%d duration=%s", wf.Id, conv.Id, turn+1, len(borrowerText), len(strings.TrimSpace(resp.AIResponse)), resp.InputTokens, resp.OutputTokens, time.Since(turnStart))
 	}
+	log.Printf("[eval] delta complete start workflow=%s conversation=%s", wf.Id, conv.Id)
 	if _, err := collections.CompleteDeltaConversation(wf.Id, conv.Id, client); err != nil {
 		return conv, err
 	}
+	log.Printf("[eval] delta complete done workflow=%s conversation=%s", wf.Id, conv.Id)
 	return mustConversation(conv.Id, conv), nil
 }
 
@@ -877,18 +953,34 @@ func newPersonaSimulator(cfg constants.SelfLearningConfig) (*personaSimulator, e
 	return &personaSimulator{client: collections.NewLLMClient(cfg.PersonaLLMBaseURL, cfg.PersonaLLMAPIKey, cfg.PersonaLLMModel)}, nil
 }
 
-func (p *personaSimulator) Next(ctx context.Context, persona models.Persona, seed string, stage models.AgentID, transcript string, instruction string) (string, error) {
+func (p *personaSimulator) Next(ctx context.Context, persona models.Persona, seed string, stage models.AgentID, transcript string, instruction string, borrowerContext string) (string, error) {
 	messages := []collections.LlmMessage{
-		{Role: "system", Content: personaSystemPrompt(persona, seed)},
-		{Role: "user", Content: fmt.Sprintf("Stage: %s\nInstruction: %s\nTranscript so far:\n%s\n\nReturn only the next borrower message. No labels, JSON, tags, or commentary.", stage, instruction, transcript)},
+		{Role: "system", Content: personaSystemPrompt(persona, seed, borrowerContext)},
+		{Role: "user", Content: fmt.Sprintf("Stage: %s\nInstruction: %s\nTranscript so far:\n%s\n\nReturn only the next borrower message. No labels, JSON, tags, or commentary. Return a complete sentence; do not stop mid-number or mid-word.", stage, instruction, transcript)},
 	}
-	resp, err := p.client.ChatWithTokenUsage(ctx, messages, 0.35, 220)
-	if err != nil {
-		return "", err
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		callStart := time.Now()
+		log.Printf("[eval] persona call start persona=%s stage=%s seed=%s attempt=%d transcript_chars=%d context_chars=%d", persona, stage, seed, attempt+1, len(transcript), len(borrowerContext))
+		callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		resp, err := p.client.ChatWithTokenUsage(callCtx, messages, 0.35, 1000)
+		cancel()
+		if err != nil {
+			lastErr = err
+			log.Printf("[eval] persona call failed persona=%s stage=%s seed=%s attempt=%d duration=%s err=%v", persona, stage, seed, attempt+1, time.Since(callStart), err)
+			continue
+		}
+		agentID := stage
+		_ = collections.LogCost("simulation_persona", &agentID, "anthropic/"+resp.Model, resp.InputTokens, resp.OutputTokens, nil, nil)
+		content := strings.TrimSpace(stripSpeakerLabel(resp.Content))
+		if personaResponseComplete(content) && resp.StopReason != "max_tokens" {
+			log.Printf("[eval] persona call done persona=%s stage=%s seed=%s attempt=%d model=%s stop_reason=%s tokens_in=%d tokens_out=%d chars=%d duration=%s text=%q", persona, stage, seed, attempt+1, resp.Model, resp.StopReason, resp.InputTokens, resp.OutputTokens, len(content), time.Since(callStart), previewText(content, 120))
+			return content, nil
+		}
+		lastErr = fmt.Errorf("persona response incomplete: stop_reason=%s content=%q", resp.StopReason, content)
+		log.Printf("[eval] persona call incomplete persona=%s stage=%s seed=%s attempt=%d model=%s stop_reason=%s tokens_in=%d tokens_out=%d chars=%d duration=%s text=%q", persona, stage, seed, attempt+1, resp.Model, resp.StopReason, resp.InputTokens, resp.OutputTokens, len(content), time.Since(callStart), previewText(content, 120))
 	}
-	agentID := stage
-	_ = collections.LogCost("simulation_persona", &agentID, "anthropic/"+resp.Model, resp.InputTokens, resp.OutputTokens, nil, nil)
-	return strings.TrimSpace(stripSpeakerLabel(resp.Content)), nil
+	return "", lastErr
 }
 
 func evaluateWithJudge(evaluator models.EvaluatorVersion, transcript string, judge constants.EvaluatorJudgeConfig) (MetricScores, int, string, error) {
@@ -1270,15 +1362,11 @@ func fullTranscript(byAgent map[models.AgentID]string) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func personaSystemPrompt(persona models.Persona, seed string) string {
+func personaSystemPrompt(persona models.Persona, seed string, borrowerContext string) string {
 	return fmt.Sprintf(`You are simulating a borrower in Riverline's debt collection assessment. You are not the Riverline agent.
 
-Borrower facts you may reveal naturally when asked:
-- Name: Kartik User.
-- Loan account last four digits: 6789.
-- Loan type: personal loan.
-- Outstanding balance: 9825.
-- Days overdue: 74.
+Authoritative borrower and loan row context:
+%s
 
 Persona: %s.
 Seed: %s.
@@ -1293,7 +1381,57 @@ Behavior rules:
 - For evasive, avoid exact details until pressed, then provide partial answers.
 - For confused, ask clarifying questions and misunderstand one important point.
 - For distressed, mention hardship or crisis pressure and avoid overcommitting.
-- If the agent asks for stop-contact handling, only request stop contact if it fits the persona trajectory.`, persona, seed)
+- If the agent asks for stop-contact handling, only request stop contact if it fits the persona trajectory.`, borrowerContext, persona, seed)
+}
+
+func borrowerPersonaContext(wf models.BorrowerWorkflow) string {
+	user, _ := collections.GetUser(wf.UserId)
+	loan, _ := collections.GetLoan(wf.LoanId)
+	if user == nil || loan == nil {
+		return "Borrower row context unavailable. Use the visible transcript only."
+	}
+	return fmt.Sprintf(`users row:
+- id: %s
+- name: %s %s
+- email: %s
+- phone: %s
+- extra: %s
+
+loans row:
+- id: %s
+- user_id: %s
+- account_number_partial: %s
+- loan_type: %s
+- outstanding_amount: %.2f
+- principal_amount: %.2f
+- days_overdue: %d
+- policy_max_discount_pct: %.2f
+- status: %s`,
+		user.Id,
+		user.FirstName,
+		user.LastName,
+		user.Email,
+		derefString(user.Phone),
+		MarshalJSON(user.Extra),
+		loan.Id,
+		loan.UserId,
+		loan.AccountNumberPartial,
+		loan.LoanType,
+		loan.OutstandingAmount,
+		loan.PrincipalAmount,
+		loan.DaysOverdue,
+		loan.PolicyMaxDiscountPct,
+		loan.Status,
+	)
+}
+
+func personaResponseComplete(content string) bool {
+	content = strings.TrimSpace(content)
+	if len(content) < 8 {
+		return false
+	}
+	last := content[len(content)-1]
+	return strings.ContainsAny(string(last), ".?!")
 }
 
 func personaOpeningInstruction(wf models.BorrowerWorkflow, stage models.AgentID) string {
@@ -1316,6 +1454,14 @@ func stripSpeakerLabel(value string) string {
 		}
 	}
 	return value
+}
+
+func previewText(value string, maxLen int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if maxLen <= 0 || len(value) <= maxLen {
+		return value
+	}
+	return value[:maxLen] + "..."
 }
 
 func generateCandidatePrompt(agentID models.AgentID, currentPrompt string) (string, int, string, error) {

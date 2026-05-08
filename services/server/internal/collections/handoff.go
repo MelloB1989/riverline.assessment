@@ -3,6 +3,7 @@ package collections
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -72,6 +73,8 @@ func GenerateAriaHandoff(wf models.BorrowerWorkflow, messages []models.AgentMess
 }
 
 func GenerateAriaHandoffWithClient(client *agents.Client, wf models.BorrowerWorkflow, messages []models.AgentMessage) (*HandoffCall[AriaHandoffResult], error) {
+	start := time.Now()
+	log.Printf("[collections] handoff generation start workflow=%s agent=%s messages=%d", wf.Id, models.AgentAria, len(messages))
 	user, _ := GetUser(wf.UserId)
 	loan, _ := GetLoan(wf.LoanId)
 	accountSummary := ""
@@ -100,8 +103,10 @@ func GenerateAriaHandoffWithClient(client *agents.Client, wf models.BorrowerWork
 	var result AriaHandoffResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
+		log.Printf("[collections] handoff generation failed workflow=%s agent=%s duration=%s err=%v", wf.Id, models.AgentAria, time.Since(start), err)
 		return nil, fmt.Errorf("parse aria handoff: %w", err)
 	}
+	log.Printf("[collections] handoff generation done workflow=%s agent=%s tokens=%d duration=%s", wf.Id, models.AgentAria, tokens, time.Since(start))
 	return &HandoffCall[AriaHandoffResult]{Result: result, Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
 }
 
@@ -114,6 +119,8 @@ func GenerateNovaOffer(wf models.BorrowerWorkflow) (*HandoffCall[NovaOfferResult
 }
 
 func GenerateNovaOfferWithClient(client *agents.Client, wf models.BorrowerWorkflow) (*HandoffCall[NovaOfferResult], error) {
+	start := time.Now()
+	log.Printf("[collections] handoff generation start workflow=%s agent=%s type=offer", wf.Id, models.AgentNova)
 	loan, _ := GetLoan(wf.LoanId)
 	payload := map[string]any{
 		"aria_handoff": derefString(wf.ContextForNova),
@@ -137,8 +144,10 @@ func GenerateNovaOfferWithClient(client *agents.Client, wf models.BorrowerWorkfl
 	var result NovaOfferResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
+		log.Printf("[collections] handoff generation failed workflow=%s agent=%s type=offer duration=%s err=%v", wf.Id, models.AgentNova, time.Since(start), err)
 		return nil, fmt.Errorf("parse nova offer: %w", err)
 	}
+	log.Printf("[collections] handoff generation done workflow=%s agent=%s type=offer tokens=%d duration=%s", wf.Id, models.AgentNova, tokens, time.Since(start))
 	return &HandoffCall[NovaOfferResult]{Result: result, Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
 }
 
@@ -151,6 +160,8 @@ func GenerateNovaRuntimeContext(wf models.BorrowerWorkflow, offer *models.Resolu
 }
 
 func GenerateNovaRuntimeContextWithClient(client *agents.Client, wf models.BorrowerWorkflow, offer *models.ResolutionOffer) (*HandoffCall[string], error) {
+	start := time.Now()
+	log.Printf("[collections] handoff generation start workflow=%s agent=%s type=runtime_context", wf.Id, models.AgentNova)
 	payload := map[string]any{
 		"aria_handoff":     derefString(wf.ContextForNova),
 		"aria_summary":     derefString(wf.AriaSummary),
@@ -164,8 +175,10 @@ func GenerateNovaRuntimeContextWithClient(client *agents.Client, wf models.Borro
 	}
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
+		log.Printf("[collections] handoff generation failed workflow=%s agent=%s type=runtime_context duration=%s err=%v", wf.Id, models.AgentNova, time.Since(start), err)
 		return nil, fmt.Errorf("parse nova runtime context: %w", err)
 	}
+	log.Printf("[collections] handoff generation done workflow=%s agent=%s type=runtime_context tokens=%d context_chars=%d duration=%s", wf.Id, models.AgentNova, tokens, len(strings.TrimSpace(result.ContextForNova)), time.Since(start))
 	return &HandoffCall[string]{Result: strings.TrimSpace(result.ContextForNova), Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
 }
 
@@ -178,6 +191,8 @@ func GenerateNovaCallHandoff(wf models.BorrowerWorkflow, offer *models.Resolutio
 }
 
 func GenerateNovaCallHandoffWithClient(client *agents.Client, wf models.BorrowerWorkflow, offer *models.ResolutionOffer, transcript string) (*HandoffCall[NovaCallHandoffResult], error) {
+	start := time.Now()
+	log.Printf("[collections] handoff generation start workflow=%s agent=%s type=call_completion transcript_chars=%d", wf.Id, models.AgentNova, len(transcript))
 	payload := map[string]any{
 		"nova_context":     derefString(wf.ContextForNova),
 		"resolution_offer": conciseOfferState(offer),
@@ -195,8 +210,10 @@ func GenerateNovaCallHandoffWithClient(client *agents.Client, wf models.Borrower
 	var result NovaCallHandoffResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
+		log.Printf("[collections] handoff generation failed workflow=%s agent=%s type=call_completion duration=%s err=%v", wf.Id, models.AgentNova, time.Since(start), err)
 		return nil, fmt.Errorf("parse nova call handoff: %w", err)
 	}
+	log.Printf("[collections] handoff generation done workflow=%s agent=%s type=call_completion tokens=%d duration=%s", wf.Id, models.AgentNova, tokens, time.Since(start))
 	return &HandoffCall[NovaCallHandoffResult]{Result: result, Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
 }
 
@@ -236,6 +253,8 @@ func GenerateDeltaHandoff(wf models.BorrowerWorkflow, messages []models.AgentMes
 }
 
 func GenerateDeltaHandoffWithClient(client *agents.Client, wf models.BorrowerWorkflow, messages []models.AgentMessage) (*HandoffCall[DeltaHandoffResult], error) {
+	start := time.Now()
+	log.Printf("[collections] handoff generation start workflow=%s agent=%s type=handoff messages=%d", wf.Id, models.AgentDelta, len(messages))
 	payload := map[string]any{
 		"delta_runtime_summary": derefString(wf.ContextForDelta),
 		"delta_messages":        agents.MessagesForCompletion(messages),
@@ -250,8 +269,10 @@ func GenerateDeltaHandoffWithClient(client *agents.Client, wf models.BorrowerWor
 	var result DeltaHandoffResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
+		log.Printf("[collections] handoff generation failed workflow=%s agent=%s type=handoff duration=%s err=%v", wf.Id, models.AgentDelta, time.Since(start), err)
 		return nil, fmt.Errorf("parse delta handoff: %w", err)
 	}
+	log.Printf("[collections] handoff generation done workflow=%s agent=%s type=handoff tokens=%d duration=%s", wf.Id, models.AgentDelta, tokens, time.Since(start))
 	return &HandoffCall[DeltaHandoffResult]{Result: result, Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
 }
 
@@ -264,6 +285,8 @@ func GenerateDeltaRuntimeContext(handoff NovaCallHandoffResult, offer *models.Re
 }
 
 func GenerateDeltaRuntimeContextWithClient(client *agents.Client, handoff NovaCallHandoffResult, offer *models.ResolutionOffer, wf models.BorrowerWorkflow) (*HandoffCall[DeltaRuntimeContextResult], error) {
+	start := time.Now()
+	log.Printf("[collections] handoff generation start workflow=%s agent=%s type=runtime_context", wf.Id, models.AgentDelta)
 	payload := map[string]any{
 		"nova_handoff":     novaOutcomeForDelta(handoff, offer, wf),
 		"resolution_offer": conciseOfferState(offer),
@@ -275,9 +298,11 @@ func GenerateDeltaRuntimeContextWithClient(client *agents.Client, handoff NovaCa
 	var result DeltaRuntimeContextResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
+		log.Printf("[collections] handoff generation failed workflow=%s agent=%s type=runtime_context duration=%s err=%v", wf.Id, models.AgentDelta, time.Since(start), err)
 		return nil, fmt.Errorf("parse delta runtime context: %w", err)
 	}
 	result.ContextForDelta = strings.TrimSpace(result.ContextForDelta)
+	log.Printf("[collections] handoff generation done workflow=%s agent=%s type=runtime_context tokens=%d context_chars=%d duration=%s", wf.Id, models.AgentDelta, tokens, len(result.ContextForDelta), time.Since(start))
 	return &HandoffCall[DeltaRuntimeContextResult]{Result: result, Tokens: tokens, ModelUsed: client.ModelUsed()}, nil
 }
 

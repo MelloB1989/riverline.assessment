@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"riverline_server/internal/agents"
@@ -30,7 +31,14 @@ func converseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAgent models.AgentID, handoff string, messages []models.AgentMessage) (StageToolResults, *karmaModels.AIChatResponse, error) {
 	var results StageToolResults
 	if chatAgent != models.AgentAria {
+		start := time.Now()
+		log.Printf("[collections] converse start workflow=%s agent=%s messages=%d handoff_chars=%d", wf.Id, chatAgent, len(messages), len(handoff))
 		resp, err := client.Converse(handoff, messages)
+		if err != nil {
+			log.Printf("[collections] converse failed workflow=%s agent=%s duration=%s err=%v", wf.Id, chatAgent, time.Since(start), err)
+		} else {
+			log.Printf("[collections] converse done workflow=%s agent=%s response_chars=%d tool_calls=%d duration=%s", wf.Id, chatAgent, len(resp.AIResponse), len(resp.ToolCalls), time.Since(start))
+		}
 		return results, resp, err
 	}
 	var toolErr error
@@ -43,7 +51,10 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 			SetString("preferred_nova_call_at", "Borrower-confirmed preferred resolution-call time as an ISO-8601 timestamp with timezone. Required when outcome is ready_for_nova. Use not_applicable only for stop_contact or hardship terminal outcomes.").
 			SetRequired("reason", "outcome", "preferred_nova_call_at"),
 		func(_ context.Context, params ai.FuncParams) (string, error) {
+			start := time.Now()
+			log.Printf("[collections] aria tool start workflow=%s tool=%s params=%v", wf.Id, agents.ToolCreateAriaHandoff, params)
 			if wf.CurrentStage != models.AgentAria {
+				log.Printf("[collections] aria tool skipped workflow=%s tool=%s reason=already_generated duration=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start))
 				return `{"handoff_already_generated":true}`, nil
 			}
 			outcome, err := funcParamString(params, "outcome")
@@ -64,11 +75,13 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 			}
 			results.AriaHandoff, toolErr = GenerateAriaHandoffWithClient(client, wf, messages)
 			if toolErr != nil {
+				log.Printf("[collections] aria tool failed workflow=%s tool=%s duration=%s err=%v", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), toolErr)
 				return "", toolErr
 			}
 			if outcome == "ready_for_nova" {
 				results.AriaHandoff.Result.PreferredNovaCallAt = &preferredCallAt
 			}
+			log.Printf("[collections] aria tool done workflow=%s tool=%s outcome=%s duration=%s", wf.Id, agents.ToolCreateAriaHandoff, outcome, time.Since(start))
 			return `{"handoff_generated":true}`, nil
 		},
 	)
@@ -86,33 +99,48 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 			SetString("reason", "Brief borrower-facing reason for the schedule change.").
 			SetRequired("scheduled_call_at", "reason"),
 		func(_ context.Context, params ai.FuncParams) (string, error) {
+			start := time.Now()
+			log.Printf("[collections] aria tool start workflow=%s tool=%s params=%v", wf.Id, agents.ToolRescheduleNovaCall, params)
 			scheduledText, err := funcParamString(params, "scheduled_call_at")
 			if err != nil {
 				toolErr = err
+				log.Printf("[collections] aria tool failed workflow=%s tool=%s duration=%s err=%v", wf.Id, agents.ToolRescheduleNovaCall, time.Since(start), toolErr)
 				return "", err
 			}
 			reason, err := funcParamString(params, "reason")
 			if err != nil {
 				toolErr = err
+				log.Printf("[collections] aria tool failed workflow=%s tool=%s duration=%s err=%v", wf.Id, agents.ToolRescheduleNovaCall, time.Since(start), toolErr)
 				return "", err
 			}
 			scheduledAt, err := parseBorrowerCallTime(scheduledText, time.Now().UTC())
 			if err != nil {
 				toolErr = err
+				log.Printf("[collections] aria tool failed workflow=%s tool=%s duration=%s err=%v", wf.Id, agents.ToolRescheduleNovaCall, time.Since(start), toolErr)
 				return "", err
 			}
 			if err := SetNovaScheduledCall(wf.Id, scheduledAt, reason); err != nil {
 				toolErr = err
+				log.Printf("[collections] aria tool failed workflow=%s tool=%s duration=%s err=%v", wf.Id, agents.ToolRescheduleNovaCall, time.Since(start), toolErr)
 				return "", err
 			}
 			results.NovaReschedule = &NovaRescheduleResult{ScheduledCallAt: scheduledAt, Reason: reason}
+			log.Printf("[collections] aria tool done workflow=%s tool=%s scheduled_at=%s duration=%s", wf.Id, agents.ToolRescheduleNovaCall, scheduledAt.Format(time.RFC3339), time.Since(start))
 			return `{"nova_call_rescheduled":true}`, nil
 		},
 	)
 	tools := []ai.GoFunctionTool{createHandoffTool, rescheduleTool}
+	start := time.Now()
+	log.Printf("[collections] converse start workflow=%s agent=%s messages=%d handoff_chars=%d tools=%d", wf.Id, chatAgent, len(messages), len(handoff), len(tools))
 	resp, err := client.ConverseWithTools(handoff, messages, tools...)
 	if toolErr != nil {
+		log.Printf("[collections] converse tool failed workflow=%s agent=%s duration=%s err=%v", wf.Id, chatAgent, time.Since(start), toolErr)
 		return results, nil, toolErr
+	}
+	if err != nil {
+		log.Printf("[collections] converse failed workflow=%s agent=%s duration=%s err=%v", wf.Id, chatAgent, time.Since(start), err)
+	} else {
+		log.Printf("[collections] converse done workflow=%s agent=%s response_chars=%d tool_calls=%d aria_handoff=%t nova_reschedule=%t duration=%s", wf.Id, chatAgent, len(resp.AIResponse), len(resp.ToolCalls), results.AriaHandoff != nil, results.NovaReschedule != nil, time.Since(start))
 	}
 	return results, resp, err
 }

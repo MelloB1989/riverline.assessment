@@ -6,6 +6,7 @@ require (
 	github.com/MelloB1989/karma v1.17.72
 	github.com/gofiber/fiber/v2 v2.52.13
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	go.temporal.io/api v1.53.0
 	go.temporal.io/sdk v1.37.0
 )
 
@@ -95,7 +96,6 @@ require (
 	go.opentelemetry.io/otel v1.39.0 // indirect
 	go.opentelemetry.io/otel/metric v1.39.0 // indirect
 	go.opentelemetry.io/otel/trace v1.39.0 // indirect
-	go.temporal.io/api v1.53.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/crypto v0.47.0 // indirect
@@ -111,3 +111,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/MelloB1989/karma => ./local/karma

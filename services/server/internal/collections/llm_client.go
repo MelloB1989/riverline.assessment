@@ -47,6 +47,7 @@ type LlmChatResult struct {
 	OutputTokens int    `json:"output_tokens"`
 	TotalTokens  int    `json:"total_tokens"`
 	Model        string `json:"model"`
+	StopReason   string `json:"stop_reason"`
 }
 
 type LlmClient struct {
@@ -142,6 +143,7 @@ func (c *LlmClient) readSSEStream(body io.Reader, model string) (*LlmChatResult,
 	var textContent strings.Builder
 	inputTokens := 0
 	outputTokens := 0
+	stopReason := ""
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -160,8 +162,9 @@ func (c *LlmClient) readSSEStream(body io.Reader, model string) (*LlmChatResult,
 			Type  string `json:"type"`
 			Index int    `json:"index"`
 			Delta *struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type       string `json:"type,omitempty"`
+				Text       string `json:"text,omitempty"`
+				StopReason string `json:"stop_reason,omitempty"`
 			} `json:"delta,omitempty"`
 			ContentBlock *struct {
 				Type string `json:"type"`
@@ -193,6 +196,9 @@ func (c *LlmClient) readSSEStream(body io.Reader, model string) (*LlmChatResult,
 		if event.Type == "content_block_delta" && event.Delta != nil && event.Delta.Type == "text_delta" {
 			textContent.WriteString(event.Delta.Text)
 		}
+		if event.Delta != nil && event.Delta.StopReason != "" {
+			stopReason = event.Delta.StopReason
+		}
 		if event.Message != nil && event.Message.Usage != nil {
 			if event.Message.Usage.InputTokens > 0 {
 				inputTokens = event.Message.Usage.InputTokens
@@ -220,5 +226,5 @@ func (c *LlmClient) readSSEStream(body io.Reader, model string) (*LlmChatResult,
 		return nil, fmt.Errorf("Claude API returned no text content")
 	}
 
-	return &LlmChatResult{Content: result, InputTokens: inputTokens, OutputTokens: outputTokens, TotalTokens: inputTokens + outputTokens, Model: model}, nil
+	return &LlmChatResult{Content: result, InputTokens: inputTokens, OutputTokens: outputTokens, TotalTokens: inputTokens + outputTokens, Model: model, StopReason: stopReason}, nil
 }

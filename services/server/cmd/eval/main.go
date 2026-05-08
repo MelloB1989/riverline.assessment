@@ -18,7 +18,7 @@ import (
 
 func main() {
 	seed := flag.Int64("seed", 42, "simulation seed")
-	batchSize := flag.Int("batch-size", 20, "batch size per persona")
+	batchSize := flag.Int("batch-size", 1, "batch size per persona")
 	agent := flag.String("agent", "all", "aria, nova, delta, or all")
 	output := flag.String("output", "./eval-artifacts", "output directory for reproducible raw JSON artifacts")
 	flag.Parse()
@@ -31,31 +31,30 @@ func main() {
 		agents = []models.AgentID{models.AgentID(strings.ToLower(*agent))}
 	}
 	personas := []models.Persona{models.PersonaCooperative, models.PersonaCombative, models.PersonaEvasive, models.PersonaDistressed, models.PersonaConfused}
+	if *batchSize >= 10 {
+		perAgent := len(personas) * *batchSize * 2
+		log.Printf("large eval run: each agent will run about %d full-flow simulations before meta/canary scoring; use --batch-size=1 for smoke tests", perAgent)
+	}
 	totalConversations := 0
 	for _, agentID := range agents {
+		log.Printf("running prompt experiment for %s with seed=%d batch_size=%d personas=%d", agentID, *seed, *batchSize, len(personas))
 		cfg := rivereval.SimConfig{Seed: *seed, BatchSize: *batchSize, AgentID: agentID, Personas: personas}
-		convos, err := rivereval.RunSimulation(cfg)
-		if err != nil {
-			log.Fatal(err)
-		}
-		scores, err := rivereval.ScoreAll(convos)
-		if err != nil {
-			log.Fatal(err)
-		}
 		exp, err := rivereval.RunImprovementCycle(agentID, cfg)
 		if err != nil {
 			log.Fatal(err)
 		}
+		log.Printf("running meta evaluation for %s", agentID)
 		flags, err := rivereval.RunMetaEvaluation(agentID)
 		if err != nil {
 			log.Fatal(err)
 		}
-		canaries, err := rivereval.RunCanarySet(1)
+		log.Printf("running canaries after %s", agentID)
+		canaries, err := rivereval.RunCanarySetForAgent(agentID)
 		if err != nil {
 			log.Fatal(err)
 		}
-		totalConversations += len(scores)
-		fmt.Printf("%s: scored=%d mean=%.2f experiment_delta=%.2f adopted=%t meta_flags=%d canaries=%d\n", agentID, len(scores), rivereval.Mean(scores), exp.MeanDelta, exp.Adopted, len(flags), len(canaries))
+		totalConversations += exp.ControlN + exp.TreatmentN
+		fmt.Printf("%s: scored=%d control_mean=%.2f treatment_mean=%.2f experiment_delta=%.2f adopted=%t meta_flags=%d canaries=%d\n", agentID, exp.ControlN+exp.TreatmentN, exp.ControlMean, exp.TreatmentMean, exp.MeanDelta, exp.Adopted, len(flags), len(canaries))
 	}
 	fmt.Printf("total_scored=%d seed=%d batch_size=%d\n", totalConversations, *seed, *batchSize)
 	if err := writeArtifacts(*output, *seed, *batchSize, *agent); err != nil {

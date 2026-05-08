@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+
+	"github.com/MelloB1989/karma/ai"
 )
 
 type EvaluatorJudgeConfig struct {
@@ -19,15 +21,15 @@ type SelfLearningConfig struct {
 	PersonaLLMBaseURL       string                 `json:"persona_llm_base_url"`
 	PersonaLLMAPIKey        string                 `json:"-"`
 	PersonaLLMModel         string                 `json:"persona_llm_model"`
-	DefaultBatchSize        int                    `json:"default_batch_size"`
-	DefaultMaxTurnsPerAgent int                    `json:"default_max_turns_per_agent"`
-	AdoptionPValue          float64                `json:"adoption_p_value"`
-	AdoptionMinMeanDelta    float64                `json:"adoption_min_mean_delta"`
-	AdoptionMinCohensD      float64                `json:"adoption_min_cohens_d"`
-	AdoptionMaxStddev       float64                `json:"adoption_max_stddev"`
-	MinComplianceRate       float64                `json:"min_compliance_rate"`
-	MaxJudgeDisagreement    float64                `json:"max_judge_disagreement"`
-	MetaEvaluationMinSample int                    `json:"meta_evaluation_min_sample"`
+	DefaultBatchSize        int                    `json:"default_batch_size"`          //default number of simulations per persona when running evals.
+	DefaultMaxTurnsPerAgent int                    `json:"default_max_turns_per_agent"` //hard cap on how many turns each agent gets in simulation.
+	AdoptionPValue          float64                `json:"adoption_p_value"`            //statistical significance threshold for prompt adoption.
+	AdoptionMinMeanDelta    float64                `json:"adoption_min_mean_delta"`     //minimum mean improvement required before a prompt can be adopted.
+	AdoptionMinCohensD      float64                `json:"adoption_min_cohens_d"`       // minimum effect size required before adoption.
+	AdoptionMaxStddev       float64                `json:"adoption_max_stddev"`         //upper bound on treatment score spread, to avoid adopting noisy prompts.
+	MinComplianceRate       float64                `json:"min_compliance_rate"`         //minimum compliance rate required for adoption.
+	MaxJudgeDisagreement    float64                `json:"max_judge_disagreement"`      //threshold used to flag excessive judge disagreement.
+	MetaEvaluationMinSample int                    `json:"meta_evaluation_min_sample"`  //minimum sample size before the meta-evaluator starts flagging issues.
 }
 
 type ModelPricing struct {
@@ -39,14 +41,16 @@ func DefaultSelfLearningConfig() SelfLearningConfig {
 	cfg := AppCfg.Get()
 	out := SelfLearningConfig{
 		Judges: []EvaluatorJudgeConfig{
-			{Name: "judge_a", Provider: "groq", Model: "llama-3.3-70b", Weight: 1, Temperature: 0},
-			{Name: "judge_b", Provider: "groq", Model: "llama-3.3-70b", Weight: 1, Temperature: 0},
+			{Name: "judge_a", Provider: string(ai.Groq), Model: string(ai.Llama33_70B), Weight: 1, Temperature: 1},
+			{Name: "judge_b", Provider: string(ai.Groq), Model: string(ai.GPTOSS_120B), Weight: 1, Temperature: 1},
+			{Name: "judge_c", Provider: string(ai.XAI), Model: string(ai.Grok4ReasoningFast), Weight: 1, Temperature: 1},
+			{Name: "judge_d", Provider: string(ai.Groq), Model: string(ai.Quew3_32B), Weight: 1, Temperature: 1},
 		},
 		PersonaLLMBaseURL:       strings.TrimRight(cfg.PersonaLLMBaseURL, "/"),
 		PersonaLLMAPIKey:        cfg.PersonaLLMApiKey,
 		PersonaLLMModel:         cfg.PersonaLLMModel,
-		DefaultBatchSize:        1,
-		DefaultMaxTurnsPerAgent: 8,
+		DefaultBatchSize:        2,
+		DefaultMaxTurnsPerAgent: 6,
 		AdoptionPValue:          0.05,
 		AdoptionMinMeanDelta:    5,
 		AdoptionMinCohensD:      0.35,

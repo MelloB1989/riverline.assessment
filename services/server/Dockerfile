@@ -4,6 +4,7 @@ FROM golang:1.24-alpine AS base
 WORKDIR /app/services/server
 RUN apk add --no-cache ca-certificates
 COPY services/server/go.mod services/server/go.sum ./
+COPY services/server/local/karma ./local/karma
 RUN go mod download
 
 FROM base AS dev

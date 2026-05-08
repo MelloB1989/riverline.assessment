@@ -12,6 +12,7 @@
     "db:migrate": "cd database && bunx drizzle-kit migrate",
     "db:browser": "cd database && bunx drizzle-kit studio",
     "eval": "make eval",
+    "sim:full": "docker compose --profile dev up -d --build && rm -rf ./eval-artifacts && mkdir -p ./eval-artifacts && docker compose --profile dev run --rm --no-deps -v \"$PWD/eval-artifacts:/tmp/eval-artifacts\" worker-dev sh -lc 'export PATH=/usr/local/go/bin:/go/bin:$PATH && cd /app/services/server && go test ./... && go run ./cmd/eval --seed 42 --batch-size 20 --agent all --output /tmp/eval-artifacts'",
     "report": "make report",
     "start:backend": "cd services/server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go run main.go -ldflags \"-X lyznflow/internal/constants.Version=$(git describe --tags --always --dirty)\"",
     "cloc": "cloc . --exclude-dir=node_modules,dist,build,.next,.expo"
