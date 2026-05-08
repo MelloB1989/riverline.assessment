@@ -132,6 +132,26 @@ type MetricAggregate struct {
 }
 
 func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
+	return runSimulationBatch(cfg, nil)
+}
+
+func RunSimulationScored(cfg SimConfig, judges []constants.EvaluatorJudgeConfig) ([]SimulatedConversation, []SimulationScore, error) {
+	scores := make([]SimulationScore, 0)
+	conversations, err := runSimulationBatch(cfg, func(sim SimulatedConversation) error {
+		simScores, err := ScoreSimulations([]SimulatedConversation{sim}, judges)
+		if err != nil {
+			return err
+		}
+		scores = append(scores, simScores...)
+		return nil
+	})
+	if err != nil {
+		return conversations, scores, err
+	}
+	return conversations, scores, nil
+}
+
+func runSimulationBatch(cfg SimConfig, onSimulation func(SimulatedConversation) error) ([]SimulatedConversation, error) {
 	start := time.Now()
 	if err := collections.EnsureDefaults(); err != nil {
 		return nil, err
@@ -164,6 +184,15 @@ func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
 			}
 			log.Printf("[eval] simulation done persona=%s index=%d seed=%s workflow=%s convs=%d duration=%s", personaType, i+1, seed, sim.Workflow.Id, len(sim.Conversations), time.Since(itemStart))
 			out = append(out, sim)
+			if onSimulation != nil {
+				scoreStart := time.Now()
+				log.Printf("[eval] immediate scoring start workflow=%s seed=%s", sim.Workflow.Id, sim.Seed)
+				if err := onSimulation(sim); err != nil {
+					log.Printf("[eval] immediate scoring failed workflow=%s seed=%s duration=%s err=%v", sim.Workflow.Id, sim.Seed, time.Since(scoreStart), err)
+					return out, err
+				}
+				log.Printf("[eval] immediate scoring done workflow=%s seed=%s duration=%s", sim.Workflow.Id, sim.Seed, time.Since(scoreStart))
+			}
 		}
 	}
 	log.Printf("[eval] simulation batch done agent=%s total=%d duration=%s", cfg.AgentID, len(out), time.Since(start))
@@ -355,32 +384,22 @@ func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptE
 	cfg.AgentID = agentID
 	cfg.PromptOverrides = nil
 	log.Printf("[eval] control simulations start agent=%s", agentID)
-	control, err := RunSimulation(cfg)
+	control, controlStats, err := RunSimulationScored(cfg, cfg.Judges)
 	if err != nil {
 		return nil, err
 	}
 	log.Printf("[eval] control simulations done agent=%s count=%d", agentID, len(control))
-	log.Printf("[eval] control scoring start agent=%s", agentID)
-	controlStats, err := ScoreSimulations(control, cfg.Judges)
-	if err != nil {
-		return nil, err
-	}
 	log.Printf("[eval] control scoring done agent=%s count=%d", agentID, len(controlStats))
 	treatmentCfg := cfg
 	treatmentCfg.PromptOverrides = map[models.AgentID]PromptOverride{
 		agentID: {VersionNumber: candidateVersion, PromptText: candidatePrompt},
 	}
 	log.Printf("[eval] treatment simulations start agent=%s candidate_version=%d", agentID, candidateVersion)
-	treatment, err := RunSimulation(treatmentCfg)
+	treatment, treatmentStats, err := RunSimulationScored(treatmentCfg, cfg.Judges)
 	if err != nil {
 		return nil, err
 	}
 	log.Printf("[eval] treatment simulations done agent=%s count=%d", agentID, len(treatment))
-	log.Printf("[eval] treatment scoring start agent=%s", agentID)
-	treatmentStats, err := ScoreSimulations(treatment, cfg.Judges)
-	if err != nil {
-		return nil, err
-	}
 	log.Printf("[eval] treatment scoring done agent=%s count=%d", agentID, len(treatmentStats))
 	controlScores := aggregateSimulationMeans(controlStats)
 	treatmentScores := aggregateSimulationMeans(treatmentStats)
@@ -988,11 +1007,11 @@ func evaluateWithJudge(evaluator models.EvaluatorVersion, transcript string, jud
 	client := ai.NewKarmaAI(
 		ai.BaseModel(judge.Model),
 		ai.Provider(judge.Provider),
-		ai.WithMaxTokens(500),
+		ai.WithMaxTokens(1000),
 		ai.WithTemperature(judge.Temperature),
 	)
 	var metrics MetricScores
-	p := parser.NewParser(parser.WithAIClient(client), parser.WithMaxRetries(2))
+	p := parser.NewParser(parser.WithAIClient(client), parser.WithMaxRetries(6))
 	tokens, err := parseWithParser(p, buildEvaluationPrompt(evaluator, transcript), &metrics)
 	if err != nil {
 		return MetricScores{}, 0, "", fmt.Errorf("judge %s evaluate %s: %w", judge.Name, evaluator.AgentId, err)

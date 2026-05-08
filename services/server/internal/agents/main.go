@@ -12,6 +12,7 @@ type Client struct {
 	prompt        string
 	modelID       string
 	providerID    string
+	cfg           Config
 	aiClient      *ai.KarmaAI
 }
 

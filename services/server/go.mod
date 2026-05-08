@@ -3,7 +3,7 @@ module riverline_server
 go 1.24.4
 
 require (
-	github.com/MelloB1989/karma v1.17.72
+	github.com/MelloB1989/karma v1.17.73
 	github.com/gofiber/fiber/v2 v2.52.13
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	go.temporal.io/api v1.53.0
@@ -111,5 +111,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/MelloB1989/karma => ./local/karma

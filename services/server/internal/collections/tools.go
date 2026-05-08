@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
 	"riverline_server/internal/agents"
@@ -52,7 +53,7 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 			SetRequired("reason", "outcome", "preferred_nova_call_at"),
 		func(_ context.Context, params ai.FuncParams) (string, error) {
 			start := time.Now()
-			log.Printf("[collections] aria tool start workflow=%s tool=%s params=%v", wf.Id, agents.ToolCreateAriaHandoff, params)
+			log.Printf("[collections] aria tool start workflow=%s tool=%s param_keys=%v", wf.Id, agents.ToolCreateAriaHandoff, funcParamKeys(params))
 			if wf.CurrentStage != models.AgentAria {
 				log.Printf("[collections] aria tool skipped workflow=%s tool=%s reason=already_generated duration=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start))
 				return `{"handoff_already_generated":true}`, nil
@@ -73,7 +74,9 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 					return "", toolErr
 				}
 			}
-			results.AriaHandoff, toolErr = GenerateAriaHandoffWithClient(client, wf, messages)
+			// Use an isolated client so structured parsing cannot recursively reuse
+			// the tool-enabled chat client that is currently executing this tool.
+			results.AriaHandoff, toolErr = GenerateAriaHandoffWithClient(client.Clone(), wf, messages)
 			if toolErr != nil {
 				log.Printf("[collections] aria tool failed workflow=%s tool=%s duration=%s err=%v", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), toolErr)
 				return "", toolErr
@@ -100,7 +103,7 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 			SetRequired("scheduled_call_at", "reason"),
 		func(_ context.Context, params ai.FuncParams) (string, error) {
 			start := time.Now()
-			log.Printf("[collections] aria tool start workflow=%s tool=%s params=%v", wf.Id, agents.ToolRescheduleNovaCall, params)
+			log.Printf("[collections] aria tool start workflow=%s tool=%s param_keys=%v", wf.Id, agents.ToolRescheduleNovaCall, funcParamKeys(params))
 			scheduledText, err := funcParamString(params, "scheduled_call_at")
 			if err != nil {
 				toolErr = err
@@ -155,4 +158,13 @@ func funcParamString(params ai.FuncParams, key string) (string, error) {
 		return "", errors.New("invalid tool parameter " + key)
 	}
 	return str, nil
+}
+
+func funcParamKeys(params ai.FuncParams) []string {
+	keys := make([]string, 0, len(params))
+	for key := range params {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

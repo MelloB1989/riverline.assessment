@@ -51,6 +51,7 @@ func newClientWithPrompt(agentID models.AgentID, promptVersion int, promptText s
 		prompt:        promptText,
 		modelID:       modelCfg.GetModelString(),
 		providerID:    string(cfg.Provider),
+		cfg:           cfg,
 		aiClient: ai.NewKarmaAI(
 			cfg.Model,
 			cfg.Provider,
@@ -61,6 +62,10 @@ func newClientWithPrompt(agentID models.AgentID, promptVersion int, promptText s
 			ai.WithTopP(cfg.TopP),
 		),
 	}
+}
+
+func (c *Client) Clone() *Client {
+	return newClientWithPrompt(c.agentID, c.promptVersion, c.prompt, c.cfg)
 }
 
 func (c *Client) AgentID() models.AgentID {
@@ -118,7 +123,11 @@ func (c *Client) systemPrompt(handoff string) string {
 
 func (c *Client) ConverseWithTools(handoff string, history []models.AgentMessage, tools ...ai.GoFunctionTool) (*karmaModels.AIChatResponse, error) {
 	c.aiClient.ClearGoFunctionTools()
-	defer c.aiClient.ClearGoFunctionTools()
+	defer func() {
+		c.aiClient.ClearGoFunctionTools()
+		c.aiClient.ToolsEnabled = false
+		c.aiClient.UseMCPExecution = false
+	}()
 	c.aiClient.EnableTools()
 	for _, tool := range tools {
 		if err := c.aiClient.AddGoFunctionTool(tool); err != nil {
