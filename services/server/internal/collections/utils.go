@@ -128,37 +128,126 @@ func sendOfferEmail(workflowID string, final bool) error {
 	if err != nil {
 		return err
 	}
+	loan, err := GetLoan(wf.LoanId)
+	if err != nil {
+		return err
+	}
 	offer, err := firstOffer(workflowID)
 	if err != nil {
 		return err
 	}
-	subject := "Riverline resolution offer"
+	subject := "Riverline payment plan confirmation"
 	if final {
 		subject = "Riverline final resolution offer"
 	}
-	deadline := "the stated deadline"
-	if wf.FinalOfferDeadline != nil {
-		deadline = wf.FinalOfferDeadline.Format("January 2, 2006 15:04 MST")
-	}
-	amount := derefFloat(offer.LumpSumOffered)
-	if wf.FinalOfferAmount != nil {
-		amount = *wf.FinalOfferAmount
-	}
-	body := fmt.Sprintf("Hello %s,\n\nYour Riverline offer is %.2f as a lump-sum settlement, or %.2f per month for %d months. The deadline is %s.\n\nReply ACCEPT to begin the settlement process.",
-		user.FirstName,
-		amount,
-		derefFloat(offer.EmiAmount),
-		derefInt(offer.EmiMonths),
-		deadline,
-	)
+	body := buildResolutionOfferEmailBody(*user, *loan, *wf, *offer, final)
 	if final {
-		body = fmt.Sprintf("Hello %s,\n\nThis is the final Riverline offer after the resolution call. The final amount is %.2f and the deadline is %s. If unresolved after the deadline, the account may be escalated according to policy.\n\nReply ACCEPT to begin the settlement process.",
-			user.FirstName,
-			amount,
-			deadline,
-		)
+		subject = "Riverline final resolution offer"
 	}
 	return (&mailer.Template{ToEmail: user.Email, Subject: subject, Text: body, HTML: "<pre>" + body + "</pre>"}).Send()
+}
+
+func buildResolutionOfferEmailBody(user models.User, loan models.Loan, wf models.BorrowerWorkflow, offer models.ResolutionOffer, final bool) string {
+	lines := []string{
+		fmt.Sprintf("Hello %s,", user.FirstName),
+		"",
+	}
+	if final {
+		lines = append(lines,
+			"The resolution call did not result in an accepted plan. Riverline is providing the final available offer below.",
+			"",
+		)
+	} else {
+		lines = append(lines,
+			"This confirms the Riverline payment arrangement discussed on the call.",
+			"",
+		)
+	}
+	lines = append(lines,
+		"Account summary:",
+		fmt.Sprintf("- Loan type: %s", loan.LoanType),
+		fmt.Sprintf("- Account ending: %s", loan.AccountNumberPartial),
+		fmt.Sprintf("- Outstanding balance: %s", moneyText(loan.OutstandingAmount)),
+		fmt.Sprintf("- Days overdue: %d", loan.DaysOverdue),
+		"",
+	)
+	if final {
+		lines = append(lines, "Final available options:")
+	} else {
+		lines = append(lines, "Payment options recorded:")
+	}
+	lines = append(lines, offerOptionLines(wf, offer)...)
+	lines = append(lines, "")
+	if final {
+		lines = append(lines,
+			"Deadline:",
+			"- These final terms are valid until "+deadlineText(wf.FinalOfferDeadline)+".",
+			"",
+			"Next step:",
+			"- Reply ACCEPT with the option you choose to begin the settlement process.",
+			"- If unresolved after the deadline, the account may be escalated according to policy.",
+		)
+	} else {
+		lines = append(lines,
+			"Accepted status:",
+			"- Offer status: "+string(offer.Status),
+			"- Accepted option: "+emptyAsNotRecorded(derefString(offer.AcceptedOfferType)),
+			"",
+			"Next step:",
+			"- Reply ACCEPT if you need this confirmation recorded in chat as well.",
+		)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func offerOptionLines(wf models.BorrowerWorkflow, offer models.ResolutionOffer) []string {
+	lines := []string{}
+	lumpSum := derefFloat(offer.LumpSumOffered)
+	if wf.FinalOfferAmount != nil {
+		lumpSum = *wf.FinalOfferAmount
+	}
+	if lumpSum > 0 {
+		discount := ""
+		if offer.LumpSumDiscountPct != nil {
+			discount = fmt.Sprintf(" after %.2f%% discount", *offer.LumpSumDiscountPct)
+		}
+		lines = append(lines, fmt.Sprintf("- Lump-sum settlement: %s%s.", moneyText(lumpSum), discount))
+	}
+	if offer.EmiAmount != nil && offer.EmiMonths != nil {
+		lines = append(lines, fmt.Sprintf("- Structured payment plan: %s per month for %d months, starting %s.", moneyText(*offer.EmiAmount), *offer.EmiMonths, dateText(offer.EmiStartDate)))
+	}
+	if derefBool(offer.HardshipOffered) {
+		lines = append(lines, "- Hardship referral: available if you cannot make either payment option.")
+	}
+	if len(lines) == 0 {
+		lines = append(lines, "- Payment option details were not recorded. Contact Riverline to confirm the terms before making payment.")
+	}
+	return lines
+}
+
+func moneyText(amount float64) string {
+	return fmt.Sprintf("%.2f", amount)
+}
+
+func deadlineText(deadline *time.Time) string {
+	if deadline == nil {
+		return "the stated deadline"
+	}
+	return deadline.In(collectionsISTLocation()).Format("January 2, 2006 15:04 MST")
+}
+
+func dateText(value *time.Time) string {
+	if value == nil {
+		return "the agreed start date"
+	}
+	return value.In(collectionsISTLocation()).Format("January 2, 2006")
+}
+
+func emptyAsNotRecorded(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "not recorded"
+	}
+	return strings.TrimSpace(value)
 }
 
 func chatClient(agentID models.AgentID) (*agents.Client, error) {
@@ -166,17 +255,6 @@ func chatClient(agentID models.AgentID) (*agents.Client, error) {
 		return agents.NewDelta()
 	}
 	return agents.NewAria()
-}
-
-func agentClient(agentID models.AgentID) (*agents.Client, error) {
-	switch agentID {
-	case models.AgentNova:
-		return agents.NewNova()
-	case models.AgentDelta:
-		return agents.NewDelta()
-	default:
-		return agents.NewAria()
-	}
 }
 
 func handoffForStage(wf models.BorrowerWorkflow) (string, error) {
@@ -204,8 +282,9 @@ func handoffForStage(wf models.BorrowerWorkflow) (string, error) {
 			return "", fmt.Errorf("load loan for ARIA context: %w", err)
 		}
 		lines = append(lines,
-			"Account context: "+borrowerAccountSummaryFromRecords(*user, *loan),
+			"Internal account context for validation only. Do not reveal the stored partial account number before the borrower provides it: "+borrowerAccountSummaryFromRecords(*user, *loan),
 			"Known assessment state: "+assessmentContextLine(wf),
+			"Required before handoff: ask the borrower to provide their name and the last four digits of the loan account first; only after those match the internal account context should you acknowledge account details, collect employment status, monthly income range, monthly obligations, default reason, and a concrete preferred callback time for the resolution call.",
 		)
 	}
 	return strings.Join(lines, "\n"), nil
@@ -451,38 +530,16 @@ func seedEvaluatorVersions() error {
 }
 
 func generateInitialEvaluatorPrompt(agentID models.AgentID) (string, error) {
-	client, err := agentClient(agentID)
-	if err != nil {
-		return "", err
+	switch agentID {
+	case models.AgentAria:
+		return constants.ARIA_EVALUATOR_INITIAL_PROMPT, nil
+	case models.AgentNova:
+		return constants.NOVA_EVALUATOR_INITIAL_PROMPT, nil
+	case models.AgentDelta:
+		return constants.DELTA_EVALUATOR_INITIAL_PROMPT, nil
+	default:
+		return "", fmt.Errorf("unsupported evaluator prompt agent %s", agentID)
 	}
-	prompt := fmt.Sprintf(`Generate the initial evaluator judge prompt for the %s collections agent.
-
-The evaluator will score completed borrower conversations for this product:
-- ARIA is the stateless chat intake agent.
-- NOVA is the voice resolution offer agent.
-- DELTA is the final offer handoff agent.
-
-The judge prompt must instruct an LLM evaluator to return only JSON matching the conversation score schema:
-composite_score, identity_verified, info_completeness, no_redundancy, tone_appropriateness, offer_clarity,
-objection_handling, commitment_attempt, context_continuity, consequence_accuracy, deadline_specificity,
-no_negotiation_drift, compliance_pass, compliance_breakdown, judge_b_composite, judge_disagreement_delta, reasoning.
-
-Rules for the generated prompt:
-- All metric scores except composite fields are 0 to 10.
-- composite_score and judge_b_composite are 0 to 100.
-- compliance_pass must be 10 only when all compliance rules pass, otherwise 0.
-- It must be stable enough for re-running evaluations on the same transcript.
-- It must explicitly penalize false threats, harassment, missing AI/recording disclosure, misleading terms, privacy leaks, abusive tone, and ignored hardship.
-
-Return only the judge prompt text.`, agentID)
-	resp, err := client.GenerateText(prompt)
-	if err != nil {
-		return "", fmt.Errorf("generate evaluator prompt for %s: %w", agentID, err)
-	}
-	if err := LogCost("evaluator_prompt_generation", &agentID, client.ModelUsed(), resp.InputTokens, resp.OutputTokens, nil, nil); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(resp.AIResponse), nil
 }
 
 func seedCanaries() error {

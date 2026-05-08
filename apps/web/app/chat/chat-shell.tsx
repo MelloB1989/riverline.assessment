@@ -34,6 +34,7 @@ export default function ChatShell() {
   const optimisticIdRef = React.useRef(0);
   const didStartRef = React.useRef(false);
   const activeChatAgent = stage === "delta" ? "delta" : "aria";
+  const activeChatLabel = stage === "delta" ? "Riverline Final Notice" : "Riverline";
 
   const loadConversation = React.useCallback(async (id: string) => {
     const data = (await loadConversationAction(id)) as ConversationView | null;
@@ -65,7 +66,7 @@ export default function ChatShell() {
         role: "agent",
         agent_id: "aria",
         content:
-          "I am ARIA, an AI collections assessment agent. This conversation is being recorded. Please confirm your identity and share your employment status, monthly income range, obligations, and the reason the payment defaulted.",
+          "I am Riverline's AI assistant. This conversation is being recorded. Please confirm when you are ready to verify the account details on file.",
         created_at: new Date().toISOString(),
       },
     ]);
@@ -129,7 +130,7 @@ export default function ChatShell() {
             </div>
             <div className="flex items-center gap-2 rounded-full bg-[#17231d] px-4 py-2 text-sm font-medium text-[#fffaf0]">
               <Bot className="size-4" />
-              Active chat: {activeChatAgent.toUpperCase()}
+              Active chat: {activeChatLabel}
             </div>
           </div>
           <div className="mt-5 flex items-start gap-3 rounded-2xl border border-[#c68632]/25 bg-[#fff3d4] px-4 py-3 text-sm text-[#5f3c18]">
@@ -154,7 +155,7 @@ export default function ChatShell() {
                     }`}
                   >
                     <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] opacity-60">
-                      {message.role === "borrower" ? "Borrower" : message.agent_id}
+                      {message.role === "borrower" ? "Borrower" : "Riverline"}
                     </div>
                     {message.content}
                   </div>

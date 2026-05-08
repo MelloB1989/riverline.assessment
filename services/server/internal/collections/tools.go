@@ -32,18 +32,38 @@ func converseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 	var toolErr error
 	createHandoffTool := ai.NewGoFunctionTool(
 		agents.ToolCreateAriaHandoff,
-		"Create and persist the ARIA assessment handoff after all required intake information is collected, or after stop-contact/hardship terminal handling.",
+		"Create and persist the ARIA assessment handoff after all required intake information and preferred callback timing are collected, or after stop-contact/hardship terminal handling.",
 		ai.NewFuncParams().
 			SetString("reason", "Brief reason ARIA is ready to hand off.").
 			SetStringEnum("outcome", "Handoff outcome.", []string{"ready_for_nova", "stop_contact", "hardship"}).
-			SetRequired("reason", "outcome"),
-		func(context.Context, ai.FuncParams) (string, error) {
+			SetString("preferred_nova_call_at", "Borrower-confirmed preferred resolution-call time as an ISO-8601 timestamp with timezone. Required when outcome is ready_for_nova. Use not_applicable only for stop_contact or hardship terminal outcomes.").
+			SetRequired("reason", "outcome", "preferred_nova_call_at"),
+		func(_ context.Context, params ai.FuncParams) (string, error) {
 			if wf.CurrentStage != models.AgentAria {
 				return `{"handoff_already_generated":true}`, nil
+			}
+			outcome, err := funcParamString(params, "outcome")
+			if err != nil {
+				toolErr = err
+				return "", err
+			}
+			preferredCallAt, err := funcParamString(params, "preferred_nova_call_at")
+			if err != nil {
+				toolErr = err
+				return "", err
+			}
+			if outcome == "ready_for_nova" {
+				if _, err := parseBorrowerCallTime(preferredCallAt, time.Now().UTC()); err != nil {
+					toolErr = fmt.Errorf("preferred_nova_call_at is required before handoff: %w", err)
+					return "", toolErr
+				}
 			}
 			results.AriaHandoff, toolErr = GenerateAriaHandoff(wf, messages)
 			if toolErr != nil {
 				return "", toolErr
+			}
+			if outcome == "ready_for_nova" {
+				results.AriaHandoff.Result.PreferredNovaCallAt = &preferredCallAt
 			}
 			return `{"handoff_generated":true}`, nil
 		},

@@ -142,7 +142,6 @@ func MessagesForCompletion(messages []models.AgentMessage) []models.AgentMessage
 const (
 	ToolCreateAriaHandoff  = "create_aria_handoff"
 	ToolRescheduleNovaCall = "reschedule_nova_call"
-	ToolEndNovaCall        = "end_nova_call_create_handoff"
 )
 
 func activePrompt(agentID models.AgentID) (*models.PromptVersion, error) {

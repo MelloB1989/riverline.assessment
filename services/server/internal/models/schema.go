@@ -68,6 +68,7 @@ type ResolutionOffer struct {
 	Id                  string         `json:"id" karma:"primary"`
 	WorkflowId          string         `json:"workflow_id"`
 	CandidateOffer      map[string]any `json:"candidate_offer" db:"candidate_offer"`
+	Status              OfferStatus    `json:"status"`
 	VapiCallId          *string        `json:"vapi_call_id"`
 	CallRecordingUrl    *string        `json:"call_recording_url"`
 	CallTranscript      *string        `json:"call_transcript"`

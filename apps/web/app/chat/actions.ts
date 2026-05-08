@@ -2,7 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 
-const apiBase = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9000";
+const apiBase = process.env.API_URL ?? "http://localhost:9000";
 const clerkJwtTemplate = process.env.CLERK_JWT_TEMPLATE ?? process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE;
 
 async function backendHeaders(): Promise<HeadersInit> {

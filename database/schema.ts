@@ -37,6 +37,12 @@ export const outcomeEnum = pgEnum("outcome", [
   "escalated", // sent to legal / write-off
 ]);
 
+export const offerStatusEnum = pgEnum("offer_status", [
+  "proposed",
+  "accepted",
+  "rejected",
+]);
+
 export const personaEnum = pgEnum("persona", [
   "cooperative",
   "combative",
@@ -176,6 +182,7 @@ export const resolution_offers = pgTable("resolution_offers", {
   // Pre-call plan (written before Vapi call is initiated)
   candidate_offer: jsonb("candidate_offer").default({}),
   // { lump_sum_pct, lump_sum_amount, emi_amount, emi_months, hardship_eligible }
+  status: offerStatusEnum("status").default("proposed").notNull(),
 
   // Voice provider details
   vapi_call_id: varchar("vapi_call_id"),

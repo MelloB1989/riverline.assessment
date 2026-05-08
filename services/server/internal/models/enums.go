@@ -6,6 +6,8 @@ type BorrowerStatus string
 
 type Outcome string
 
+type OfferStatus string
+
 type Persona string
 
 type MessageRole string
@@ -38,6 +40,12 @@ const (
 	OutcomeHardship    Outcome = "hardship"
 	OutcomeStopContact Outcome = "stop_contact"
 	OutcomeEscalated   Outcome = "escalated"
+)
+
+const (
+	OfferStatusProposed OfferStatus = "proposed"
+	OfferStatusAccepted OfferStatus = "accepted"
+	OfferStatusRejected OfferStatus = "rejected"
 )
 
 const (

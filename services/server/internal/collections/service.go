@@ -13,8 +13,6 @@ import (
 	"github.com/MelloB1989/karma/v2/orm"
 )
 
-const handoffTokenBudget = 500
-
 type ChatResponse struct {
 	Workflow             models.BorrowerWorkflow  `json:"workflow"`
 	Conversation         models.AgentConversation `json:"conversation"`
@@ -165,6 +163,7 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 	messages = append(messages, agentMsg)
 	stageComplete := false
 	handoffTokens := 0
+	workflowChanged := false
 	if wf.CurrentStage == models.AgentAria && toolResults.AriaHandoff != nil {
 		handoffTokens = toolResults.AriaHandoff.Tokens
 		applyAriaHandoff(wf, toolResults.AriaHandoff.Result)
@@ -172,10 +171,36 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 			return nil, err
 		}
 		stageComplete = true
+		workflowChanged = true
 		if err := updateWorkflow(wf); err != nil {
 			return nil, err
 		}
 		if err := LogCost("summarization", &chatAgent, toolResults.AriaHandoff.ModelUsed, toolResults.AriaHandoff.Tokens, 0, &conversation.Id, nil); err != nil {
+			return nil, err
+		}
+	}
+	if wf.CurrentStage == models.AgentDelta {
+		deltaHandoff, err := GenerateDeltaHandoff(*wf, messages)
+		if err != nil {
+			return nil, err
+		}
+		handoffTokens = deltaHandoff.Tokens
+		if deltaHandoff.Result.StageComplete && deltaHandoff.Result.Outcome != nil {
+			applyDeltaHandoff(wf, deltaHandoff.Result)
+			now := time.Now().UTC()
+			wf.ResolvedAt = &now
+			if offer, err := firstOffer(wf.Id); err == nil {
+				applyDeltaOfferOutcome(offer, deltaHandoff.Result)
+				o := orm.Load(&models.ResolutionOffer{})
+				defer o.Close()
+				if err := o.Update(offer, offer.Id); err != nil {
+					return nil, err
+				}
+			}
+			stageComplete = true
+			workflowChanged = true
+		}
+		if err := LogCost("summarization", &chatAgent, deltaHandoff.ModelUsed, deltaHandoff.Tokens, 0, &conversation.Id, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -188,6 +213,12 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 			conversation.Outcome = wf.Outcome
 		} else {
 			conversation.Outcome = outcomePtr(models.OutcomeCommitted)
+		}
+	}
+	if workflowChanged {
+		wf.UpdatedAt = time.Now().UTC()
+		if err := updateWorkflow(wf); err != nil {
+			return nil, err
 		}
 	}
 	if err := updateConversation(&conversation); err != nil {

@@ -236,6 +236,7 @@ services:
       - ./apps/web/.env.local
     environment:
       NODE_ENV: development
+      API_URL: http://backend-dev:9000
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:9000}
     depends_on:
       - backend-dev
@@ -257,6 +258,7 @@ services:
       - ./apps/web/.env
     environment:
       NODE_ENV: production
+      API_URL: http://backend-prod:9000
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:9000}
     depends_on:
       - backend-prod

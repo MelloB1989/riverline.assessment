@@ -157,16 +157,22 @@ func (c *Client) SyncNovaAssistant(ctx context.Context, systemPrompt string) (st
 		model = map[string]any{}
 	}
 	model["messages"] = []map[string]string{{"role": "system", "content": systemPrompt}}
+	model["tools"] = []any{}
+	model["toolIds"] = []string{}
 	artifactPlan, _ := assistant["artifactPlan"].(map[string]any)
 	if artifactPlan == nil {
 		artifactPlan = map[string]any{}
 	}
 	artifactPlan["structuredOutputIds"] = appendUniqueStringPayload(artifactPlan["structuredOutputIds"], structuredOutputID)
 	body := map[string]any{
-		"model":            model,
-		"artifactPlan":     artifactPlan,
-		"firstMessage":     novaFirstMessageTemplate(),
-		"firstMessageMode": "assistant-speaks-first",
+		"model":                  model,
+		"artifactPlan":           artifactPlan,
+		"firstMessage":           novaFirstMessageTemplate(),
+		"firstMessageMode":       "assistant-speaks-first",
+		"voicemailMessage":       novaVoicemailMessageTemplate(),
+		"endCallFunctionEnabled": false,
+		"endCallMessage":         "",
+		"endCallPhrases":         []string{},
 	}
 	resp, err := c.do(ctx, http.MethodPatch, "/assistant/"+c.AssistantID, body)
 	if err != nil {
@@ -373,14 +379,18 @@ func payloadItems(payload any) []map[string]any {
 }
 
 func novaFirstMessageTemplate() string {
-	return "Hello {{borrower_first_name}}, this is Nova from Riverline calling about your loan account ending {{account_number_partial}}. For transparency, I am an AI assistant and this call may be recorded. Is this a good time to discuss repayment options?"
+	return "Hello {{borrower_first_name}}, this is Riverline calling about your loan account ending {{account_number_partial}}. For transparency, I am an AI assistant and this call may be recorded. Is this a good time for me to lay out the repayment options now?"
+}
+
+func novaVoicemailMessageTemplate() string {
+	return "Hello, this is Riverline calling about your loan account. Please call us back at your earliest convenience."
 }
 
 func novaStructuredOutputPayload(assistantID string) map[string]any {
 	return map[string]any{
 		"name":        NovaStructuredOutputName,
 		"type":        "ai",
-		"description": "Extract NOVA collections call outcome, accepted offer, objections, and downstream DELTA handoff context.",
+		"description": "Extract NOVA collections call outcome, accepted offer, and borrower objections.",
 		"schema":      novaStructuredOutputSchema(),
 		"assistantIds": []string{
 			assistantID,
@@ -399,7 +409,7 @@ func novaStructuredOutputSchema() map[string]any {
 		"properties": map[string]any{
 			"offer_accepted": map[string]any{
 				"type":        nullableBoolean,
-				"description": "Whether the borrower accepted a repayment offer. Null when the call did not reach a decision.",
+				"description": "Whether the borrower accepted a specific repayment offer after exact terms were presented. A yes to call availability is not offer acceptance. Null when no offer terms were presented or the call did not reach a decision.",
 			},
 			"accepted_offer_type": map[string]any{
 				"type":        nullableString,
@@ -413,7 +423,7 @@ func novaStructuredOutputSchema() map[string]any {
 			"outcome": map[string]any{
 				"type":        nullableString,
 				"enum":        []any{"committed", "rejected", "no_response", "hardship", "stop_contact", "escalated", nil},
-				"description": "Final call outcome.",
+				"description": "Final call outcome. Use committed only after exact offer terms were presented and accepted. Use no_response if the call ended before an offer was presented.",
 			},
 			"aria_summary": map[string]any{
 				"type":        "string",
@@ -444,6 +454,9 @@ You are speaking with the borrower over {{transport.conversationType}}. Treat th
 [Voice Requirements]
 - Use only the NOVA context summary for borrower/account facts, ARIA handoff facts, and exact offer terms.
 - Do not say that loan amount, overdue days, account context, or offer details are unavailable when they are present in the NOVA context summary.
+- The borrower saying yes to the opening good-time question is only permission to continue. It is not acceptance of an offer.
+- After the borrower says it is a good time, your next substantive turn must present the exact primary payment option from the NOVA context summary, including amount, timing/deadline, and required borrower action.
+- Do not end the call, promise an email, or classify the call as complete until you have presented at least one exact payment option and the borrower has accepted, rejected, raised hardship, requested no contact, or failed to engage after the offer was attempted.
 - Speak naturally for a phone call; do not use Markdown.
 - Ask one question at a time and keep turns concise.
 - If the borrower disputes identity, requests no contact, reports hardship, accepts an offer, rejects all offers, or the call should end, close politely. The backend will consume Vapi structured outputs after the call ends.`
