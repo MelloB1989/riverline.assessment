@@ -41,8 +41,8 @@ func DefaultSelfLearningConfig() SelfLearningConfig {
 	cfg := AppCfg.Get()
 	out := SelfLearningConfig{
 		Judges: []EvaluatorJudgeConfig{
-			{Name: "judge_a", Provider: string(ai.Groq), Model: string(ai.Llama33_70B), Weight: 1, Temperature: 1},
-			{Name: "judge_b", Provider: string(ai.Groq), Model: string(ai.GPTOSS_120B), Weight: 1, Temperature: 1},
+			{Name: "judge_a", Provider: string(ai.Groq), Model: string(ai.Llama31_8B), Weight: 1, Temperature: 1},
+			{Name: "judge_b", Provider: string(ai.Groq), Model: string(ai.GPTOSS_20B), Weight: 1, Temperature: 1},
 			{Name: "judge_c", Provider: string(ai.XAI), Model: string(ai.Grok4ReasoningFast), Weight: 1, Temperature: 1},
 			// {Name: "judge_d", Provider: string(ai.Groq), Model: string(ai.Quew3_32B), Weight: 1, Temperature: 1},
 		},

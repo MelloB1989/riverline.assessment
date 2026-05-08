@@ -23,6 +23,7 @@ func SetupMainRoutes(v1 fiber.Router) {
 	protected.Post("/admin/evaluations/rerun", handlers.AdminRerunEvaluations)
 	protected.Post("/admin/prompt-versions/rollback", handlers.AdminRollbackPrompt)
 	protected.Post("/admin/meta-evaluations", handlers.AdminRunMetaEvaluation)
+	protected.Post("/admin/eval/full-cycle", handlers.AdminRunFullCycle)
 	protected.Get("/admin/eval/metrics", handlers.AdminEvalMetrics)
 	protected.Get("/admin/eval/meta", handlers.AdminEvalMeta)
 }

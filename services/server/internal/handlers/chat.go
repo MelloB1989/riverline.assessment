@@ -309,6 +309,16 @@ func AdminEvalMetrics(c *fiber.Ctx) error {
 	return c.JSON(metrics)
 }
 
+func AdminRunFullCycle(c *fiber.Ctx) error {
+	var req rivereval.FullCycleConfig
+	_ = c.BodyParser(&req)
+	report, err := rivereval.RunFullCycle(req)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(report)
+}
+
 func AdminEvalMeta(c *fiber.Ctx) error {
 	flagOrm := orm.Load(&models.MetaFlag{})
 	defer flagOrm.Close()
