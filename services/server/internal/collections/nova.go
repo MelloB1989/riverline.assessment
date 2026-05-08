@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"riverline_server/internal/agents"
 	"riverline_server/internal/models"
 
 	"github.com/MelloB1989/karma/utils"
@@ -13,6 +14,14 @@ import (
 )
 
 func PrepareNOVA(workflowID string) (*models.ResolutionOffer, error) {
+	client, err := agents.NewNova()
+	if err != nil {
+		return nil, err
+	}
+	return PrepareNOVAWithClient(workflowID, client)
+}
+
+func PrepareNOVAWithClient(workflowID string, client *agents.Client) (*models.ResolutionOffer, error) {
 	wf, err := GetWorkflow(workflowID)
 	if err != nil {
 		return nil, err
@@ -26,7 +35,7 @@ func PrepareNOVA(workflowID string) (*models.ResolutionOffer, error) {
 	if len(existing) == 0 || existing[0].ScheduledCallAt == nil {
 		return nil, errors.New("resolution offer schedule missing before NOVA preparation")
 	}
-	handoff, err := GenerateNovaOffer(*wf)
+	handoff, err := GenerateNovaOfferWithClient(client, *wf)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +51,7 @@ func PrepareNOVA(workflowID string) (*models.ResolutionOffer, error) {
 	if offer.EmiStartDate == nil {
 		offer.EmiStartDate = timePtr(now.Add(7 * 24 * time.Hour))
 	}
-	runtimeContext, err := GenerateNovaRuntimeContext(*wf, offer)
+	runtimeContext, err := GenerateNovaRuntimeContextWithClient(client, *wf, offer)
 	if err != nil {
 		return nil, err
 	}
@@ -225,13 +234,25 @@ func MarkNOVAStarted(workflowID, callID string, promptVersion int, handoff strin
 }
 
 func CompleteNOVA(workflowID, callID, transcript, recordingURL string, durationSeconds *int, structuredOutput map[string]any) (models.Outcome, error) {
+	novaClient, err := agents.NewNova()
+	if err != nil {
+		return "", err
+	}
+	deltaClient, err := agents.NewDelta()
+	if err != nil {
+		return "", err
+	}
+	return CompleteNOVAWithClients(workflowID, callID, transcript, recordingURL, durationSeconds, structuredOutput, novaClient, deltaClient)
+}
+
+func CompleteNOVAWithClients(workflowID, callID, transcript, recordingURL string, durationSeconds *int, structuredOutput map[string]any, novaClient *agents.Client, deltaClient *agents.Client) (models.Outcome, error) {
 	wf, err := GetWorkflow(workflowID)
 	if err != nil {
 		return "", err
 	}
 	offer, err := firstOffer(workflowID)
 	if err != nil {
-		offer, err = PrepareNOVA(workflowID)
+		offer, err = PrepareNOVAWithClient(workflowID, novaClient)
 		if err != nil {
 			return "", err
 		}
@@ -241,7 +262,7 @@ func CompleteNOVA(workflowID, callID, transcript, recordingURL string, durationS
 		return "", err
 	}
 	if handoff == nil {
-		handoff, err = GenerateNovaCallHandoff(*wf, offer, transcript)
+		handoff, err = GenerateNovaCallHandoffWithClient(novaClient, *wf, offer, transcript)
 		if err != nil {
 			return "", err
 		}
@@ -282,12 +303,12 @@ func CompleteNOVA(workflowID, callID, transcript, recordingURL string, durationS
 			deadline := now.Add(48 * time.Hour)
 			wf.FinalOfferDeadline = &deadline
 		}
-		deltaRuntime, err := GenerateDeltaRuntimeContext(handoff.Result, offer, *wf)
+		deltaRuntime, err := GenerateDeltaRuntimeContextWithClient(deltaClient, handoff.Result, offer, *wf)
 		if err != nil {
 			return "", err
 		}
 		applyDeltaRuntimeContext(wf, deltaRuntime.Result)
-		deltaHandoff, err := GenerateDeltaHandoff(*wf, nil)
+		deltaHandoff, err := GenerateDeltaHandoffWithClient(deltaClient, *wf, nil)
 		if err != nil {
 			return "", err
 		}

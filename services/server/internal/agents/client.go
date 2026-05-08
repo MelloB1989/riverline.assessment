@@ -19,6 +19,25 @@ func newClient(agentID models.AgentID, cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newClientWithPrompt(agentID, prompt.VersionNumber, prompt.PromptText, cfg), nil
+}
+
+func NewWithPrompt(agentID models.AgentID, promptVersion int, promptText string, cfg Config) (*Client, error) {
+	if strings.TrimSpace(promptText) == "" {
+		return nil, errors.New("prompt text is required")
+	}
+	return newClientWithPrompt(agentID, promptVersion, promptText, cfg), nil
+}
+
+func NewWithPromptVersion(agentID models.AgentID, version int, cfg Config) (*Client, error) {
+	prompt, err := promptVersion(agentID, version)
+	if err != nil {
+		return nil, err
+	}
+	return newClientWithPrompt(agentID, prompt.VersionNumber, prompt.PromptText, cfg), nil
+}
+
+func newClientWithPrompt(agentID models.AgentID, promptVersion int, promptText string, cfg Config) *Client {
 	if cfg.Model == "" {
 		cfg.Model = ai.Llama33_70B
 	}
@@ -28,20 +47,20 @@ func newClient(agentID models.AgentID, cfg Config) (*Client, error) {
 	modelCfg := ai.ModelConfig{BaseModel: cfg.Model, Provider: cfg.Provider}
 	return &Client{
 		agentID:       agentID,
-		promptVersion: prompt.VersionNumber,
-		prompt:        prompt.PromptText,
+		promptVersion: promptVersion,
+		prompt:        promptText,
 		modelID:       modelCfg.GetModelString(),
 		providerID:    string(cfg.Provider),
 		aiClient: ai.NewKarmaAI(
 			cfg.Model,
 			cfg.Provider,
 			ai.WithMaxTokens(500),
-			ai.WithSystemMessage(prompt.PromptText),
+			ai.WithSystemMessage(promptText),
 			ai.WithTemperature(cfg.Temperature),
 			ai.WithTopK(cfg.TopK),
 			ai.WithTopP(cfg.TopP),
 		),
-	}, nil
+	}
 }
 
 func (c *Client) AgentID() models.AgentID {
@@ -120,6 +139,12 @@ func (c *Client) GenerateText(prompt string) (*karmaModels.AIChatResponse, error
 	return nil, errors.New("empty AI response")
 }
 
+func (c *Client) GenerateTextWithContext(handoff string, prompt string) (*karmaModels.AIChatResponse, error) {
+	restoreSystemPrompt := c.useRuntimeSystemPrompt(handoff)
+	defer restoreSystemPrompt()
+	return c.GenerateText(prompt)
+}
+
 func (c *Client) ParseStructured(prompt string, output any) (int, error) {
 	p := parser.NewParser(parser.WithAIClient(c.aiClient), parser.WithMaxRetries(2))
 	_, tokens, err := p.Parse(prompt, "", output)
@@ -155,6 +180,20 @@ func activePrompt(agentID models.AgentID) (*models.PromptVersion, error) {
 		return nil, errors.New("active prompt version not found")
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].VersionNumber > rows[j].VersionNumber })
+	return &rows[0], nil
+}
+
+func promptVersion(agentID models.AgentID, version int) (*models.PromptVersion, error) {
+	o := orm.Load(&models.PromptVersion{})
+	defer o.Close()
+	var rows []models.PromptVersion
+	if err := o.GetByFieldsEquals(map[string]any{"AgentId": agentID, "VersionNumber": version}).Scan(&rows); err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, errors.New("prompt version not found")
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
 	return &rows[0], nil
 }
 

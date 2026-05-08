@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"riverline_server/constants"
 	"riverline_server/internal/models"
 
 	"github.com/MelloB1989/karma/utils"
@@ -359,7 +360,7 @@ func LogCost(callType string, agentID *models.AgentID, modelUsed string, promptT
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		TotalTokens:      promptTokens + completionTokens,
-		CostUsd:          0,
+		CostUsd:          constants.EstimateLLMCostUSD(modelUsed, promptTokens, completionTokens),
 		ConversationId:   conversationID,
 		ExperimentId:     experimentID,
 		CreatedAt:        time.Now().UTC(),

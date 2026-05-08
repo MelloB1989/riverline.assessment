@@ -17,4 +17,12 @@ func SetupMainRoutes(v1 fiber.Router) {
 	protected.Get("/workflows/:id", handlers.GetWorkflow)
 	protected.Get("/conversations/:id", handlers.GetConversation)
 	protected.Get("/admin/eval", handlers.AdminEvalSummary)
+	protected.Post("/admin/simulations", handlers.AdminRunSimulations)
+	protected.Post("/admin/prompt-experiments", handlers.AdminRunPromptExperiment)
+	protected.Get("/admin/eval/experiments/:id", handlers.AdminExperimentDetail)
+	protected.Post("/admin/evaluations/rerun", handlers.AdminRerunEvaluations)
+	protected.Post("/admin/prompt-versions/rollback", handlers.AdminRollbackPrompt)
+	protected.Post("/admin/meta-evaluations", handlers.AdminRunMetaEvaluation)
+	protected.Get("/admin/eval/metrics", handlers.AdminEvalMetrics)
+	protected.Get("/admin/eval/meta", handlers.AdminEvalMeta)
 }

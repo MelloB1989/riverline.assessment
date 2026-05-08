@@ -24,6 +24,10 @@ type NovaRescheduleResult struct {
 }
 
 func converseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAgent models.AgentID, handoff string, messages []models.AgentMessage) (StageToolResults, *karmaModels.AIChatResponse, error) {
+	return ConverseForStage(client, wf, chatAgent, handoff, messages)
+}
+
+func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAgent models.AgentID, handoff string, messages []models.AgentMessage) (StageToolResults, *karmaModels.AIChatResponse, error) {
 	var results StageToolResults
 	if chatAgent != models.AgentAria {
 		resp, err := client.Converse(handoff, messages)
@@ -58,7 +62,7 @@ func converseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 					return "", toolErr
 				}
 			}
-			results.AriaHandoff, toolErr = GenerateAriaHandoff(wf, messages)
+			results.AriaHandoff, toolErr = GenerateAriaHandoffWithClient(client, wf, messages)
 			if toolErr != nil {
 				return "", toolErr
 			}

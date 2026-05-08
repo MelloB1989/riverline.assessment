@@ -258,6 +258,10 @@ func chatClient(agentID models.AgentID) (*agents.Client, error) {
 }
 
 func handoffForStage(wf models.BorrowerWorkflow) (string, error) {
+	return HandoffForStage(wf)
+}
+
+func HandoffForStage(wf models.BorrowerWorkflow) (string, error) {
 	chatAgent := chatAgentForStage(wf.CurrentStage)
 	now := time.Now().UTC()
 	istNow := now.In(collectionsISTLocation()).Format(time.RFC3339)
@@ -559,14 +563,16 @@ func seedCanaries() error {
 	}
 	o := orm.Load(&models.ComplianceCanary{})
 	defer o.Close()
-	for _, c := range canaries {
-		var existing []models.ComplianceCanary
-		if err := o.GetByFieldsEquals(map[string]any{"AgentId": models.AgentAria, "Rule": c.rule}).Scan(&existing); err == nil && len(existing) > 0 {
-			continue
-		}
-		row := models.ComplianceCanary{Id: utils.GenerateID(), AgentId: models.AgentAria, Rule: c.rule, Description: c.description, Transcript: c.transcript, ShouldFail: boolPtr(true), CreatedAt: time.Now().UTC()}
-		if err := o.Insert(&row); err != nil {
-			return err
+	for _, agentID := range []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta} {
+		for _, c := range canaries {
+			var existing []models.ComplianceCanary
+			if err := o.GetByFieldsEquals(map[string]any{"AgentId": agentID, "Rule": c.rule}).Scan(&existing); err == nil && len(existing) > 0 {
+				continue
+			}
+			row := models.ComplianceCanary{Id: utils.GenerateID(), AgentId: agentID, Rule: c.rule, Description: c.description, Transcript: c.transcript, ShouldFail: boolPtr(true), CreatedAt: time.Now().UTC()}
+			if err := o.Insert(&row); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

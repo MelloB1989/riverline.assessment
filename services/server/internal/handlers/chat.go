@@ -10,6 +10,7 @@ import (
 
 	"riverline_server/constants"
 	"riverline_server/internal/collections"
+	rivereval "riverline_server/internal/eval"
 	"riverline_server/internal/middleware"
 	"riverline_server/internal/models"
 	"riverline_server/internal/temporalclient"
@@ -27,6 +28,19 @@ type startWorkflowRequest struct {
 
 type chatRequest struct {
 	Message string `json:"message"`
+}
+
+type adminPromptExperimentRequest struct {
+	AgentID          models.AgentID                   `json:"agent_id"`
+	Seed             int64                            `json:"seed"`
+	BatchSize        int                              `json:"batch_size"`
+	Personas         []models.Persona                 `json:"personas"`
+	MaxTurnsPerAgent int                              `json:"max_turns_per_agent"`
+	Judges           []constants.EvaluatorJudgeConfig `json:"judges"`
+}
+
+type adminMetaEvaluationRequest struct {
+	AgentID models.AgentID `json:"agent_id"`
 }
 
 type vapiWebhook struct {
@@ -204,6 +218,142 @@ func AdminEvalSummary(c *fiber.Ctx) error {
 		"cost_log":            costs,
 		"total_cost_usd":      totalCost,
 	})
+}
+
+func AdminRunSimulations(c *fiber.Ctx) error {
+	var req rivereval.SimConfig
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	sims, err := rivereval.RunSimulation(req)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	scores, err := rivereval.ScoreSimulations(sims, req.Judges)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(fiber.Map{"simulations": sims, "scores": scores})
+}
+
+func AdminRunPromptExperiment(c *fiber.Ctx) error {
+	var req adminPromptExperimentRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if req.AgentID == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "agent_id is required")
+	}
+	cfg := rivereval.SimConfig{
+		Seed:             req.Seed,
+		BatchSize:        req.BatchSize,
+		Personas:         req.Personas,
+		AgentID:          req.AgentID,
+		MaxTurnsPerAgent: req.MaxTurnsPerAgent,
+		Judges:           req.Judges,
+	}
+	exp, err := rivereval.RunImprovementCycle(req.AgentID, cfg)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(fiber.Map{"experiment": exp})
+}
+
+func AdminRerunEvaluations(c *fiber.Ctx) error {
+	var req rivereval.RerunRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	result, err := rivereval.RerunEvaluations(req)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(result)
+}
+
+func AdminRollbackPrompt(c *fiber.Ctx) error {
+	var req rivereval.RollbackRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	version, err := rivereval.RollbackPrompt(req)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	return c.JSON(fiber.Map{"prompt_version": version})
+}
+
+func AdminRunMetaEvaluation(c *fiber.Ctx) error {
+	var req adminMetaEvaluationRequest
+	_ = c.BodyParser(&req)
+	agents := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
+	if req.AgentID != "" {
+		agents = []models.AgentID{req.AgentID}
+	}
+	out := map[models.AgentID][]models.MetaFlag{}
+	for _, agentID := range agents {
+		flags, err := rivereval.RunMetaEvaluation(agentID)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		}
+		out[agentID] = flags
+	}
+	return c.JSON(fiber.Map{"flags": out})
+}
+
+func AdminEvalMetrics(c *fiber.Ctx) error {
+	metrics, err := rivereval.LoadMetrics()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(metrics)
+}
+
+func AdminEvalMeta(c *fiber.Ctx) error {
+	flagOrm := orm.Load(&models.MetaFlag{})
+	defer flagOrm.Close()
+	evalOrm := orm.Load(&models.EvaluatorVersion{})
+	defer evalOrm.Close()
+	canaryOrm := orm.Load(&models.ComplianceCanary{})
+	defer canaryOrm.Close()
+	resultOrm := orm.Load(&models.CanaryResult{})
+	defer resultOrm.Close()
+
+	var flags []models.MetaFlag
+	if err := flagOrm.GetAll().Scan(&flags); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	var evaluatorVersions []models.EvaluatorVersion
+	if err := evalOrm.GetAll().Scan(&evaluatorVersions); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	var canaries []models.ComplianceCanary
+	if err := canaryOrm.GetAll().Scan(&canaries); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	var canaryResults []models.CanaryResult
+	if err := resultOrm.GetAll().Scan(&canaryResults); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(fiber.Map{
+		"meta_flags":          flags,
+		"evaluator_versions":  evaluatorVersions,
+		"compliance_canaries": canaries,
+		"canary_results":      canaryResults,
+	})
+}
+
+func AdminExperimentDetail(c *fiber.Ctx) error {
+	o := orm.Load(&models.PromptExperiment{})
+	defer o.Close()
+	var rows []models.PromptExperiment
+	if err := o.GetByFieldEquals("Id", c.Params("id")).Scan(&rows); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	if len(rows) == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "prompt experiment not found")
+	}
+	return c.JSON(fiber.Map{"experiment": rows[0]})
 }
 
 func startTemporalWorkflow(c *fiber.Ctx, id string, workflow any, args ...any) error {

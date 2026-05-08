@@ -41,6 +41,14 @@ type anthropicResponse struct {
 	Type string `json:"type"`
 }
 
+type LlmChatResult struct {
+	Content      string `json:"content"`
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+	TotalTokens  int    `json:"total_tokens"`
+	Model        string `json:"model"`
+}
+
 type LlmClient struct {
 	baseURL    string
 	apiKey     string
@@ -64,10 +72,18 @@ func (c *LlmClient) Chat(ctx context.Context, messages []LlmMessage, temperature
 }
 
 func (c *LlmClient) ChatWithTokens(ctx context.Context, messages []LlmMessage, temperature float64, maxTokens int) (string, error) {
-	return c.chatWithModel(ctx, c.model, messages, temperature, maxTokens)
+	result, err := c.ChatWithTokenUsage(ctx, messages, temperature, maxTokens)
+	if err != nil {
+		return "", err
+	}
+	return result.Content, nil
 }
 
-func (c *LlmClient) chatWithModel(ctx context.Context, model string, messages []LlmMessage, temperature float64, maxTokens int) (string, error) {
+func (c *LlmClient) ChatWithTokenUsage(ctx context.Context, messages []LlmMessage, temperature float64, maxTokens int) (*LlmChatResult, error) {
+	return c.chatWithModelUsage(ctx, c.model, messages, temperature, maxTokens)
+}
+
+func (c *LlmClient) chatWithModelUsage(ctx context.Context, model string, messages []LlmMessage, temperature float64, maxTokens int) (*LlmChatResult, error) {
 	var system string
 	var userMsgs []LlmMessage
 	for _, m := range messages {
@@ -94,12 +110,12 @@ func (c *LlmClient) chatWithModel(ctx context.Context, model string, messages []
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/messages", bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", c.apiKey)
@@ -107,23 +123,25 @@ func (c *LlmClient) chatWithModel(ctx context.Context, model string, messages []
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("http request: %w", err)
+		return nil, fmt.Errorf("http request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Claude API returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("Claude API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	return c.readSSEStream(resp.Body)
+	return c.readSSEStream(resp.Body, model)
 }
 
-func (c *LlmClient) readSSEStream(body io.Reader) (string, error) {
+func (c *LlmClient) readSSEStream(body io.Reader, model string) (*LlmChatResult, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
 	var textContent strings.Builder
+	inputTokens := 0
+	outputTokens := 0
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -148,6 +166,16 @@ func (c *LlmClient) readSSEStream(body io.Reader) (string, error) {
 			ContentBlock *struct {
 				Type string `json:"type"`
 			} `json:"content_block,omitempty"`
+			Message *struct {
+				Usage *struct {
+					InputTokens  int `json:"input_tokens"`
+					OutputTokens int `json:"output_tokens"`
+				} `json:"usage,omitempty"`
+			} `json:"message,omitempty"`
+			Usage *struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage,omitempty"`
 			Error *struct {
 				Type    string `json:"type"`
 				Message string `json:"message"`
@@ -159,22 +187,38 @@ func (c *LlmClient) readSSEStream(body io.Reader) (string, error) {
 		}
 
 		if event.Error != nil {
-			return "", fmt.Errorf("Claude stream error: %s", event.Error.Message)
+			return nil, fmt.Errorf("Claude stream error: %s", event.Error.Message)
 		}
 
 		if event.Type == "content_block_delta" && event.Delta != nil && event.Delta.Type == "text_delta" {
 			textContent.WriteString(event.Delta.Text)
 		}
+		if event.Message != nil && event.Message.Usage != nil {
+			if event.Message.Usage.InputTokens > 0 {
+				inputTokens = event.Message.Usage.InputTokens
+			}
+			if event.Message.Usage.OutputTokens > outputTokens {
+				outputTokens = event.Message.Usage.OutputTokens
+			}
+		}
+		if event.Usage != nil {
+			if event.Usage.InputTokens > 0 {
+				inputTokens = event.Usage.InputTokens
+			}
+			if event.Usage.OutputTokens > outputTokens {
+				outputTokens = event.Usage.OutputTokens
+			}
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("stream read error: %w", err)
+		return nil, fmt.Errorf("stream read error: %w", err)
 	}
 
 	result := textContent.String()
 	if result == "" {
-		return "", fmt.Errorf("Claude API returned no text content")
+		return nil, fmt.Errorf("Claude API returned no text content")
 	}
 
-	return result, nil
+	return &LlmChatResult{Content: result, InputTokens: inputTokens, OutputTokens: outputTokens, TotalTokens: inputTokens + outputTokens, Model: model}, nil
 }

@@ -68,6 +68,10 @@ func GenerateAriaHandoff(wf models.BorrowerWorkflow, messages []models.AgentMess
 	if err != nil {
 		return nil, err
 	}
+	return GenerateAriaHandoffWithClient(client, wf, messages)
+}
+
+func GenerateAriaHandoffWithClient(client *agents.Client, wf models.BorrowerWorkflow, messages []models.AgentMessage) (*HandoffCall[AriaHandoffResult], error) {
 	user, _ := GetUser(wf.UserId)
 	loan, _ := GetLoan(wf.LoanId)
 	accountSummary := ""
@@ -106,6 +110,10 @@ func GenerateNovaOffer(wf models.BorrowerWorkflow) (*HandoffCall[NovaOfferResult
 	if err != nil {
 		return nil, err
 	}
+	return GenerateNovaOfferWithClient(client, wf)
+}
+
+func GenerateNovaOfferWithClient(client *agents.Client, wf models.BorrowerWorkflow) (*HandoffCall[NovaOfferResult], error) {
 	loan, _ := GetLoan(wf.LoanId)
 	payload := map[string]any{
 		"aria_handoff": derefString(wf.ContextForNova),
@@ -139,6 +147,10 @@ func GenerateNovaRuntimeContext(wf models.BorrowerWorkflow, offer *models.Resolu
 	if err != nil {
 		return nil, err
 	}
+	return GenerateNovaRuntimeContextWithClient(client, wf, offer)
+}
+
+func GenerateNovaRuntimeContextWithClient(client *agents.Client, wf models.BorrowerWorkflow, offer *models.ResolutionOffer) (*HandoffCall[string], error) {
 	payload := map[string]any{
 		"aria_handoff":     derefString(wf.ContextForNova),
 		"aria_summary":     derefString(wf.AriaSummary),
@@ -162,6 +174,10 @@ func GenerateNovaCallHandoff(wf models.BorrowerWorkflow, offer *models.Resolutio
 	if err != nil {
 		return nil, err
 	}
+	return GenerateNovaCallHandoffWithClient(client, wf, offer, transcript)
+}
+
+func GenerateNovaCallHandoffWithClient(client *agents.Client, wf models.BorrowerWorkflow, offer *models.ResolutionOffer, transcript string) (*HandoffCall[NovaCallHandoffResult], error) {
 	payload := map[string]any{
 		"nova_context":     derefString(wf.ContextForNova),
 		"resolution_offer": conciseOfferState(offer),
@@ -216,6 +232,10 @@ func GenerateDeltaHandoff(wf models.BorrowerWorkflow, messages []models.AgentMes
 	if err != nil {
 		return nil, err
 	}
+	return GenerateDeltaHandoffWithClient(client, wf, messages)
+}
+
+func GenerateDeltaHandoffWithClient(client *agents.Client, wf models.BorrowerWorkflow, messages []models.AgentMessage) (*HandoffCall[DeltaHandoffResult], error) {
 	payload := map[string]any{
 		"delta_runtime_summary": derefString(wf.ContextForDelta),
 		"delta_messages":        agents.MessagesForCompletion(messages),
@@ -240,6 +260,10 @@ func GenerateDeltaRuntimeContext(handoff NovaCallHandoffResult, offer *models.Re
 	if err != nil {
 		return nil, err
 	}
+	return GenerateDeltaRuntimeContextWithClient(client, handoff, offer, wf)
+}
+
+func GenerateDeltaRuntimeContextWithClient(client *agents.Client, handoff NovaCallHandoffResult, offer *models.ResolutionOffer, wf models.BorrowerWorkflow) (*HandoffCall[DeltaRuntimeContextResult], error) {
 	payload := map[string]any{
 		"nova_handoff":     novaOutcomeForDelta(handoff, offer, wf),
 		"resolution_offer": conciseOfferState(offer),

@@ -37,5 +37,10 @@ type AppConfig struct {
 	VapiPhoneNumberId  string `env:"VAPI_PHONE_NUMBER_ID"`
 	VapiWebhookSecret  string `env:"VAPI_WEBHOOK_SECRET"`
 	VapiDryRun         bool   `env:"VAPI_DRY_RUN" optional:"true" default:"false"`
+	PersonaLLMBaseURL  string `env:"PERSONA_LLM_BASE_URL" optional:"true" default:"https://api.anthropic.com"`
+	PersonaLLMApiKey   string `env:"PERSONA_LLM_API_KEY" optional:"true" default:""`
+	PersonaLLMModel    string `env:"PERSONA_LLM_MODEL" optional:"true" default:"claude-3-5-haiku-20241022"`
+	EvaluatorJudges    string `env:"EVALUATOR_JUDGES_JSON" optional:"true" default:""`
+	LlmPricing         string `env:"LLM_PRICING_JSON" optional:"true" default:""`
 	Port               string `env:"PORT" optional:"true" default:"8080"`
 }

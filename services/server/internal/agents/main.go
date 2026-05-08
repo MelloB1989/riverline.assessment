@@ -22,3 +22,14 @@ type Config struct {
 	TopP        float32
 	TopK        int
 }
+
+func DefaultConfig(agentID models.AgentID) Config {
+	switch agentID {
+	case models.AgentNova:
+		return Config{Model: ai.Llama33_70B, Provider: ai.Groq, Temperature: 0.5, TopP: 0.90, TopK: 50}
+	case models.AgentDelta:
+		return Config{Model: ai.Llama33_70B, Provider: ai.Groq, Temperature: 0.1, TopP: 0.80, TopK: 30}
+	default:
+		return Config{Model: ai.Llama33_70B, Provider: ai.Groq, Temperature: 0.2, TopP: 0.85, TopK: 40}
+	}
+}

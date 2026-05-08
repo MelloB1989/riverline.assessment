@@ -38,3 +38,14 @@ func CompleteARIA(workflowID string) error {
 	}
 	return nil
 }
+
+func ApplyAriaHandoffForSimulation(wf *models.BorrowerWorkflow, result AriaHandoffResult) error {
+	applyAriaHandoff(wf, result)
+	if result.PreferredNovaCallAt != nil && *result.PreferredNovaCallAt != "" {
+		if err := setInitialNovaSchedule(wf, result); err != nil {
+			return err
+		}
+	}
+	wf.UpdatedAt = time.Now().UTC()
+	return updateWorkflow(wf)
+}
