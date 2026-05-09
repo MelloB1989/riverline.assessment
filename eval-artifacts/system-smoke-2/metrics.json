@@ -1,0 +1,128 @@
+{
+  "total_scores": 17,
+  "total_cost_usd": 0.1481741699999999,
+  "by_agent": {
+    "aria": {
+      "n": 16,
+      "mean": 40.8333335,
+      "stddev": 23.30951201167075,
+      "median": 30,
+      "compliance_rate": 0.1875,
+      "mean_judge_disagreement": 16.1041666625,
+      "simulated_fraction": 0.9375
+    },
+    "nova": {
+      "n": 1,
+      "mean": 92,
+      "stddev": 0,
+      "median": 92,
+      "compliance_rate": 1,
+      "mean_judge_disagreement": 3,
+      "simulated_fraction": 0
+    }
+  },
+  "by_agent_prompt": {
+    "aria:v1": {
+      "n": 12,
+      "mean": 44.44444466666667,
+      "stddev": 26.15352280833685,
+      "median": 30,
+      "compliance_rate": 0.25,
+      "mean_judge_disagreement": 15.638888883333331,
+      "simulated_fraction": 0.9166666666666666
+    },
+    "aria:v2": {
+      "n": 2,
+      "mean": 30,
+      "stddev": 0,
+      "median": 30,
+      "compliance_rate": 0,
+      "mean_judge_disagreement": 0,
+      "simulated_fraction": 1
+    },
+    "aria:v3": {
+      "n": 2,
+      "mean": 30,
+      "stddev": 0,
+      "median": 30,
+      "compliance_rate": 0,
+      "mean_judge_disagreement": 35,
+      "simulated_fraction": 1
+    },
+    "nova:v1": {
+      "n": 1,
+      "mean": 92,
+      "stddev": 0,
+      "median": 92,
+      "compliance_rate": 1,
+      "mean_judge_disagreement": 3,
+      "simulated_fraction": 0
+    }
+  },
+  "prompt_experiments": [
+    {
+      "id": "319rw25j-e",
+      "agent_id": "aria",
+      "control_version": 1,
+      "candidate_version": 2,
+      "control_n": 2,
+      "control_mean": 30,
+      "control_stddev": 0,
+      "control_median": 30,
+      "control_compliance_rate": 0,
+      "control_scores": [
+        30,
+        30
+      ],
+      "treatment_n": 2,
+      "treatment_mean": 30,
+      "treatment_stddev": 0,
+      "treatment_median": 30,
+      "treatment_compliance_rate": 0,
+      "treatment_scores": [
+        30,
+        30
+      ],
+      "mean_delta": 0,
+      "p_value": 1,
+      "cohens_d": 0,
+      "is_significant": false,
+      "adopted": false,
+      "rejection_reason": "candidate rejected: delta=0.00 p=1.0000 d=0.00 compliance 0.00-\u003e0.00 did not clear adoption gates",
+      "experiment_cost_usd": 0,
+      "created_at": "2026-05-09T08:32:16.869478Z"
+    },
+    {
+      "id": "tf_bgrqz7w",
+      "agent_id": "aria",
+      "control_version": 1,
+      "candidate_version": 3,
+      "control_n": 2,
+      "control_mean": 30,
+      "control_stddev": 0,
+      "control_median": 30,
+      "control_compliance_rate": 0,
+      "control_scores": [
+        30,
+        30
+      ],
+      "treatment_n": 2,
+      "treatment_mean": 30,
+      "treatment_stddev": 0,
+      "treatment_median": 30,
+      "treatment_compliance_rate": 0,
+      "treatment_scores": [
+        30,
+        30
+      ],
+      "mean_delta": 0,
+      "p_value": 1,
+      "cohens_d": 0,
+      "is_significant": false,
+      "adopted": false,
+      "rejection_reason": "candidate rejected: delta=0.00 p=1.0000 d=0.00 compliance 0.00-\u003e0.00 did not clear adoption gates",
+      "experiment_cost_usd": 0,
+      "created_at": "2026-05-09T14:58:41.569612Z"
+    }
+  ]
+}

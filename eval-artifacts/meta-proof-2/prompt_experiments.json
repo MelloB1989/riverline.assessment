@@ -1,0 +1,160 @@
+[
+  {
+    "id": "n6t7l_m5z1",
+    "agent_id": "aria",
+    "control_version": 2,
+    "candidate_version": 3,
+    "control_n": 3,
+    "control_mean": 30,
+    "control_stddev": 0,
+    "control_median": 30,
+    "control_compliance_rate": 0,
+    "control_scores": [
+      30,
+      30,
+      30
+    ],
+    "treatment_n": 2,
+    "treatment_mean": 30,
+    "treatment_stddev": 0,
+    "treatment_median": 30,
+    "treatment_compliance_rate": 0,
+    "treatment_scores": [
+      30,
+      30
+    ],
+    "mean_delta": 0,
+    "p_value": 1,
+    "cohens_d": 0,
+    "is_significant": true,
+    "adopted": true,
+    "rejection_reason": null,
+    "experiment_cost_usd": 0,
+    "created_at": "2026-05-09T17:41:51.844931Z"
+  },
+  {
+    "id": "cmf4uw9osw",
+    "agent_id": "nova",
+    "control_version": 2,
+    "candidate_version": 3,
+    "control_n": 3,
+    "control_mean": 28.25,
+    "control_stddev": 3.0310888,
+    "control_median": 30,
+    "control_compliance_rate": 0,
+    "control_scores": [
+      30,
+      30,
+      24.75
+    ],
+    "treatment_n": 1,
+    "treatment_mean": 30,
+    "treatment_stddev": 0,
+    "treatment_median": 30,
+    "treatment_compliance_rate": 0,
+    "treatment_scores": [
+      30
+    ],
+    "mean_delta": 1.75,
+    "p_value": 1,
+    "cohens_d": 0,
+    "is_significant": true,
+    "adopted": true,
+    "rejection_reason": null,
+    "experiment_cost_usd": 0,
+    "created_at": "2026-05-09T17:50:43.487841Z"
+  },
+  {
+    "id": "djqwivfqet",
+    "agent_id": "delta",
+    "control_version": 2,
+    "candidate_version": 3,
+    "control_n": 3,
+    "control_mean": 28.583334,
+    "control_stddev": 2.4537387,
+    "control_median": 30,
+    "control_compliance_rate": 0,
+    "control_scores": [
+      30,
+      30,
+      25.75
+    ],
+    "treatment_n": 2,
+    "treatment_mean": 30,
+    "treatment_stddev": 0,
+    "treatment_median": 30,
+    "treatment_compliance_rate": 0,
+    "treatment_scores": [
+      30,
+      30
+    ],
+    "mean_delta": 1.4166666,
+    "p_value": 0.3173105,
+    "cohens_d": 0.8164966,
+    "is_significant": true,
+    "adopted": true,
+    "rejection_reason": null,
+    "experiment_cost_usd": 0,
+    "created_at": "2026-05-09T17:59:00.829142Z"
+  },
+  {
+    "id": "5tqbhk0p9l",
+    "agent_id": "aria",
+    "control_version": 3,
+    "candidate_version": 4,
+    "control_n": 1,
+    "control_mean": 30,
+    "control_stddev": 0,
+    "control_median": 30,
+    "control_compliance_rate": 0,
+    "control_scores": [
+      30
+    ],
+    "treatment_n": 1,
+    "treatment_mean": 30,
+    "treatment_stddev": 0,
+    "treatment_median": 30,
+    "treatment_compliance_rate": 0,
+    "treatment_scores": [
+      30
+    ],
+    "mean_delta": 0,
+    "p_value": 1,
+    "cohens_d": 0,
+    "is_significant": false,
+    "adopted": false,
+    "rejection_reason": "candidate rejected: delta=0.00 p=1.0000 d=0.00 compliance 0.00-\u003e0.00 did not clear adoption gates",
+    "experiment_cost_usd": 0,
+    "created_at": "2026-05-09T18:05:41.117777Z"
+  },
+  {
+    "id": "n5t4rf-wow",
+    "agent_id": "aria",
+    "control_version": 3,
+    "candidate_version": 5,
+    "control_n": 1,
+    "control_mean": 30,
+    "control_stddev": 0,
+    "control_median": 30,
+    "control_compliance_rate": 0,
+    "control_scores": [
+      30
+    ],
+    "treatment_n": 1,
+    "treatment_mean": 30,
+    "treatment_stddev": 0,
+    "treatment_median": 30,
+    "treatment_compliance_rate": 0,
+    "treatment_scores": [
+      30
+    ],
+    "mean_delta": 0,
+    "p_value": 1,
+    "cohens_d": 0,
+    "is_significant": false,
+    "adopted": false,
+    "rejection_reason": "candidate rejected: delta=0.00 p=1.0000 d=0.00 compliance 0.00-\u003e0.00 did not clear adoption gates",
+    "experiment_cost_usd": 0,
+    "created_at": "2026-05-09T18:10:11.217177Z"
+  }
+]

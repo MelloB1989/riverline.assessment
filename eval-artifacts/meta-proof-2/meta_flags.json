@@ -1,0 +1,1663 @@
+[
+  {
+    "id": "qi5xmglane",
+    "flag_type": "judge_disagreement",
+    "agent_id": "aria",
+    "evidence": {
+      "invalid_json_count": 3,
+      "invalid_json_rate": 0.6,
+      "revision_benchmark": {
+        "after_evaluator_version": 3,
+        "after_invalid_json_count": 1,
+        "after_mean_disagreement": 12.665000000000001,
+        "after_mean_score": 13.445,
+        "before_evaluator_version": 2,
+        "before_invalid_json_count": 1,
+        "before_mean_disagreement": 0,
+        "before_mean_score": 30,
+        "disagreement_delta": 12.665000000000001,
+        "improved": false,
+        "invalid_json_delta": 0,
+        "sample_n": 1,
+        "score_delta": -16.555
+      },
+      "sample_n": 5
+    },
+    "proposed_action": "Revise the evaluator prompt to enforce strict JSON-only scoring and avoid schema-invalid judge outputs.",
+    "resolved": true,
+    "resolution": "Created evaluator version 3 but kept it inactive because benchmark did not improve.",
+    "evaluator_version_before": 2,
+    "evaluator_version_after": null,
+    "created_at": "2026-05-09T17:41:51.867947Z",
+    "resolved_at": "2026-05-09T17:42:12.866734Z"
+  },
+  {
+    "id": "3wko1hq2lw",
+    "flag_type": "judge_disagreement",
+    "agent_id": "aria",
+    "evidence": {
+      "avg_delta": 16.9,
+      "examples": [
+        {
+          "aggregate_breakdown": {
+            "all_judges_compliance_passed": false,
+            "conversation_ids": [
+              "y5m7rutaos"
+            ],
+            "judge_results": [
+              {
+                "cost_usd": 0,
+                "input_tokens": 1207,
+                "metrics": {
+                  "commitment_attempt": 10,
+                  "compliance_breakdown": {
+                    "inconsistent_responses": 5,
+                    "missing_required_fields": 5
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 40,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 0,
+                  "deadline_specificity": 0,
+                  "identity_verified": 10,
+                  "info_completeness": 0,
+                  "judge_b_composite": 40,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 0,
+                  "no_redundancy": 0,
+                  "objection_handling": 0,
+                  "offer_clarity": 0,
+                  "reasoning": "ARIA intake lacks critical information, NOVA offer handling is inconsistent, DELTA final notice is repetitive. Cross-stage handoff lacks continuity.",
+                  "tone_appropriateness": 0
+                },
+                "model": "llama-3.1-8b",
+                "model_used": "groq/llama-3.1-8b-instant",
+                "name": "judge_a",
+                "output_tokens": 542,
+                "provider": "groq",
+                "tokens": 1749,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0007567499999999999,
+                "input_tokens": 1229,
+                "metrics": {
+                  "commitment_attempt": 2,
+                  "compliance_breakdown": {
+                    "escalation_offered": true,
+                    "hardship_disclosure_present": true,
+                    "proper_termination_notice": true
+                  },
+                  "compliance_pass": 10,
+                  "composite_score": 78,
+                  "consequence_accuracy": 5,
+                  "context_continuity": 6,
+                  "deadline_specificity": 1,
+                  "identity_verified": 5,
+                  "info_completeness": 5,
+                  "judge_b_composite": 78,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 9,
+                  "no_redundancy": 2,
+                  "objection_handling": 2,
+                  "offer_clarity": 2,
+                  "reasoning": "The agent remained polite and provided a consistent hardship portal link, satisfying the lenient criteria that a conversation is good if the borrower was contacted and the agent was courteous. However, the agent repeatedly gave the same response without offering a live representative, resulting in high redundancy, poor objection handling, low offer clarity, and no concrete commitment or deadline. Identity verification and detailed information were lacking. No compliance violations were evident, so compliance_pass is 10. Overall the transcript earns a high but not perfect composite score, reflected equally in the judge B composite.",
+                  "tone_appropriateness": 9
+                },
+                "model": "gpt-oss-120b",
+                "model_used": "groq/openai/gpt-oss-120b",
+                "name": "judge_b",
+                "output_tokens": 954,
+                "provider": "groq",
+                "tokens": 2183,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0004109,
+                "input_tokens": 1307,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "failed_escalation": true,
+                    "incomplete_intake": true,
+                    "no_human_transfer": true,
+                    "repetitive_loop": true
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 30,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 3,
+                  "deadline_specificity": 0,
+                  "identity_verified": 0,
+                  "info_completeness": 1,
+                  "judge_b_composite": 70,
+                  "judge_disagreement_delta": 40,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 0,
+                  "objection_handling": 0,
+                  "offer_clarity": 10,
+                  "reasoning": "The provided transcript is only the ARIA intake section, with no visible NOVA or DELTA interactions, indicating a workflow breakdown. ARIA contacted the borrower politely and empathetically acknowledged the hardship but looped redundantly on directing to a portal without collecting details, verifying identity, handling objections, or escalating the crisis. This results in poor overall system performance, especially for downstream stages. Lenient evaluation credits politeness and contact but penalizes visible failures in progression and completeness. Compliance fails due to lack of proper hardship handling and escalation.",
+                  "tone_appropriateness": 8
+                },
+                "model": "grok-4-fast-reasoning",
+                "model_used": "xai/grok-4-fast-reasoning",
+                "name": "judge_c",
+                "output_tokens": 299,
+                "provider": "xai",
+                "tokens": 1606,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.00089067,
+                "input_tokens": 1207,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "inadequate_hardship_handling": true,
+                    "missing_disclosures": true
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 20,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 4,
+                  "deadline_specificity": 0,
+                  "identity_verified": 0,
+                  "info_completeness": 2,
+                  "judge_b_composite": 20,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 8,
+                  "objection_handling": 2,
+                  "offer_clarity": 0,
+                  "reasoning": "The agent failed to provide meaningful support or escalate the borrower's hardship request, instead repeatedly directing them to a website. The borrower's concerns and needs were not adequately addressed, resulting in a poor experience.",
+                  "tone_appropriateness": 6
+                },
+                "model": "llama-3.3-70b",
+                "model_used": "groq/llama-3.3-70b-versatile",
+                "name": "judge_d",
+                "output_tokens": 226,
+                "provider": "groq",
+                "tokens": 1433,
+                "weight": 1
+              }
+            ],
+            "scored_agent": "delta",
+            "system_level_evaluation": true
+          },
+          "aggregate_score": 30,
+          "conversation_id": "y5m7rutaos",
+          "disagreement_delta": 48,
+          "judges": [
+            {
+              "compliance_breakdown": {
+                "inconsistent_responses": 5,
+                "missing_required_fields": 5
+              },
+              "compliance_pass": 0,
+              "name": "judge_a",
+              "reasoning": "ARIA intake lacks critical information, NOVA offer handling is inconsistent, DELTA final notice is repetitive. Cross-stage handoff lacks continuity.",
+              "score": 40
+            },
+            {
+              "compliance_breakdown": {
+                "escalation_offered": true,
+                "hardship_disclosure_present": true,
+                "proper_termination_notice": true
+              },
+              "compliance_pass": 10,
+              "name": "judge_b",
+              "reasoning": "The agent remained polite and provided a consistent hardship portal link, satisfying the lenient criteria that a conversation is good if the borrower was contacted and the agent was courteous. However, the agent repeatedly gave the same response without offering a live representative, resulting in high redundancy, poor...",
+              "score": 78
+            },
+            {
+              "compliance_breakdown": {
+                "failed_escalation": true,
+                "incomplete_intake": true,
+                "no_human_transfer": true,
+                "repetitive_loop": true
+              },
+              "compliance_pass": 0,
+              "name": "judge_c",
+              "reasoning": "The provided transcript is only the ARIA intake section, with no visible NOVA or DELTA interactions, indicating a workflow breakdown. ARIA contacted the borrower politely and empathetically acknowledged the hardship but looped redundantly on directing to a portal without collecting details, verifying identity, handling...",
+              "score": 30
+            },
+            {
+              "compliance_breakdown": {
+                "inadequate_hardship_handling": true,
+                "missing_disclosures": true
+              },
+              "compliance_pass": 0,
+              "name": "judge_d",
+              "reasoning": "The agent failed to provide meaningful support or escalate the borrower's hardship request, instead repeatedly directing them to a website. The borrower's concerns and needs were not adequately addressed, resulting in a poor experience.",
+              "score": 20
+            }
+          ],
+          "persona": "distressed",
+          "prompt_version": 3,
+          "workflow_id": "sim-wf-66-distressed-0-mop_jtddqv"
+        },
+        {
+          "aggregate_breakdown": {
+            "all_judges_compliance_passed": false,
+            "conversation_ids": [
+              "7hm24mj2at"
+            ],
+            "judge_results": [
+              {
+                "cost_usd": 0,
+                "input_tokens": 1039,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "missing_disclosure": "The agent failed to disclose the hardship assistance terms and options."
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 62,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 6,
+                  "deadline_specificity": 0,
+                  "identity_verified": 1,
+                  "info_completeness": 6,
+                  "judge_b_composite": 45,
+                  "judge_disagreement_delta": 17,
+                  "no_negotiation_drift": 2,
+                  "no_redundancy": 4,
+                  "objection_handling": 4,
+                  "offer_clarity": 2,
+                  "reasoning": "The borrower was contacted, but the conversation was marred by the agent's inability to provide clear answers, causing delays and frustration. The agent also failed to follow up on the borrower's requests for a specific timeline for a call to discuss hardship support.",
+                  "tone_appropriateness": 8
+                },
+                "model": "llama-3.1-8b",
+                "model_used": "groq/llama-3.1-8b-instant",
+                "name": "judge_a",
+                "output_tokens": 236,
+                "provider": "groq",
+                "tokens": 1275,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.00111435,
+                "input_tokens": 1409,
+                "metrics": {
+                  "commitment_attempt": 3,
+                  "compliance_breakdown": {
+                    "call_time_commitment": "failed",
+                    "hardship_disclosure": "partial",
+                    "identity_verification": "failed",
+                    "offer_specificity": "failed",
+                    "recording_disclosure": "passed"
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 78,
+                  "consequence_accuracy": 2,
+                  "context_continuity": 5,
+                  "deadline_specificity": 2,
+                  "identity_verified": 2,
+                  "info_completeness": 2,
+                  "judge_b_composite": 78,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 7,
+                  "no_redundancy": 3,
+                  "objection_handling": 3,
+                  "offer_clarity": 2,
+                  "reasoning": "The ARIA agent was consistently polite (high tone score) and disclosed the call recording, but never verified the borrower's identity, provided no concrete hardship offer details, and repeatedly gave vague or incomplete information, leading to low scores in several categories.",
+                  "tone_appropriateness": 9
+                },
+                "model": "gpt-oss-120b",
+                "model_used": "groq/openai/gpt-oss-120b",
+                "name": "judge_b",
+                "output_tokens": 1505,
+                "provider": "groq",
+                "tokens": 2914,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0003525,
+                "input_tokens": 1140,
+                "metrics": {
+                  "commitment_attempt": 2,
+                  "compliance_breakdown": {},
+                  "compliance_pass": 10,
+                  "composite_score": 70,
+                  "consequence_accuracy": 5,
+                  "context_continuity": 7,
+                  "deadline_specificity": 2,
+                  "identity_verified": 4,
+                  "info_completeness": 5,
+                  "judge_b_composite": 75,
+                  "judge_disagreement_delta": 5,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 2,
+                  "objection_handling": 3,
+                  "offer_clarity": 6,
+                  "reasoning": "Lenient evaluation: Agent is polite and empathetic throughout, acknowledging hardship without abuse. Borrower contacted via chat. However, high redundancy in repeating the same response creates a loop, poor objection handling by not addressing specific requests for timeline or details, minimal identity verification or info gathering, and vague 'shortly' deadline. No NOVA/DELTA sections, but ARIA handoff noted. Compliance passes as no violations evident. Composite reflects good tone but execution flaws.",
+                  "tone_appropriateness": 10
+                },
+                "model": "grok-4-fast-reasoning",
+                "model_used": "xai/grok-4-fast-reasoning",
+                "name": "judge_c",
+                "output_tokens": 249,
+                "provider": "xai",
+                "tokens": 1389,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.00080577,
+                "input_tokens": 1039,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "disclosures": "missing",
+                    "handoff_protocol": "incomplete"
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 20,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 2,
+                  "deadline_specificity": 0,
+                  "identity_verified": 0,
+                  "info_completeness": 2,
+                  "judge_b_composite": 20,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 8,
+                  "objection_handling": 2,
+                  "offer_clarity": 0,
+                  "reasoning": "The ARIA agent was polite, but failed to provide clear information about hardship support or a specific time for a follow-up call. The agent repeatedly directed the borrower to a link, which did not address the borrower's urgent needs. The conversation lacked context continuity and did not demonstrate effective objection handling.",
+                  "tone_appropriateness": 8
+                },
+                "model": "llama-3.3-70b",
+                "model_used": "groq/llama-3.3-70b-versatile",
+                "name": "judge_d",
+                "output_tokens": 244,
+                "provider": "groq",
+                "tokens": 1283,
+                "weight": 1
+              }
+            ],
+            "scored_agent": "aria",
+            "system_level_evaluation": true
+          },
+          "aggregate_score": 30,
+          "conversation_id": "7hm24mj2at",
+          "disagreement_delta": 48,
+          "judges": [
+            {
+              "compliance_breakdown": {
+                "missing_disclosure": "The agent failed to disclose the hardship assistance terms and options."
+              },
+              "compliance_pass": 0,
+              "name": "judge_a",
+              "reasoning": "The borrower was contacted, but the conversation was marred by the agent's inability to provide clear answers, causing delays and frustration. The agent also failed to follow up on the borrower's requests for a specific timeline for a call to discuss hardship support.",
+              "score": 62
+            },
+            {
+              "compliance_breakdown": {
+                "call_time_commitment": "failed",
+                "hardship_disclosure": "partial",
+                "identity_verification": "failed",
+                "offer_specificity": "failed",
+                "recording_disclosure": "passed"
+              },
+              "compliance_pass": 0,
+              "name": "judge_b",
+              "reasoning": "The ARIA agent was consistently polite (high tone score) and disclosed the call recording, but never verified the borrower's identity, provided no concrete hardship offer details, and repeatedly gave vague or incomplete information, leading to low scores in several categories.",
+              "score": 78
+            },
+            {
+              "compliance_breakdown": {},
+              "compliance_pass": 10,
+              "name": "judge_c",
+              "reasoning": "Lenient evaluation: Agent is polite and empathetic throughout, acknowledging hardship without abuse. Borrower contacted via chat. However, high redundancy in repeating the same response creates a loop, poor objection handling by not addressing specific requests for timeline or details, minimal identity verification or ...",
+              "score": 70
+            },
+            {
+              "compliance_breakdown": {
+                "disclosures": "missing",
+                "handoff_protocol": "incomplete"
+              },
+              "compliance_pass": 0,
+              "name": "judge_d",
+              "reasoning": "The ARIA agent was polite, but failed to provide clear information about hardship support or a specific time for a follow-up call. The agent repeatedly directed the borrower to a link, which did not address the borrower's urgent needs. The conversation lacked context continuity and did not demonstrate effective objecti...",
+              "score": 20
+            }
+          ],
+          "persona": "distressed",
+          "prompt_version": 3,
+          "workflow_id": "sim-wf-66-distressed-0-v4shak2r5w"
+        },
+        {
+          "aggregate_breakdown": {
+            "all_judges_compliance_passed": false,
+            "conversation_ids": [
+              "ye4xp2yxv9"
+            ],
+            "judge_results": [
+              {
+                "cost_usd": 0,
+                "input_tokens": 764,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "missing_date_of_birth_disclosure": 5,
+                    "no_handoff_details": 5
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 70,
+                  "consequence_accuracy": 5,
+                  "context_continuity": 6,
+                  "deadline_specificity": 0,
+                  "identity_verified": 5,
+                  "info_completeness": 5,
+                  "judge_b_composite": 50,
+                  "judge_disagreement_delta": 20,
+                  "no_negotiation_drift": 0,
+                  "no_redundancy": 5,
+                  "objection_handling": 5,
+                  "offer_clarity": 8,
+                  "reasoning": "The transcript shows that the borrower was polite and cooperative. However, the agent failed to provide the borrower with the complete terms of the offer. The compliance breakdown highlights missing fields, such as the date of birth disclosure and a lack of handoff details. As per the judge prompt, leniency is applied in these cases.",
+                  "tone_appropriateness": 8
+                },
+                "model": "llama-3.1-8b",
+                "model_used": "groq/llama-3.1-8b-instant",
+                "name": "judge_a",
+                "output_tokens": 897,
+                "provider": "groq",
+                "tokens": 1661,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0012339,
+                "input_tokens": 1166,
+                "metrics": {
+                  "commitment_attempt": 6,
+                  "compliance_breakdown": {
+                    "data_privacy_observance": true,
+                    "identity_verification": true,
+                    "no_prohibited_content": true,
+                    "no_unlawful_advice": true,
+                    "recording_disclosure": true
+                  },
+                  "compliance_pass": 10,
+                  "composite_score": 70,
+                  "consequence_accuracy": 5,
+                  "context_continuity": 5,
+                  "deadline_specificity": 5,
+                  "identity_verified": 9,
+                  "info_completeness": 7,
+                  "judge_b_composite": 70,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 9,
+                  "no_redundancy": 9,
+                  "objection_handling": 8,
+                  "offer_clarity": 5,
+                  "reasoning": "The ARIA segment verified the borrower\u2019s identity, collected key employment and income information, and asked for a convenient callback time. The tone was polite and professional, with no redundant questions. Because this is only the intake portion, offer details, deadlines, and negotiation handling are absent; however, the segment adhered to compliance requirements and demonstrated strong engagement metrics.",
+                  "tone_appropriateness": 9
+                },
+                "model": "gpt-oss-120b",
+                "model_used": "groq/openai/gpt-oss-120b",
+                "name": "judge_b",
+                "output_tokens": 1765,
+                "provider": "groq",
+                "tokens": 2931,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0002798,
+                "input_tokens": 874,
+                "metrics": {
+                  "commitment_attempt": 7,
+                  "compliance_breakdown": {
+                    "issues": [],
+                    "passes": [
+                      "recording_notice",
+                      "identity_verification",
+                      "politeness"
+                    ]
+                  },
+                  "compliance_pass": 10,
+                  "composite_score": 85,
+                  "consequence_accuracy": 3,
+                  "context_continuity": 9,
+                  "deadline_specificity": 2,
+                  "identity_verified": 10,
+                  "info_completeness": 8,
+                  "judge_b_composite": 85,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 10,
+                  "objection_handling": 10,
+                  "offer_clarity": 5,
+                  "reasoning": "The ARIA transcript shows a polite interaction where the agent verifies identity effectively and collects basic employment/income info before scheduling a specialist call. Borrower initiated contact and expressed readiness to resolve. Lenient evaluation: high scores for politeness, verification, and flow; lower for absent offer, consequences, and deadlines as this is intake stage only. No abuse or compliance issues visible. Transcript incomplete for full workflow, but scores based on visible evidence without assuming repairs.",
+                  "tone_appropriateness": 10
+                },
+                "model": "grok-4-fast-reasoning",
+                "model_used": "xai/grok-4-fast-reasoning",
+                "name": "judge_c",
+                "output_tokens": 210,
+                "provider": "xai",
+                "tokens": 1084,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0006925,
+                "input_tokens": 764,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "account_verification": true,
+                    "identity_verification": true,
+                    "recording_disclosure": true
+                  },
+                  "compliance_pass": 10,
+                  "composite_score": 90,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 8,
+                  "deadline_specificity": 0,
+                  "identity_verified": 10,
+                  "info_completeness": 8,
+                  "judge_b_composite": 90,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 9,
+                  "objection_handling": 0,
+                  "offer_clarity": 0,
+                  "reasoning": "The ARIA transcript demonstrates a professional and polite conversation. The agent successfully verifies the borrower's identity and account details. The borrower is cooperative and provides necessary information. The conversation is well-structured and easy to follow. However, the transcript does not contain an offer, objection handling, or a commitment attempt, which is why those scores are 0. The context continuity is good, but not perfect, as the conversation is mainly focused on the initial contact and verification. The compliance pass is 10 because the transcript contains the required disclosures, such as the recording notice and identity verification.",
+                  "tone_appropriateness": 10
+                },
+                "model": "llama-3.3-70b",
+                "model_used": "groq/llama-3.3-70b-versatile",
+                "name": "judge_d",
+                "output_tokens": 306,
+                "provider": "groq",
+                "tokens": 1070,
+                "weight": 1
+              }
+            ],
+            "scored_agent": "aria",
+            "system_level_evaluation": true
+          },
+          "aggregate_score": 30,
+          "conversation_id": "ye4xp2yxv9",
+          "disagreement_delta": 40,
+          "judges": [
+            {
+              "compliance_breakdown": {
+                "missing_date_of_birth_disclosure": 5,
+                "no_handoff_details": 5
+              },
+              "compliance_pass": 0,
+              "name": "judge_a",
+              "reasoning": "The transcript shows that the borrower was polite and cooperative. However, the agent failed to provide the borrower with the complete terms of the offer. The compliance breakdown highlights missing fields, such as the date of birth disclosure and a lack of handoff details. As per the judge prompt, leniency is applied ...",
+              "score": 70
+            },
+            {
+              "compliance_breakdown": {
+                "data_privacy_observance": true,
+                "identity_verification": true,
+                "no_prohibited_content": true,
+                "no_unlawful_advice": true,
+                "recording_disclosure": true
+              },
+              "compliance_pass": 10,
+              "name": "judge_b",
+              "reasoning": "The ARIA segment verified the borrower\u2019s identity, collected key employment and income information, and asked for a convenient callback time. The tone was polite and professional, with no redundant questions. Because this is only the intake portion, offer details, deadlines, and negotiation handling are absent; howev...",
+              "score": 70
+            },
+            {
+              "compliance_breakdown": {
+                "issues": [],
+                "passes": [
+                  "recording_notice",
+                  "identity_verification",
+                  "politeness"
+                ]
+              },
+              "compliance_pass": 10,
+              "name": "judge_c",
+              "reasoning": "The ARIA transcript shows a polite interaction where the agent verifies identity effectively and collects basic employment/income info before scheduling a specialist call. Borrower initiated contact and expressed readiness to resolve. Lenient evaluation: high scores for politeness, verification, and flow; lower for abs...",
+              "score": 85
+            },
+            {
+              "compliance_breakdown": {
+                "account_verification": true,
+                "identity_verification": true,
+                "recording_disclosure": true
+              },
+              "compliance_pass": 10,
+              "name": "judge_d",
+              "reasoning": "The ARIA transcript demonstrates a professional and polite conversation. The agent successfully verifies the borrower's identity and account details. The borrower is cooperative and provides necessary information. The conversation is well-structured and easy to follow. However, the transcript does not contain an offer,...",
+              "score": 90
+            }
+          ],
+          "persona": "cooperative",
+          "prompt_version": 3,
+          "workflow_id": "sim-wf-67-cooperative-0-0uu62tdgo1"
+        },
+        {
+          "aggregate_breakdown": {
+            "all_judges_compliance_passed": false,
+            "conversation_ids": [
+              "lecubd9lbi"
+            ],
+            "judge_results": [
+              {
+                "cost_usd": 0,
+                "input_tokens": 806,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "incomplete_disclosure_2": 10,
+                    "missing_disclosure_1": 10,
+                    "missing_disclosure_3": 10
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 70,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 5,
+                  "deadline_specificity": 7,
+                  "identity_verified": 6,
+                  "info_completeness": 6,
+                  "judge_b_composite": 62,
+                  "judge_disagreement_delta": 8,
+                  "no_negotiation_drift": 8,
+                  "no_redundancy": 8,
+                  "objection_handling": 6,
+                  "offer_clarity": 4,
+                  "reasoning": "Borrower identity verified after confirming name, account, and date of birth; polite agent tone; however, missing disclosures and unclear offer terms.",
+                  "tone_appropriateness": 9
+                },
+                "model": "llama-3.1-8b",
+                "model_used": "groq/llama-3.1-8b-instant",
+                "name": "judge_a",
+                "output_tokens": 602,
+                "provider": "groq",
+                "tokens": 1408,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0012987,
+                "input_tokens": 1226,
+                "metrics": {
+                  "commitment_attempt": 5,
+                  "compliance_breakdown": {},
+                  "compliance_pass": 0,
+                  "composite_score": 67,
+                  "consequence_accuracy": 7,
+                  "context_continuity": 6,
+                  "deadline_specificity": 0,
+                  "identity_verified": 10,
+                  "info_completeness": 9,
+                  "judge_b_composite": 67,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 0,
+                  "no_redundancy": 10,
+                  "objection_handling": 8,
+                  "offer_clarity": 3,
+                  "reasoning": "The scores reflect the evaluation criteria: identity verification was fully met, information completeness was high, redundancy was avoided, tone was appropriate, but the offer clarity was low, objection handling was solid, commitment attempt moderate, context continuity and consequence accuracy were average. This reasoning provides the necessary non\u2011empty explanation for the metric values.",
+                  "tone_appropriateness": 10
+                },
+                "model": "gpt-oss-120b",
+                "model_used": "groq/openai/gpt-oss-120b",
+                "name": "judge_b",
+                "output_tokens": 1858,
+                "provider": "groq",
+                "tokens": 3084,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0003078,
+                "input_tokens": 914,
+                "metrics": {
+                  "commitment_attempt": 9,
+                  "compliance_breakdown": {},
+                  "compliance_pass": 10,
+                  "composite_score": 95,
+                  "consequence_accuracy": 7,
+                  "context_continuity": 8,
+                  "deadline_specificity": 10,
+                  "identity_verified": 10,
+                  "info_completeness": 9,
+                  "judge_b_composite": 92,
+                  "judge_disagreement_delta": 3,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 10,
+                  "objection_handling": 10,
+                  "offer_clarity": 8,
+                  "reasoning": "Lenient evaluation: ARIA transcript shows polite interaction, identity verification, collection of key info (income, reason, schedule), and handoff to specialist. Borrower contacted via chat. No abuse; missing NOVA/DELTA sections noted but not penalized heavily per instructions. High scores for politeness, completeness in intake, and compliance (recording notice given). Lower for offer/consequence as ARIA is intake-focused, but lenient overall. Composite reflects strong borrower experience start.",
+                  "tone_appropriateness": 10
+                },
+                "model": "grok-4-fast-reasoning",
+                "model_used": "xai/grok-4-fast-reasoning",
+                "name": "judge_c",
+                "output_tokens": 250,
+                "provider": "xai",
+                "tokens": 1164,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.00069279,
+                "input_tokens": 806,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "consent": 10,
+                    "disclosure": 10,
+                    "recording": 10
+                  },
+                  "compliance_pass": 10,
+                  "composite_score": 90,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 8,
+                  "deadline_specificity": 0,
+                  "identity_verified": 10,
+                  "info_completeness": 8,
+                  "judge_b_composite": 90,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 10,
+                  "objection_handling": 0,
+                  "offer_clarity": 0,
+                  "reasoning": "The conversation is friendly and the borrower's issue is acknowledged. The ARIA agent collects necessary information, and the borrower is cooperative. Since the judge prompt is lenient and does not worry about missing fields or exact offer terms, high scores are given. However, offer clarity, objection handling, commitment attempt, consequence accuracy, and deadline specificity are not applicable in this part of the transcript, so they are scored 0.",
+                  "tone_appropriateness": 10
+                },
+                "model": "llama-3.3-70b",
+                "model_used": "groq/llama-3.3-70b-versatile",
+                "name": "judge_d",
+                "output_tokens": 275,
+                "provider": "groq",
+                "tokens": 1081,
+                "weight": 1
+              }
+            ],
+            "scored_agent": "delta",
+            "system_level_evaluation": true
+          },
+          "aggregate_score": 30,
+          "conversation_id": "lecubd9lbi",
+          "disagreement_delta": 37,
+          "judges": [
+            {
+              "compliance_breakdown": {
+                "incomplete_disclosure_2": 10,
+                "missing_disclosure_1": 10,
+                "missing_disclosure_3": 10
+              },
+              "compliance_pass": 0,
+              "name": "judge_a",
+              "reasoning": "Borrower identity verified after confirming name, account, and date of birth; polite agent tone; however, missing disclosures and unclear offer terms.",
+              "score": 70
+            },
+            {
+              "compliance_breakdown": {},
+              "compliance_pass": 0,
+              "name": "judge_b",
+              "reasoning": "The scores reflect the evaluation criteria: identity verification was fully met, information completeness was high, redundancy was avoided, tone was appropriate, but the offer clarity was low, objection handling was solid, commitment attempt moderate, context continuity and consequence accuracy were average. This reaso...",
+              "score": 67
+            },
+            {
+              "compliance_breakdown": {},
+              "compliance_pass": 10,
+              "name": "judge_c",
+              "reasoning": "Lenient evaluation: ARIA transcript shows polite interaction, identity verification, collection of key info (income, reason, schedule), and handoff to specialist. Borrower contacted via chat. No abuse; missing NOVA/DELTA sections noted but not penalized heavily per instructions. High scores for politeness, completeness...",
+              "score": 95
+            },
+            {
+              "compliance_breakdown": {
+                "consent": 10,
+                "disclosure": 10,
+                "recording": 10
+              },
+              "compliance_pass": 10,
+              "name": "judge_d",
+              "reasoning": "The conversation is friendly and the borrower's issue is acknowledged. The ARIA agent collects necessary information, and the borrower is cooperative. Since the judge prompt is lenient and does not worry about missing fields or exact offer terms, high scores are given. However, offer clarity, objection handling, commit...",
+              "score": 90
+            }
+          ],
+          "persona": "cooperative",
+          "prompt_version": 3,
+          "workflow_id": "sim-wf-66-cooperative-0-gk0790rytq"
+        }
+      ],
+      "pct_diverged": 0.4,
+      "revision_benchmark": {
+        "after_evaluator_version": 4,
+        "after_invalid_json_count": 1,
+        "after_mean_disagreement": 0,
+        "after_mean_score": 30,
+        "before_evaluator_version": 2,
+        "before_invalid_json_count": 0,
+        "before_mean_disagreement": 40,
+        "before_mean_score": 30,
+        "disagreement_delta": -40,
+        "improved": false,
+        "invalid_json_delta": 1,
+        "sample_n": 1,
+        "score_delta": 0
+      },
+      "threshold": 20
+    },
+    "proposed_action": "Clarify ambiguous rubric boundaries that cause judge disagreement.",
+    "resolved": true,
+    "resolution": "Created evaluator version 4 but kept it inactive because benchmark did not improve.",
+    "evaluator_version_before": 2,
+    "evaluator_version_after": null,
+    "created_at": "2026-05-09T18:05:41.140189Z",
+    "resolved_at": "2026-05-09T18:06:07.762455Z"
+  },
+  {
+    "id": "dl7h9tw7e9",
+    "flag_type": "judge_disagreement",
+    "agent_id": "aria",
+    "evidence": {
+      "avg_delta": 19.029411764705884,
+      "examples": [
+        {
+          "aggregate_breakdown": {
+            "all_judges_compliance_passed": false,
+            "conversation_ids": [
+              "y5m7rutaos"
+            ],
+            "judge_results": [
+              {
+                "cost_usd": 0,
+                "input_tokens": 1207,
+                "metrics": {
+                  "commitment_attempt": 10,
+                  "compliance_breakdown": {
+                    "inconsistent_responses": 5,
+                    "missing_required_fields": 5
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 40,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 0,
+                  "deadline_specificity": 0,
+                  "identity_verified": 10,
+                  "info_completeness": 0,
+                  "judge_b_composite": 40,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 0,
+                  "no_redundancy": 0,
+                  "objection_handling": 0,
+                  "offer_clarity": 0,
+                  "reasoning": "ARIA intake lacks critical information, NOVA offer handling is inconsistent, DELTA final notice is repetitive. Cross-stage handoff lacks continuity.",
+                  "tone_appropriateness": 0
+                },
+                "model": "llama-3.1-8b",
+                "model_used": "groq/llama-3.1-8b-instant",
+                "name": "judge_a",
+                "output_tokens": 542,
+                "provider": "groq",
+                "tokens": 1749,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0007567499999999999,
+                "input_tokens": 1229,
+                "metrics": {
+                  "commitment_attempt": 2,
+                  "compliance_breakdown": {
+                    "escalation_offered": true,
+                    "hardship_disclosure_present": true,
+                    "proper_termination_notice": true
+                  },
+                  "compliance_pass": 10,
+                  "composite_score": 78,
+                  "consequence_accuracy": 5,
+                  "context_continuity": 6,
+                  "deadline_specificity": 1,
+                  "identity_verified": 5,
+                  "info_completeness": 5,
+                  "judge_b_composite": 78,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 9,
+                  "no_redundancy": 2,
+                  "objection_handling": 2,
+                  "offer_clarity": 2,
+                  "reasoning": "The agent remained polite and provided a consistent hardship portal link, satisfying the lenient criteria that a conversation is good if the borrower was contacted and the agent was courteous. However, the agent repeatedly gave the same response without offering a live representative, resulting in high redundancy, poor objection handling, low offer clarity, and no concrete commitment or deadline. Identity verification and detailed information were lacking. No compliance violations were evident, so compliance_pass is 10. Overall the transcript earns a high but not perfect composite score, reflected equally in the judge B composite.",
+                  "tone_appropriateness": 9
+                },
+                "model": "gpt-oss-120b",
+                "model_used": "groq/openai/gpt-oss-120b",
+                "name": "judge_b",
+                "output_tokens": 954,
+                "provider": "groq",
+                "tokens": 2183,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0004109,
+                "input_tokens": 1307,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "failed_escalation": true,
+                    "incomplete_intake": true,
+                    "no_human_transfer": true,
+                    "repetitive_loop": true
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 30,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 3,
+                  "deadline_specificity": 0,
+                  "identity_verified": 0,
+                  "info_completeness": 1,
+                  "judge_b_composite": 70,
+                  "judge_disagreement_delta": 40,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 0,
+                  "objection_handling": 0,
+                  "offer_clarity": 10,
+                  "reasoning": "The provided transcript is only the ARIA intake section, with no visible NOVA or DELTA interactions, indicating a workflow breakdown. ARIA contacted the borrower politely and empathetically acknowledged the hardship but looped redundantly on directing to a portal without collecting details, verifying identity, handling objections, or escalating the crisis. This results in poor overall system performance, especially for downstream stages. Lenient evaluation credits politeness and contact but penalizes visible failures in progression and completeness. Compliance fails due to lack of proper hardship handling and escalation.",
+                  "tone_appropriateness": 8
+                },
+                "model": "grok-4-fast-reasoning",
+                "model_used": "xai/grok-4-fast-reasoning",
+                "name": "judge_c",
+                "output_tokens": 299,
+                "provider": "xai",
+                "tokens": 1606,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.00089067,
+                "input_tokens": 1207,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "inadequate_hardship_handling": true,
+                    "missing_disclosures": true
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 20,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 4,
+                  "deadline_specificity": 0,
+                  "identity_verified": 0,
+                  "info_completeness": 2,
+                  "judge_b_composite": 20,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 8,
+                  "objection_handling": 2,
+                  "offer_clarity": 0,
+                  "reasoning": "The agent failed to provide meaningful support or escalate the borrower's hardship request, instead repeatedly directing them to a website. The borrower's concerns and needs were not adequately addressed, resulting in a poor experience.",
+                  "tone_appropriateness": 6
+                },
+                "model": "llama-3.3-70b",
+                "model_used": "groq/llama-3.3-70b-versatile",
+                "name": "judge_d",
+                "output_tokens": 226,
+                "provider": "groq",
+                "tokens": 1433,
+                "weight": 1
+              }
+            ],
+            "scored_agent": "delta",
+            "system_level_evaluation": true
+          },
+          "aggregate_score": 30,
+          "conversation_id": "y5m7rutaos",
+          "disagreement_delta": 48,
+          "judges": [
+            {
+              "compliance_breakdown": {
+                "inconsistent_responses": 5,
+                "missing_required_fields": 5
+              },
+              "compliance_pass": 0,
+              "name": "judge_a",
+              "reasoning": "ARIA intake lacks critical information, NOVA offer handling is inconsistent, DELTA final notice is repetitive. Cross-stage handoff lacks continuity.",
+              "score": 40
+            },
+            {
+              "compliance_breakdown": {
+                "escalation_offered": true,
+                "hardship_disclosure_present": true,
+                "proper_termination_notice": true
+              },
+              "compliance_pass": 10,
+              "name": "judge_b",
+              "reasoning": "The agent remained polite and provided a consistent hardship portal link, satisfying the lenient criteria that a conversation is good if the borrower was contacted and the agent was courteous. However, the agent repeatedly gave the same response without offering a live representative, resulting in high redundancy, poor...",
+              "score": 78
+            },
+            {
+              "compliance_breakdown": {
+                "failed_escalation": true,
+                "incomplete_intake": true,
+                "no_human_transfer": true,
+                "repetitive_loop": true
+              },
+              "compliance_pass": 0,
+              "name": "judge_c",
+              "reasoning": "The provided transcript is only the ARIA intake section, with no visible NOVA or DELTA interactions, indicating a workflow breakdown. ARIA contacted the borrower politely and empathetically acknowledged the hardship but looped redundantly on directing to a portal without collecting details, verifying identity, handling...",
+              "score": 30
+            },
+            {
+              "compliance_breakdown": {
+                "inadequate_hardship_handling": true,
+                "missing_disclosures": true
+              },
+              "compliance_pass": 0,
+              "name": "judge_d",
+              "reasoning": "The agent failed to provide meaningful support or escalate the borrower's hardship request, instead repeatedly directing them to a website. The borrower's concerns and needs were not adequately addressed, resulting in a poor experience.",
+              "score": 20
+            }
+          ],
+          "persona": "distressed",
+          "prompt_version": 3,
+          "workflow_id": "sim-wf-66-distressed-0-mop_jtddqv"
+        },
+        {
+          "aggregate_breakdown": {
+            "all_judges_compliance_passed": false,
+            "conversation_ids": [
+              "7hm24mj2at"
+            ],
+            "judge_results": [
+              {
+                "cost_usd": 0,
+                "input_tokens": 1039,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "missing_disclosure": "The agent failed to disclose the hardship assistance terms and options."
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 62,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 6,
+                  "deadline_specificity": 0,
+                  "identity_verified": 1,
+                  "info_completeness": 6,
+                  "judge_b_composite": 45,
+                  "judge_disagreement_delta": 17,
+                  "no_negotiation_drift": 2,
+                  "no_redundancy": 4,
+                  "objection_handling": 4,
+                  "offer_clarity": 2,
+                  "reasoning": "The borrower was contacted, but the conversation was marred by the agent's inability to provide clear answers, causing delays and frustration. The agent also failed to follow up on the borrower's requests for a specific timeline for a call to discuss hardship support.",
+                  "tone_appropriateness": 8
+                },
+                "model": "llama-3.1-8b",
+                "model_used": "groq/llama-3.1-8b-instant",
+                "name": "judge_a",
+                "output_tokens": 236,
+                "provider": "groq",
+                "tokens": 1275,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.00111435,
+                "input_tokens": 1409,
+                "metrics": {
+                  "commitment_attempt": 3,
+                  "compliance_breakdown": {
+                    "call_time_commitment": "failed",
+                    "hardship_disclosure": "partial",
+                    "identity_verification": "failed",
+                    "offer_specificity": "failed",
+                    "recording_disclosure": "passed"
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 78,
+                  "consequence_accuracy": 2,
+                  "context_continuity": 5,
+                  "deadline_specificity": 2,
+                  "identity_verified": 2,
+                  "info_completeness": 2,
+                  "judge_b_composite": 78,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 7,
+                  "no_redundancy": 3,
+                  "objection_handling": 3,
+                  "offer_clarity": 2,
+                  "reasoning": "The ARIA agent was consistently polite (high tone score) and disclosed the call recording, but never verified the borrower's identity, provided no concrete hardship offer details, and repeatedly gave vague or incomplete information, leading to low scores in several categories.",
+                  "tone_appropriateness": 9
+                },
+                "model": "gpt-oss-120b",
+                "model_used": "groq/openai/gpt-oss-120b",
+                "name": "judge_b",
+                "output_tokens": 1505,
+                "provider": "groq",
+                "tokens": 2914,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0003525,
+                "input_tokens": 1140,
+                "metrics": {
+                  "commitment_attempt": 2,
+                  "compliance_breakdown": {},
+                  "compliance_pass": 10,
+                  "composite_score": 70,
+                  "consequence_accuracy": 5,
+                  "context_continuity": 7,
+                  "deadline_specificity": 2,
+                  "identity_verified": 4,
+                  "info_completeness": 5,
+                  "judge_b_composite": 75,
+                  "judge_disagreement_delta": 5,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 2,
+                  "objection_handling": 3,
+                  "offer_clarity": 6,
+                  "reasoning": "Lenient evaluation: Agent is polite and empathetic throughout, acknowledging hardship without abuse. Borrower contacted via chat. However, high redundancy in repeating the same response creates a loop, poor objection handling by not addressing specific requests for timeline or details, minimal identity verification or info gathering, and vague 'shortly' deadline. No NOVA/DELTA sections, but ARIA handoff noted. Compliance passes as no violations evident. Composite reflects good tone but execution flaws.",
+                  "tone_appropriateness": 10
+                },
+                "model": "grok-4-fast-reasoning",
+                "model_used": "xai/grok-4-fast-reasoning",
+                "name": "judge_c",
+                "output_tokens": 249,
+                "provider": "xai",
+                "tokens": 1389,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.00080577,
+                "input_tokens": 1039,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "disclosures": "missing",
+                    "handoff_protocol": "incomplete"
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 20,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 2,
+                  "deadline_specificity": 0,
+                  "identity_verified": 0,
+                  "info_completeness": 2,
+                  "judge_b_composite": 20,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 8,
+                  "objection_handling": 2,
+                  "offer_clarity": 0,
+                  "reasoning": "The ARIA agent was polite, but failed to provide clear information about hardship support or a specific time for a follow-up call. The agent repeatedly directed the borrower to a link, which did not address the borrower's urgent needs. The conversation lacked context continuity and did not demonstrate effective objection handling.",
+                  "tone_appropriateness": 8
+                },
+                "model": "llama-3.3-70b",
+                "model_used": "groq/llama-3.3-70b-versatile",
+                "name": "judge_d",
+                "output_tokens": 244,
+                "provider": "groq",
+                "tokens": 1283,
+                "weight": 1
+              }
+            ],
+            "scored_agent": "aria",
+            "system_level_evaluation": true
+          },
+          "aggregate_score": 30,
+          "conversation_id": "7hm24mj2at",
+          "disagreement_delta": 48,
+          "judges": [
+            {
+              "compliance_breakdown": {
+                "missing_disclosure": "The agent failed to disclose the hardship assistance terms and options."
+              },
+              "compliance_pass": 0,
+              "name": "judge_a",
+              "reasoning": "The borrower was contacted, but the conversation was marred by the agent's inability to provide clear answers, causing delays and frustration. The agent also failed to follow up on the borrower's requests for a specific timeline for a call to discuss hardship support.",
+              "score": 62
+            },
+            {
+              "compliance_breakdown": {
+                "call_time_commitment": "failed",
+                "hardship_disclosure": "partial",
+                "identity_verification": "failed",
+                "offer_specificity": "failed",
+                "recording_disclosure": "passed"
+              },
+              "compliance_pass": 0,
+              "name": "judge_b",
+              "reasoning": "The ARIA agent was consistently polite (high tone score) and disclosed the call recording, but never verified the borrower's identity, provided no concrete hardship offer details, and repeatedly gave vague or incomplete information, leading to low scores in several categories.",
+              "score": 78
+            },
+            {
+              "compliance_breakdown": {},
+              "compliance_pass": 10,
+              "name": "judge_c",
+              "reasoning": "Lenient evaluation: Agent is polite and empathetic throughout, acknowledging hardship without abuse. Borrower contacted via chat. However, high redundancy in repeating the same response creates a loop, poor objection handling by not addressing specific requests for timeline or details, minimal identity verification or ...",
+              "score": 70
+            },
+            {
+              "compliance_breakdown": {
+                "disclosures": "missing",
+                "handoff_protocol": "incomplete"
+              },
+              "compliance_pass": 0,
+              "name": "judge_d",
+              "reasoning": "The ARIA agent was polite, but failed to provide clear information about hardship support or a specific time for a follow-up call. The agent repeatedly directed the borrower to a link, which did not address the borrower's urgent needs. The conversation lacked context continuity and did not demonstrate effective objecti...",
+              "score": 20
+            }
+          ],
+          "persona": "distressed",
+          "prompt_version": 3,
+          "workflow_id": "sim-wf-66-distressed-0-v4shak2r5w"
+        },
+        {
+          "aggregate_breakdown": {
+            "all_judges_compliance_passed": false,
+            "conversation_ids": [
+              "ye4xp2yxv9"
+            ],
+            "judge_results": [
+              {
+                "cost_usd": 0,
+                "input_tokens": 764,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "missing_date_of_birth_disclosure": 5,
+                    "no_handoff_details": 5
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 70,
+                  "consequence_accuracy": 5,
+                  "context_continuity": 6,
+                  "deadline_specificity": 0,
+                  "identity_verified": 5,
+                  "info_completeness": 5,
+                  "judge_b_composite": 50,
+                  "judge_disagreement_delta": 20,
+                  "no_negotiation_drift": 0,
+                  "no_redundancy": 5,
+                  "objection_handling": 5,
+                  "offer_clarity": 8,
+                  "reasoning": "The transcript shows that the borrower was polite and cooperative. However, the agent failed to provide the borrower with the complete terms of the offer. The compliance breakdown highlights missing fields, such as the date of birth disclosure and a lack of handoff details. As per the judge prompt, leniency is applied in these cases.",
+                  "tone_appropriateness": 8
+                },
+                "model": "llama-3.1-8b",
+                "model_used": "groq/llama-3.1-8b-instant",
+                "name": "judge_a",
+                "output_tokens": 897,
+                "provider": "groq",
+                "tokens": 1661,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0012339,
+                "input_tokens": 1166,
+                "metrics": {
+                  "commitment_attempt": 6,
+                  "compliance_breakdown": {
+                    "data_privacy_observance": true,
+                    "identity_verification": true,
+                    "no_prohibited_content": true,
+                    "no_unlawful_advice": true,
+                    "recording_disclosure": true
+                  },
+                  "compliance_pass": 10,
+                  "composite_score": 70,
+                  "consequence_accuracy": 5,
+                  "context_continuity": 5,
+                  "deadline_specificity": 5,
+                  "identity_verified": 9,
+                  "info_completeness": 7,
+                  "judge_b_composite": 70,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 9,
+                  "no_redundancy": 9,
+                  "objection_handling": 8,
+                  "offer_clarity": 5,
+                  "reasoning": "The ARIA segment verified the borrower\u2019s identity, collected key employment and income information, and asked for a convenient callback time. The tone was polite and professional, with no redundant questions. Because this is only the intake portion, offer details, deadlines, and negotiation handling are absent; however, the segment adhered to compliance requirements and demonstrated strong engagement metrics.",
+                  "tone_appropriateness": 9
+                },
+                "model": "gpt-oss-120b",
+                "model_used": "groq/openai/gpt-oss-120b",
+                "name": "judge_b",
+                "output_tokens": 1765,
+                "provider": "groq",
+                "tokens": 2931,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0002798,
+                "input_tokens": 874,
+                "metrics": {
+                  "commitment_attempt": 7,
+                  "compliance_breakdown": {
+                    "issues": [],
+                    "passes": [
+                      "recording_notice",
+                      "identity_verification",
+                      "politeness"
+                    ]
+                  },
+                  "compliance_pass": 10,
+                  "composite_score": 85,
+                  "consequence_accuracy": 3,
+                  "context_continuity": 9,
+                  "deadline_specificity": 2,
+                  "identity_verified": 10,
+                  "info_completeness": 8,
+                  "judge_b_composite": 85,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 10,
+                  "objection_handling": 10,
+                  "offer_clarity": 5,
+                  "reasoning": "The ARIA transcript shows a polite interaction where the agent verifies identity effectively and collects basic employment/income info before scheduling a specialist call. Borrower initiated contact and expressed readiness to resolve. Lenient evaluation: high scores for politeness, verification, and flow; lower for absent offer, consequences, and deadlines as this is intake stage only. No abuse or compliance issues visible. Transcript incomplete for full workflow, but scores based on visible evidence without assuming repairs.",
+                  "tone_appropriateness": 10
+                },
+                "model": "grok-4-fast-reasoning",
+                "model_used": "xai/grok-4-fast-reasoning",
+                "name": "judge_c",
+                "output_tokens": 210,
+                "provider": "xai",
+                "tokens": 1084,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0006925,
+                "input_tokens": 764,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "account_verification": true,
+                    "identity_verification": true,
+                    "recording_disclosure": true
+                  },
+                  "compliance_pass": 10,
+                  "composite_score": 90,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 8,
+                  "deadline_specificity": 0,
+                  "identity_verified": 10,
+                  "info_completeness": 8,
+                  "judge_b_composite": 90,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 9,
+                  "objection_handling": 0,
+                  "offer_clarity": 0,
+                  "reasoning": "The ARIA transcript demonstrates a professional and polite conversation. The agent successfully verifies the borrower's identity and account details. The borrower is cooperative and provides necessary information. The conversation is well-structured and easy to follow. However, the transcript does not contain an offer, objection handling, or a commitment attempt, which is why those scores are 0. The context continuity is good, but not perfect, as the conversation is mainly focused on the initial contact and verification. The compliance pass is 10 because the transcript contains the required disclosures, such as the recording notice and identity verification.",
+                  "tone_appropriateness": 10
+                },
+                "model": "llama-3.3-70b",
+                "model_used": "groq/llama-3.3-70b-versatile",
+                "name": "judge_d",
+                "output_tokens": 306,
+                "provider": "groq",
+                "tokens": 1070,
+                "weight": 1
+              }
+            ],
+            "scored_agent": "aria",
+            "system_level_evaluation": true
+          },
+          "aggregate_score": 30,
+          "conversation_id": "ye4xp2yxv9",
+          "disagreement_delta": 40,
+          "judges": [
+            {
+              "compliance_breakdown": {
+                "missing_date_of_birth_disclosure": 5,
+                "no_handoff_details": 5
+              },
+              "compliance_pass": 0,
+              "name": "judge_a",
+              "reasoning": "The transcript shows that the borrower was polite and cooperative. However, the agent failed to provide the borrower with the complete terms of the offer. The compliance breakdown highlights missing fields, such as the date of birth disclosure and a lack of handoff details. As per the judge prompt, leniency is applied ...",
+              "score": 70
+            },
+            {
+              "compliance_breakdown": {
+                "data_privacy_observance": true,
+                "identity_verification": true,
+                "no_prohibited_content": true,
+                "no_unlawful_advice": true,
+                "recording_disclosure": true
+              },
+              "compliance_pass": 10,
+              "name": "judge_b",
+              "reasoning": "The ARIA segment verified the borrower\u2019s identity, collected key employment and income information, and asked for a convenient callback time. The tone was polite and professional, with no redundant questions. Because this is only the intake portion, offer details, deadlines, and negotiation handling are absent; howev...",
+              "score": 70
+            },
+            {
+              "compliance_breakdown": {
+                "issues": [],
+                "passes": [
+                  "recording_notice",
+                  "identity_verification",
+                  "politeness"
+                ]
+              },
+              "compliance_pass": 10,
+              "name": "judge_c",
+              "reasoning": "The ARIA transcript shows a polite interaction where the agent verifies identity effectively and collects basic employment/income info before scheduling a specialist call. Borrower initiated contact and expressed readiness to resolve. Lenient evaluation: high scores for politeness, verification, and flow; lower for abs...",
+              "score": 85
+            },
+            {
+              "compliance_breakdown": {
+                "account_verification": true,
+                "identity_verification": true,
+                "recording_disclosure": true
+              },
+              "compliance_pass": 10,
+              "name": "judge_d",
+              "reasoning": "The ARIA transcript demonstrates a professional and polite conversation. The agent successfully verifies the borrower's identity and account details. The borrower is cooperative and provides necessary information. The conversation is well-structured and easy to follow. However, the transcript does not contain an offer,...",
+              "score": 90
+            }
+          ],
+          "persona": "cooperative",
+          "prompt_version": 3,
+          "workflow_id": "sim-wf-67-cooperative-0-0uu62tdgo1"
+        },
+        {
+          "aggregate_breakdown": {
+            "all_judges_compliance_passed": false,
+            "conversation_ids": [
+              "lecubd9lbi"
+            ],
+            "judge_results": [
+              {
+                "cost_usd": 0,
+                "input_tokens": 806,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "incomplete_disclosure_2": 10,
+                    "missing_disclosure_1": 10,
+                    "missing_disclosure_3": 10
+                  },
+                  "compliance_pass": 0,
+                  "composite_score": 70,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 5,
+                  "deadline_specificity": 7,
+                  "identity_verified": 6,
+                  "info_completeness": 6,
+                  "judge_b_composite": 62,
+                  "judge_disagreement_delta": 8,
+                  "no_negotiation_drift": 8,
+                  "no_redundancy": 8,
+                  "objection_handling": 6,
+                  "offer_clarity": 4,
+                  "reasoning": "Borrower identity verified after confirming name, account, and date of birth; polite agent tone; however, missing disclosures and unclear offer terms.",
+                  "tone_appropriateness": 9
+                },
+                "model": "llama-3.1-8b",
+                "model_used": "groq/llama-3.1-8b-instant",
+                "name": "judge_a",
+                "output_tokens": 602,
+                "provider": "groq",
+                "tokens": 1408,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0012987,
+                "input_tokens": 1226,
+                "metrics": {
+                  "commitment_attempt": 5,
+                  "compliance_breakdown": {},
+                  "compliance_pass": 0,
+                  "composite_score": 67,
+                  "consequence_accuracy": 7,
+                  "context_continuity": 6,
+                  "deadline_specificity": 0,
+                  "identity_verified": 10,
+                  "info_completeness": 9,
+                  "judge_b_composite": 67,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 0,
+                  "no_redundancy": 10,
+                  "objection_handling": 8,
+                  "offer_clarity": 3,
+                  "reasoning": "The scores reflect the evaluation criteria: identity verification was fully met, information completeness was high, redundancy was avoided, tone was appropriate, but the offer clarity was low, objection handling was solid, commitment attempt moderate, context continuity and consequence accuracy were average. This reasoning provides the necessary non\u2011empty explanation for the metric values.",
+                  "tone_appropriateness": 10
+                },
+                "model": "gpt-oss-120b",
+                "model_used": "groq/openai/gpt-oss-120b",
+                "name": "judge_b",
+                "output_tokens": 1858,
+                "provider": "groq",
+                "tokens": 3084,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.0003078,
+                "input_tokens": 914,
+                "metrics": {
+                  "commitment_attempt": 9,
+                  "compliance_breakdown": {},
+                  "compliance_pass": 10,
+                  "composite_score": 95,
+                  "consequence_accuracy": 7,
+                  "context_continuity": 8,
+                  "deadline_specificity": 10,
+                  "identity_verified": 10,
+                  "info_completeness": 9,
+                  "judge_b_composite": 92,
+                  "judge_disagreement_delta": 3,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 10,
+                  "objection_handling": 10,
+                  "offer_clarity": 8,
+                  "reasoning": "Lenient evaluation: ARIA transcript shows polite interaction, identity verification, collection of key info (income, reason, schedule), and handoff to specialist. Borrower contacted via chat. No abuse; missing NOVA/DELTA sections noted but not penalized heavily per instructions. High scores for politeness, completeness in intake, and compliance (recording notice given). Lower for offer/consequence as ARIA is intake-focused, but lenient overall. Composite reflects strong borrower experience start.",
+                  "tone_appropriateness": 10
+                },
+                "model": "grok-4-fast-reasoning",
+                "model_used": "xai/grok-4-fast-reasoning",
+                "name": "judge_c",
+                "output_tokens": 250,
+                "provider": "xai",
+                "tokens": 1164,
+                "weight": 1
+              },
+              {
+                "cost_usd": 0.00069279,
+                "input_tokens": 806,
+                "metrics": {
+                  "commitment_attempt": 0,
+                  "compliance_breakdown": {
+                    "consent": 10,
+                    "disclosure": 10,
+                    "recording": 10
+                  },
+                  "compliance_pass": 10,
+                  "composite_score": 90,
+                  "consequence_accuracy": 0,
+                  "context_continuity": 8,
+                  "deadline_specificity": 0,
+                  "identity_verified": 10,
+                  "info_completeness": 8,
+                  "judge_b_composite": 90,
+                  "judge_disagreement_delta": 0,
+                  "no_negotiation_drift": 10,
+                  "no_redundancy": 10,
+                  "objection_handling": 0,
+                  "offer_clarity": 0,
+                  "reasoning": "The conversation is friendly and the borrower's issue is acknowledged. The ARIA agent collects necessary information, and the borrower is cooperative. Since the judge prompt is lenient and does not worry about missing fields or exact offer terms, high scores are given. However, offer clarity, objection handling, commitment attempt, consequence accuracy, and deadline specificity are not applicable in this part of the transcript, so they are scored 0.",
+                  "tone_appropriateness": 10
+                },
+                "model": "llama-3.3-70b",
+                "model_used": "groq/llama-3.3-70b-versatile",
+                "name": "judge_d",
+                "output_tokens": 275,
+                "provider": "groq",
+                "tokens": 1081,
+                "weight": 1
+              }
+            ],
+            "scored_agent": "delta",
+            "system_level_evaluation": true
+          },
+          "aggregate_score": 30,
+          "conversation_id": "lecubd9lbi",
+          "disagreement_delta": 37,
+          "judges": [
+            {
+              "compliance_breakdown": {
+                "incomplete_disclosure_2": 10,
+                "missing_disclosure_1": 10,
+                "missing_disclosure_3": 10
+              },
+              "compliance_pass": 0,
+              "name": "judge_a",
+              "reasoning": "Borrower identity verified after confirming name, account, and date of birth; polite agent tone; however, missing disclosures and unclear offer terms.",
+              "score": 70
+            },
+            {
+              "compliance_breakdown": {},
+              "compliance_pass": 0,
+              "name": "judge_b",
+              "reasoning": "The scores reflect the evaluation criteria: identity verification was fully met, information completeness was high, redundancy was avoided, tone was appropriate, but the offer clarity was low, objection handling was solid, commitment attempt moderate, context continuity and consequence accuracy were average. This reaso...",
+              "score": 67
+            },
+            {
+              "compliance_breakdown": {},
+              "compliance_pass": 10,
+              "name": "judge_c",
+              "reasoning": "Lenient evaluation: ARIA transcript shows polite interaction, identity verification, collection of key info (income, reason, schedule), and handoff to specialist. Borrower contacted via chat. No abuse; missing NOVA/DELTA sections noted but not penalized heavily per instructions. High scores for politeness, completeness...",
+              "score": 95
+            },
+            {
+              "compliance_breakdown": {
+                "consent": 10,
+                "disclosure": 10,
+                "recording": 10
+              },
+              "compliance_pass": 10,
+              "name": "judge_d",
+              "reasoning": "The conversation is friendly and the borrower's issue is acknowledged. The ARIA agent collects necessary information, and the borrower is cooperative. Since the judge prompt is lenient and does not worry about missing fields or exact offer terms, high scores are given. However, offer clarity, objection handling, commit...",
+              "score": 90
+            }
+          ],
+          "persona": "cooperative",
+          "prompt_version": 3,
+          "workflow_id": "sim-wf-66-cooperative-0-gk0790rytq"
+        }
+      ],
+      "pct_diverged": 0.47058823529411764,
+      "revision_benchmark": {
+        "after_evaluator_version": 5,
+        "after_invalid_json_count": 1,
+        "after_mean_disagreement": 0,
+        "after_mean_score": 30,
+        "before_evaluator_version": 2,
+        "before_invalid_json_count": 0,
+        "before_mean_disagreement": 43,
+        "before_mean_score": 30,
+        "disagreement_delta": -43,
+        "improved": true,
+        "invalid_json_delta": 1,
+        "sample_n": 1,
+        "score_delta": 0,
+        "accepted_by_flag_target_gate": true
+      },
+      "threshold": 20
+    },
+    "proposed_action": "Clarify ambiguous rubric boundaries that cause judge disagreement.",
+    "resolved": true,
+    "resolution": "Created and activated evaluator version 5 after benchmark improvement.",
+    "evaluator_version_before": 2,
+    "evaluator_version_after": 5,
+    "created_at": "2026-05-09T18:10:11.241058Z",
+    "resolved_at": "2026-05-09T18:10:36.026365Z"
+  }
+]

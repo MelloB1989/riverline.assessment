@@ -1,0 +1,13 @@
+{
+  "agents": [
+    "aria"
+  ],
+  "batch_size": 1,
+  "completed_at": "2026-05-09T18:07:21.166056712Z",
+  "duration_sec": 249.970167284,
+  "personas": [
+    "cooperative"
+  ],
+  "seed": 67,
+  "started_at": "2026-05-09T18:03:11.19588963Z"
+}
