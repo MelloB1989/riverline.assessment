@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,8 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 		return results, resp, err
 	}
 	var toolErr error
+	handoffAttempts := 0
+	handoffRecoverableFailures := 0
 	createHandoffTool := ai.NewGoFunctionTool(
 		agents.ToolCreateAriaHandoff,
 		"Create and persist the ARIA assessment handoff after all required intake information and preferred callback timing are collected, or after stop-contact/hardship terminal handling.",
@@ -83,27 +86,48 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 			SetString("reason", "Brief reason ARIA is ready to hand off.").
 			SetStringEnum("outcome", "Handoff outcome.", []string{"ready_for_nova", "stop_contact", "hardship"}).
 			SetString("preferred_nova_call_at", "Borrower-confirmed preferred resolution-call time as an ISO-8601 timestamp with timezone. Required when outcome is ready_for_nova. Use not_applicable only for stop_contact or hardship terminal outcomes.").
+			SetBool("identity_verified", "Whether ARIA verified the borrower identity using borrower-provided details. Required when outcome is ready_for_nova.").
+			SetString("employment_status", "Borrower's stated employment status. Required when outcome is ready_for_nova.").
+			SetString("monthly_income_range", "Borrower's stated monthly income or income range. Required when outcome is ready_for_nova.").
+			SetNumber("monthly_obligations", "Borrower's stated total monthly obligations. Required when outcome is ready_for_nova.").
+			SetString("default_reason", "Borrower's stated reason for missed/defaulted payment. Required when outcome is ready_for_nova.").
+			SetStringEnum("borrower_emotional_state", "Observed borrower persona/emotional state.", []string{"cooperative", "combative", "evasive", "distressed", "confused"}).
+			SetBool("hardship_mentioned", "Whether the borrower mentioned hardship or crisis.").
+			SetBool("stop_contact_flagged", "Whether the borrower requested no further contact.").
+			SetString("aria_summary", "Brief assessment summary for audit/history.").
+			SetString("context_for_nova", "Compact NOVA context summary. Do not include repayment offers.").
 			SetRequired("reason", "outcome", "preferred_nova_call_at"),
 		func(_ context.Context, params ai.FuncParams) (string, error) {
 			start := time.Now()
+			handoffAttempts++
 			log.Printf("[collections] aria tool start workflow=%s tool=%s param_keys=%v", wf.Id, agents.ToolCreateAriaHandoff, funcParamKeys(params))
 			if wf.CurrentStage != models.AgentAria {
 				log.Printf("[collections] aria tool skipped workflow=%s tool=%s reason=already_generated duration=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start))
 				return `{"handoff_already_generated":true}`, nil
 			}
+			if handoffAttempts > 3 || handoffRecoverableFailures >= 2 {
+				toolErr = fmt.Errorf("create_aria_handoff exceeded retry budget in one assistant turn: attempts=%d recoverable_failures=%d", handoffAttempts, handoffRecoverableFailures)
+				log.Printf("[collections] aria tool aborted workflow=%s tool=%s duration=%s err=%v", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), toolErr)
+				return "", toolErr
+			}
 			outcome, err := funcParamString(params, "outcome")
 			if err != nil {
-				toolErr = err
-				return "", err
+				handoffRecoverableFailures++
+				errText := err.Error()
+				log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
+				return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Do not call this tool with partial or legacy parameters. Continue the conversation, collect all required fields, then call create_aria_handoff with outcome, preferred_nova_call_at, identity_verified, employment_status, monthly_income_range, monthly_obligations, and default_reason."}`, errText), nil
 			}
 			preferredCallAt, err := funcParamString(params, "preferred_nova_call_at")
 			if err != nil {
-				toolErr = err
-				return "", err
+				handoffRecoverableFailures++
+				errText := err.Error()
+				log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
+				return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Ask for a specific callback time if outcome is ready_for_nova, then call this tool again with preferred_nova_call_at as an ISO-8601 timestamp with timezone. Use not_applicable only for hardship or stop_contact."}`, errText), nil
 			}
 			if outcome == "ready_for_nova" {
 				if _, err := parseBorrowerCallTime(preferredCallAt, time.Now().UTC()); err != nil {
 					errText := fmt.Sprintf("preferred_nova_call_at is required before handoff: %v", err)
+					handoffRecoverableFailures++
 					log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
 					return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Ask the borrower for a specific preferred NOVA callback time, then call this tool again with an ISO-8601 timestamp including timezone."}`, errText), nil
 				}
@@ -115,14 +139,20 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 				log.Printf("[collections] aria tool failed workflow=%s tool=%s duration=%s err=%v", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), toolErr)
 				errText := toolErr.Error()
 				toolErr = nil
-				return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Continue the conversation, collect the missing required assessment and callback timing details, then call this tool again only when the transcript is complete."}`, errText), nil
+				results.AriaHandoff = &HandoffCall[AriaHandoffResult]{
+					Result:    AriaHandoffResult{},
+					ModelUsed: client.ModelUsed(),
+				}
+				log.Printf("[collections] aria tool parser fallback workflow=%s tool=%s reason=%q", wf.Id, agents.ToolCreateAriaHandoff, errText)
 			}
+			applyAriaToolParams(&results.AriaHandoff.Result, params)
 			applyExplicitAriaToolOutcome(&results.AriaHandoff.Result, outcome)
 			if outcome == "ready_for_nova" {
 				results.AriaHandoff.Result.PreferredNovaCallAt = &preferredCallAt
 				if missing := missingAriaReadyFields(results.AriaHandoff.Result); len(missing) > 0 {
 					results.AriaHandoff = nil
 					errText := fmt.Sprintf("ARIA handoff is missing required ready_for_nova fields: %v", missing)
+					handoffRecoverableFailures++
 					log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
 					return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"missing_fields":%s,"instruction":"Ask only for the missing assessment facts, then call this tool again after the borrower answers."}`, errText, jsonStringArray(missing)), nil
 				}
@@ -208,6 +238,40 @@ func applyExplicitAriaToolOutcome(result *AriaHandoffResult, outcome string) {
 	}
 }
 
+func applyAriaToolParams(result *AriaHandoffResult, params ai.FuncParams) {
+	if value, ok := optionalFuncParamBool(params, "identity_verified"); ok {
+		result.IdentityVerified = &value
+	}
+	if value, ok := optionalFuncParamString(params, "employment_status"); ok {
+		result.EmploymentStatus = &value
+	}
+	if value, ok := optionalFuncParamString(params, "monthly_income_range"); ok {
+		result.MonthlyIncomeRange = &value
+	}
+	if value, ok := optionalFuncParamNumber(params, "monthly_obligations"); ok {
+		result.MonthlyObligations = &value
+	}
+	if value, ok := optionalFuncParamString(params, "default_reason"); ok {
+		result.DefaultReason = &value
+	}
+	if value, ok := optionalFuncParamString(params, "borrower_emotional_state"); ok {
+		persona := models.Persona(value)
+		result.BorrowerEmotionalState = &persona
+	}
+	if value, ok := optionalFuncParamBool(params, "hardship_mentioned"); ok {
+		result.HardshipMentioned = &value
+	}
+	if value, ok := optionalFuncParamBool(params, "stop_contact_flagged"); ok {
+		result.StopContactFlagged = &value
+	}
+	if value, ok := optionalFuncParamString(params, "aria_summary"); ok {
+		result.AriaSummary = value
+	}
+	if value, ok := optionalFuncParamString(params, "context_for_nova"); ok {
+		result.ContextForNova = value
+	}
+}
+
 func funcParamString(params ai.FuncParams, key string) (string, error) {
 	value, ok := params[key]
 	if !ok {
@@ -218,6 +282,66 @@ func funcParamString(params ai.FuncParams, key string) (string, error) {
 		return "", errors.New("invalid tool parameter " + key)
 	}
 	return str, nil
+}
+
+func optionalFuncParamString(params ai.FuncParams, key string) (string, bool) {
+	value, ok := params[key]
+	if !ok {
+		return "", false
+	}
+	str, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	str = strings.TrimSpace(str)
+	if str == "" || strings.EqualFold(str, "not_applicable") || strings.EqualFold(str, "null") {
+		return "", false
+	}
+	return str, true
+}
+
+func optionalFuncParamBool(params ai.FuncParams, key string) (bool, bool) {
+	value, ok := params[key]
+	if !ok {
+		return false, false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "yes":
+			return true, true
+		case "false", "no":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func optionalFuncParamNumber(params ai.FuncParams, key string) (float64, bool) {
+	value, ok := params[key]
+	if !ok {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		cleaned := strings.NewReplacer("$", "", ",", "", "USD", "", "usd", "").Replace(strings.TrimSpace(typed))
+		parsed, err := strconv.ParseFloat(cleaned, 64)
+		return parsed, err == nil
+	}
+	return 0, false
 }
 
 func funcParamKeys(params ai.FuncParams) []string {

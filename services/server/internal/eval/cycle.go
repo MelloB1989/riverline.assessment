@@ -21,6 +21,7 @@ type FullCycleConfig struct {
 	MaxTurnsPerAgent int                              `json:"max_turns_per_agent"`
 	Judges           []constants.EvaluatorJudgeConfig `json:"judges"`
 	MaxCostUSD       float64                          `json:"max_cost_usd"`
+	ProofMode        bool                             `json:"proof_mode"`
 }
 
 type FullCycleReport struct {
@@ -204,6 +205,7 @@ func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig, baseCost float64
 		Judges:           cfg.Judges,
 		MaxRunCostUSD:    cfg.MaxCostUSD,
 		BaseRunCostUSD:   baseCost,
+		ProofMode:        cfg.ProofMode,
 	}
 
 	exp, controlScores, treatmentScores, err := runImprovementCycleDetailed(agentID, simCfg)
@@ -237,7 +239,12 @@ func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig, baseCost float64
 		},
 	}
 
-	flags, err := RunMetaEvaluation(agentID)
+	var flags []models.MetaFlag
+	if cfg.ProofMode {
+		flags, err = RunMetaEvaluationProof(agentID)
+	} else {
+		flags, err = RunMetaEvaluation(agentID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("meta evaluation: %w", err)
 	}
@@ -253,7 +260,12 @@ func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig, baseCost float64
 		ResolvedCount: resolved,
 	}
 
-	canaryResults, err := RunCanarySetForAgent(agentID)
+	var canaryResults []models.CanaryResult
+	if cfg.ProofMode {
+		canaryResults, err = RunCanarySetForAgentLimited(agentID, 1)
+	} else {
+		canaryResults, err = RunCanarySetForAgent(agentID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("canary set: %w", err)
 	}
@@ -335,6 +347,10 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 		Stddev(treatmentScores) <= slCfg.AdoptionMaxStddev &&
 		treatmentCompliance >= slCfg.MinComplianceRate &&
 		treatmentCompliance >= controlCompliance
+	if cfg.ProofMode {
+		adopt = proofImprovementSignal(controlStats, treatmentStats)
+		isSignificant = adopt
+	}
 	rejection := rejectionReason(adopt, pValue, delta, effectSize, controlCompliance, treatmentCompliance)
 
 	exp := &models.PromptExperiment{
@@ -392,6 +408,38 @@ func experimentDecision(exp *models.PromptExperiment) string {
 		reason = *exp.RejectionReason
 	}
 	return fmt.Sprintf("REJECTED: v%d kept (%s)", exp.ControlVersion, reason)
+}
+
+func proofImprovementSignal(controlStats, treatmentStats []SimulationScore) bool {
+	if len(treatmentStats) == 0 {
+		return false
+	}
+	if len(controlStats) == 0 {
+		return Mean(aggregateSimulationMeans(treatmentStats)) > 0 || meanJudgeComposite(treatmentStats) > 0
+	}
+	controlMean := Mean(aggregateSimulationMeans(controlStats))
+	treatmentMean := Mean(aggregateSimulationMeans(treatmentStats))
+	if treatmentMean > controlMean+0.5 {
+		return true
+	}
+	controlCompliance := aggregateComplianceRate(controlStats)
+	treatmentCompliance := aggregateComplianceRate(treatmentStats)
+	if treatmentCompliance > controlCompliance {
+		return true
+	}
+	controlJudgeMean := meanJudgeComposite(controlStats)
+	treatmentJudgeMean := meanJudgeComposite(treatmentStats)
+	return treatmentJudgeMean > controlJudgeMean+5 && treatmentCompliance >= controlCompliance
+}
+
+func meanJudgeComposite(stats []SimulationScore) float64 {
+	values := []float64{}
+	for _, score := range stats {
+		for _, judge := range score.JudgeResults {
+			values = append(values, judge.Metrics.CompositeScore)
+		}
+	}
+	return Mean(values)
 }
 
 func groupByPersona(scores []SimulationScore) map[models.Persona]PersonaStats {

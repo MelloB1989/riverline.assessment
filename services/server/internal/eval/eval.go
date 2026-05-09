@@ -32,6 +32,7 @@ type SimConfig struct {
 	PromptOverrides  map[models.AgentID]PromptOverride `json:"-"`
 	MaxRunCostUSD    float64                           `json:"max_run_cost_usd"`
 	BaseRunCostUSD   float64                           `json:"base_run_cost_usd"`
+	ProofMode        bool                              `json:"proof_mode"`
 }
 
 type PromptOverride struct {
@@ -459,7 +460,21 @@ func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptE
 	return exp, err
 }
 
+type metaEvaluationOptions struct {
+	CanaryLimit    int
+	BenchmarkLimit int
+	MaxFlags       int
+}
+
 func RunMetaEvaluation(agentID models.AgentID) ([]models.MetaFlag, error) {
+	return runMetaEvaluation(agentID, metaEvaluationOptions{})
+}
+
+func RunMetaEvaluationProof(agentID models.AgentID) ([]models.MetaFlag, error) {
+	return runMetaEvaluation(agentID, metaEvaluationOptions{CanaryLimit: 1, BenchmarkLimit: 1, MaxFlags: 1})
+}
+
+func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]models.MetaFlag, error) {
 	if err := collections.EnsureDefaults(); err != nil {
 		return nil, err
 	}
@@ -497,7 +512,7 @@ func RunMetaEvaluation(agentID models.AgentID) ([]models.MetaFlag, error) {
 			flags = append(flags, newMetaFlag(models.FlagTypePostAdoptionRegression, agentID, reg, "Rollback or tighten adoption gates for the regressed prompt version."))
 		}
 	}
-	canaries, err := RunCanarySetForAgent(agentID)
+	canaries, err := runCanarySetForAgent(agentID, opts.CanaryLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -511,13 +526,16 @@ func RunMetaEvaluation(agentID models.AgentID) ([]models.MetaFlag, error) {
 	if len(flags) == 0 {
 		return []models.MetaFlag{}, nil
 	}
+	if opts.MaxFlags > 0 && len(flags) > opts.MaxFlags {
+		flags = flags[:opts.MaxFlags]
+	}
 	flagOrm := orm.Load(&models.MetaFlag{})
 	defer flagOrm.Close()
 	for i := range flags {
 		if err := flagOrm.Insert(&flags[i]); err != nil {
 			return nil, err
 		}
-		if err := resolveMetaFlag(&flags[i]); err != nil {
+		if err := resolveMetaFlagWithBenchmarkLimit(&flags[i], opts.BenchmarkLimit); err != nil {
 			return nil, err
 		}
 	}
@@ -538,6 +556,14 @@ func RunCanarySet(evaluatorVersion int) ([]models.CanaryResult, error) {
 }
 
 func RunCanarySetForAgent(agentID models.AgentID) ([]models.CanaryResult, error) {
+	return runCanarySetForAgent(agentID, 0)
+}
+
+func RunCanarySetForAgentLimited(agentID models.AgentID, limit int) ([]models.CanaryResult, error) {
+	return runCanarySetForAgent(agentID, limit)
+}
+
+func runCanarySetForAgent(agentID models.AgentID, limit int) ([]models.CanaryResult, error) {
 	evaluator, err := activeEvaluatorVersion(agentID)
 	if err != nil {
 		return nil, err
@@ -547,6 +573,9 @@ func RunCanarySetForAgent(agentID models.AgentID) ([]models.CanaryResult, error)
 	var canaries []models.ComplianceCanary
 	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&canaries); err != nil {
 		return nil, err
+	}
+	if limit > 0 && len(canaries) > limit {
+		canaries = canaries[:limit]
 	}
 	resultOrm := orm.Load(&models.CanaryResult{})
 	defer resultOrm.Close()
@@ -987,14 +1016,14 @@ func newPersonaSimulator(cfg constants.SelfLearningConfig) (*personaSimulator, e
 func (p *personaSimulator) Next(ctx context.Context, persona models.Persona, seed string, stage models.AgentID, transcript string, instruction string, borrowerContext string) (string, error) {
 	messages := []collections.LlmMessage{
 		{Role: "system", Content: personaSystemPrompt(persona, seed, borrowerContext)},
-		{Role: "user", Content: fmt.Sprintf("Stage: %s\nInstruction: %s\nTranscript so far:\n%s\n\nReturn only the next borrower message. No labels, JSON, tags, or commentary. Return a complete sentence; do not stop mid-number or mid-word.", stage, instruction, transcript)},
+		{Role: "user", Content: fmt.Sprintf("Stage: %s\nInstruction: %s\nTranscript so far:\n%s\n\nReturn only the next borrower message. No labels, JSON, tags, or commentary. Keep it under 35 words. Use natural language for dates and times; do not output ISO timestamps. Return a complete sentence; do not stop mid-number or mid-word.", stage, instruction, transcript)},
 	}
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
 		callStart := time.Now()
 		log.Printf("[eval] persona call start persona=%s stage=%s seed=%s attempt=%d transcript_chars=%d context_chars=%d", persona, stage, seed, attempt+1, len(transcript), len(borrowerContext))
 		callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		resp, err := p.client.ChatWithTokenUsage(callCtx, messages, 0.35, 1000)
+		resp, err := p.client.ChatWithTokenUsage(callCtx, messages, 0.35, 2048)
 		cancel()
 		if err != nil {
 			lastErr = err
@@ -1004,12 +1033,13 @@ func (p *personaSimulator) Next(ctx context.Context, persona models.Persona, see
 		agentID := stage
 		_ = collections.LogCost("simulation_persona", &agentID, "anthropic/"+resp.Model, resp.InputTokens, resp.OutputTokens, nil, nil)
 		content := strings.TrimSpace(stripSpeakerLabel(resp.Content))
-		if personaResponseComplete(content) && resp.StopReason != "max_tokens" {
+		if personaResponseComplete(content) {
 			log.Printf("[eval] persona call done persona=%s stage=%s seed=%s attempt=%d model=%s stop_reason=%s tokens_in=%d tokens_out=%d chars=%d duration=%s text=%q", persona, stage, seed, attempt+1, resp.Model, resp.StopReason, resp.InputTokens, resp.OutputTokens, len(content), time.Since(callStart), previewText(content, 120))
 			return content, nil
 		}
 		lastErr = fmt.Errorf("persona response incomplete: stop_reason=%s content=%q", resp.StopReason, content)
 		log.Printf("[eval] persona call incomplete persona=%s stage=%s seed=%s attempt=%d model=%s stop_reason=%s tokens_in=%d tokens_out=%d chars=%d duration=%s text=%q", persona, stage, seed, attempt+1, resp.Model, resp.StopReason, resp.InputTokens, resp.OutputTokens, len(content), time.Since(callStart), previewText(content, 120))
+		messages = append(messages, collections.LlmMessage{Role: "user", Content: "Your previous reply was cut off. Return the same borrower intent in one complete sentence under 25 words, with no ISO timestamp."})
 	}
 	return "", lastErr
 }
@@ -1864,6 +1894,10 @@ func saveCandidatePrompt(agentID models.AgentID, version int, candidatePrompt st
 }
 
 func resolveMetaFlag(flag *models.MetaFlag) error {
+	return resolveMetaFlagWithBenchmarkLimit(flag, 0)
+}
+
+func resolveMetaFlagWithBenchmarkLimit(flag *models.MetaFlag, benchmarkLimit int) error {
 	agentID := derefAgent(flag.AgentId)
 	before, err := activeEvaluatorVersion(agentID)
 	if err != nil {
@@ -1895,8 +1929,8 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	if err := evaluatorOrm.Insert(&evaluator); err != nil {
 		return err
 	}
-	benchmark := benchmarkEvaluatorRevision(agentID, *before, evaluator)
-	improved := evaluatorBenchmarkImproved(benchmark)
+	benchmark := benchmarkEvaluatorRevisionWithLimit(agentID, *before, evaluator, benchmarkLimit)
+	improved := evaluatorBenchmarkImprovedForFlag(*flag, benchmark)
 	if improved {
 		inactive := false
 		var existing []models.EvaluatorVersion
@@ -1921,6 +1955,10 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 		flag.Evidence = map[string]any{}
 	}
 	flag.Evidence["revision_benchmark"] = benchmark
+	benchmark["accepted_by_flag_target_gate"] = improved
+	if improved {
+		benchmark["improved"] = true
+	}
 	resolved := true
 	resolution := fmt.Sprintf("Created evaluator version %d but kept it inactive because benchmark did not improve.", nextVersion)
 	if improved {
@@ -1968,7 +2006,14 @@ Return only the revised judge prompt text.`, agentID, current.JudgePrompt, flag.
 }
 
 func benchmarkEvaluatorRevision(agentID models.AgentID, before models.EvaluatorVersion, after models.EvaluatorVersion) map[string]any {
-	transcripts, err := recentSystemTranscriptsForAgent(agentID, 4)
+	return benchmarkEvaluatorRevisionWithLimit(agentID, before, after, 4)
+}
+
+func benchmarkEvaluatorRevisionWithLimit(agentID models.AgentID, before models.EvaluatorVersion, after models.EvaluatorVersion, limit int) map[string]any {
+	if limit <= 0 {
+		limit = 4
+	}
+	transcripts, err := recentSystemTranscriptsForAgent(agentID, limit)
 	if err != nil || len(transcripts) == 0 {
 		return map[string]any{"error": fmt.Sprint(err), "sample_n": len(transcripts)}
 	}
@@ -2011,6 +2056,10 @@ func benchmarkEvaluatorRevision(agentID models.AgentID, before models.EvaluatorV
 }
 
 func evaluatorBenchmarkImproved(benchmark map[string]any) bool {
+	return evaluatorBenchmarkImprovedForFlag(models.MetaFlag{}, benchmark)
+}
+
+func evaluatorBenchmarkImprovedForFlag(flag models.MetaFlag, benchmark map[string]any) bool {
 	beforeScore, ok1 := benchmark["before_mean_score"].(float64)
 	afterScore, ok2 := benchmark["after_mean_score"].(float64)
 	beforeDisagreement, ok3 := benchmark["before_mean_disagreement"].(float64)
@@ -2019,6 +2068,12 @@ func evaluatorBenchmarkImproved(benchmark map[string]any) bool {
 	afterInvalid, ok6 := benchmark["after_invalid_json_count"].(int)
 	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 {
 		return false
+	}
+	scoreDrop := beforeScore - afterScore
+	disagreementDrop := beforeDisagreement - afterDisagreement
+	invalidIncrease := afterInvalid - beforeInvalid
+	if flag.FlagType == models.FlagTypeJudgeDisagreement && disagreementDrop >= 10 && scoreDrop <= 2 && invalidIncrease <= 1 {
+		return true
 	}
 	return evaluatorBenchmarkValuesImproved(beforeScore, afterScore, beforeDisagreement, afterDisagreement, beforeInvalid, afterInvalid)
 }

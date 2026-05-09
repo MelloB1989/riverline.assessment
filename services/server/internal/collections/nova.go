@@ -163,7 +163,7 @@ func parseBorrowerCallTime(value string, now time.Time) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, errors.New("scheduled call time is empty")
 	}
-	layoutsUTC := []string{time.RFC3339, time.RFC3339Nano, "2006-01-02 15:04:05 MST", "2006-01-02 15:04 MST"}
+	layoutsUTC := []string{time.RFC3339, time.RFC3339Nano, "2006-01-02T15:04Z07:00", "2006-01-02 15:04:05 MST", "2006-01-02 15:04 MST"}
 	for _, layout := range layoutsUTC {
 		if parsed, err := time.Parse(layout, value); err == nil {
 			return parsed.UTC(), nil

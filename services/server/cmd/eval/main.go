@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"flag"
@@ -11,11 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"riverline_server/constants"
 	"riverline_server/internal/collections"
 	rivereval "riverline_server/internal/eval"
 	"riverline_server/internal/models"
 
 	"github.com/MelloB1989/karma/v2/orm"
+	_ "github.com/lib/pq"
 )
 
 func main() {
@@ -23,12 +26,26 @@ func main() {
 	batchSize := flag.Int("batch-size", 1, "batch size per persona")
 	agent := flag.String("agent", "all", "aria, nova, delta, or all")
 	personaList := flag.String("personas", "all", "comma-separated personas or all")
+	maxTurns := flag.Int("max-turns", 6, "maximum simulated turns per agent stage")
 	maxCost := flag.Float64("max-cost", 15, "maximum incremental LLM spend in USD for this run")
 	output := flag.String("output", "./eval-artifacts", "output directory for reproducible raw JSON artifacts")
+	resetDB := flag.Bool("reset-db", false, "truncate Riverline application tables before seeding defaults")
+	lowQualitySeeds := flag.Bool("low-quality-seeds", false, "seed deliberately weak active agent/evaluator prompts for proof runs")
+	proofMode := flag.Bool("proof-mode", false, "use small-sample proof adoption gates and include proof metadata")
 	flag.Parse()
 
+	if *resetDB {
+		if err := resetDatabase(); err != nil {
+			log.Fatal(err)
+		}
+	}
 	if err := collections.EnsureDefaults(); err != nil {
 		log.Fatal(err)
+	}
+	if *lowQualitySeeds {
+		if err := rivereval.SeedLowQualityProofData(); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	agents := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
@@ -38,11 +55,13 @@ func main() {
 	personas := parsePersonas(*personaList)
 
 	cfg := rivereval.FullCycleConfig{
-		Seed:       *seed,
-		BatchSize:  *batchSize,
-		Agents:     agents,
-		Personas:   personas,
-		MaxCostUSD: *maxCost,
+		Seed:             *seed,
+		BatchSize:        *batchSize,
+		Agents:           agents,
+		Personas:         personas,
+		MaxCostUSD:       *maxCost,
+		ProofMode:        *proofMode,
+		MaxTurnsPerAgent: *maxTurns,
 	}
 
 	printHeader("RIVERLINE SELF-LEARNING EVALUATION CYCLE")
@@ -59,6 +78,31 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("\nArtifacts written to: %s\n", *output)
+}
+
+func resetDatabase() error {
+	db, err := sql.Open("postgres", constants.AppCfg.Get().DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec(`TRUNCATE TABLE
+agent_messages,
+conversation_scores,
+canary_results,
+compliance_canaries,
+meta_flags,
+evaluator_versions,
+prompt_experiments,
+prompt_versions,
+llm_cost_log,
+resolution_offers,
+agent_conversations,
+borrower_workflows,
+loans,
+users
+RESTART IDENTITY CASCADE`)
+	return err
 }
 
 func parsePersonas(value string) []models.Persona {
@@ -407,17 +451,132 @@ func writeArtifacts(output string, report *rivereval.FullCycleReport) error {
 	if err := writeTable[models.PromptVersion](filepath.Join(output, "prompt_versions.json"), &models.PromptVersion{}); err != nil {
 		return err
 	}
+	if err := writeLearningProof(filepath.Join(output, "learning_proof.json"), report); err != nil {
+		return err
+	}
 	return nil
 }
 
+func writeLearningProof(path string, report *rivereval.FullCycleReport) error {
+	metrics, err := rivereval.LoadMetrics()
+	if err != nil {
+		return err
+	}
+	metaFlags, err := loadRows[models.MetaFlag](&models.MetaFlag{})
+	if err != nil {
+		return err
+	}
+	canaryResults, err := loadRows[models.CanaryResult](&models.CanaryResult{})
+	if err != nil {
+		return err
+	}
+	evaluatorRows, err := loadRows[models.EvaluatorVersion](&models.EvaluatorVersion{})
+	if err != nil {
+		return err
+	}
+
+	agentProofs := map[models.AgentID]any{}
+	for _, ar := range report.AgentReports {
+		exp := ar.Experiment.Experiment
+		controlPrompt := promptVersionText(report.PromptHistory, ar.AgentID, exp.ControlVersion)
+		candidatePrompt := promptVersionText(report.PromptHistory, ar.AgentID, exp.CandidateVersion)
+		agentProofs[ar.AgentID] = map[string]any{
+			"control_version":              exp.ControlVersion,
+			"candidate_version":            exp.CandidateVersion,
+			"adopted":                      exp.Adopted,
+			"decision":                     ar.Experiment.Decision,
+			"control_mean":                 exp.ControlMean,
+			"treatment_mean":               exp.TreatmentMean,
+			"mean_delta":                   exp.MeanDelta,
+			"control_compliance_rate":      exp.ControlComplianceRate,
+			"treatment_compliance_rate":    exp.TreatmentComplianceRate,
+			"control_scores":               exp.ControlScores,
+			"treatment_scores":             exp.TreatmentScores,
+			"control_by_judge":             ar.Experiment.ControlByJudge,
+			"treatment_by_judge":           ar.Experiment.TreatmentByJudge,
+			"control_prompt_chars":         len(controlPrompt),
+			"candidate_prompt_chars":       len(candidatePrompt),
+			"control_prompt_excerpt":       truncate(controlPrompt, 1200),
+			"candidate_prompt_excerpt":     truncate(candidatePrompt, 1200),
+			"control_prompt_full":          controlPrompt,
+			"candidate_prompt_full":        candidatePrompt,
+			"meta_flags":                   ar.MetaEval.Flags,
+			"canaries_passed":              ar.Canaries.Passed,
+			"canaries_failed":              ar.Canaries.Failed,
+			"small_sample_proof_mode_note": "When proof_mode is true, adoption is based on small-sample directional score/compliance/judge improvement, not the production p-value gate.",
+		}
+	}
+	proof := map[string]any{
+		"repro_command":            strings.Join(os.Args, " "),
+		"proof_mode":               report.Config.ProofMode,
+		"prompt_generator":         constants.DefaultSelfLearningConfig().PromptGenerator,
+		"seed":                     report.Config.Seed,
+		"batch_size":               report.Config.BatchSize,
+		"personas":                 report.Config.Personas,
+		"agents":                   report.Config.Agents,
+		"started_at":               report.StartedAt,
+		"completed_at":             report.CompletedAt,
+		"duration_sec":             report.DurationSec,
+		"cost_breakdown":           report.CostBreakdown,
+		"metrics":                  metrics,
+		"total_scores":             metrics.TotalScores,
+		"total_cost_usd":           metrics.TotalCostUSD,
+		"agent_prompt_evolution":   agentProofs,
+		"meta_evaluator_flags":     metaFlags,
+		"canary_results":           canaryResults,
+		"evaluator_versions":       evaluatorRows,
+		"meta_evaluator_evolution": buildEvaluatorEvolution(evaluatorRows, metaFlags),
+		"prompt_versions":          report.PromptHistory,
+	}
+	return writeJSON(path, proof)
+}
+
+func buildEvaluatorEvolution(versions []models.EvaluatorVersion, flags []models.MetaFlag) map[models.AgentID]any {
+	out := map[models.AgentID]any{}
+	byAgent := map[models.AgentID][]models.EvaluatorVersion{}
+	for _, version := range versions {
+		byAgent[version.AgentId] = append(byAgent[version.AgentId], version)
+	}
+	for agentID, agentVersions := range byAgent {
+		entry := map[string]any{
+			"versions": agentVersions,
+			"flags":    []models.MetaFlag{},
+		}
+		for _, flag := range flags {
+			if flag.AgentId != nil && *flag.AgentId == agentID {
+				entry["flags"] = append(entry["flags"].([]models.MetaFlag), flag)
+			}
+		}
+		out[agentID] = entry
+	}
+	return out
+}
+
+func promptVersionText(versions []models.PromptVersion, agentID models.AgentID, version int) string {
+	for _, row := range versions {
+		if row.AgentId == agentID && row.VersionNumber == version {
+			return row.PromptText
+		}
+	}
+	return ""
+}
+
 func writeTable[T any](path string, model any) error {
+	rows, err := loadRows[T](model)
+	if err != nil {
+		return err
+	}
+	return writeJSON(path, rows)
+}
+
+func loadRows[T any](model any) ([]T, error) {
 	o := orm.Load(model)
 	defer o.Close()
 	var rows []T
 	if err := o.GetAll().Scan(&rows); err != nil {
-		return err
+		return nil, err
 	}
-	return writeJSON(path, rows)
+	return rows, nil
 }
 
 func writeConversationScoresCSV(path string) error {
