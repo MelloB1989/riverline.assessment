@@ -60,7 +60,7 @@ func EnsureUserFromAuth(userID, email, firstName, lastName, fullName string) err
 		return err
 	}
 	if len(users) == 0 {
-		user := models.User{Id: userID, FirstName: firstName, LastName: lastName, Email: email, Dob: time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC), Gender: "unspecified", Extra: map[string]any{"source": "clerk"}, CreatedAt: now, UpdatedAt: now}
+		user := models.User{Id: userID, FirstName: firstName, LastName: lastName, Email: email, Dob: time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC), Gender: "unspecified", IsAdmin: false, Extra: map[string]any{"source": "clerk"}, CreatedAt: now, UpdatedAt: now}
 		return userOrm.Insert(&user)
 	}
 	user := users[0]
@@ -616,6 +616,7 @@ type seedBorrower struct {
 	interestRate         float64
 	policyMaxDiscountPct float64
 	extra                map[string]any
+	isAdmin              bool
 }
 
 func ensureClerkTestBorrower() (string, string, error) {
@@ -639,6 +640,7 @@ func ensureClerkTestBorrower() (string, string, error) {
 			"preferred_contact": "phone",
 			"notes":             "Seeded borrower for Clerk-authenticated chat testing",
 		},
+		isAdmin: true,
 	})
 }
 
@@ -652,8 +654,15 @@ func ensureSeedBorrower(seed seedBorrower) (string, string, error) {
 	if len(users) == 0 {
 		now := time.Now().UTC()
 		phone := seed.phone
-		user := models.User{Id: seed.userID, FirstName: seed.firstName, LastName: seed.lastName, Email: seed.email, Phone: &phone, Dob: time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC), Gender: "unspecified", Extra: seed.extra, CreatedAt: now, UpdatedAt: now}
+		user := models.User{Id: seed.userID, FirstName: seed.firstName, LastName: seed.lastName, Email: seed.email, Phone: &phone, Dob: time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC), Gender: "unspecified", IsAdmin: seed.isAdmin, Extra: seed.extra, CreatedAt: now, UpdatedAt: now}
 		if err := userOrm.Insert(&user); err != nil {
+			return "", "", err
+		}
+	} else if users[0].IsAdmin != seed.isAdmin && seed.isAdmin {
+		user := users[0]
+		user.IsAdmin = true
+		user.UpdatedAt = time.Now().UTC()
+		if err := userOrm.Update(&user, user.Id); err != nil {
 			return "", "", err
 		}
 	}

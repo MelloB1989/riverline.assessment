@@ -13,6 +13,7 @@ type User struct {
 	Phone     *string        `json:"phone"`
 	Dob       time.Time      `json:"dob"`
 	Gender    string         `json:"gender"`
+	IsAdmin   bool           `json:"is_admin"`
 	Extra     map[string]any `json:"extra" db:"extra"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`

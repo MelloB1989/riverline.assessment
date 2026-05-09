@@ -1,5 +1,7 @@
 import Link from "next/link";
+import type React from "react";
 import { auth } from "@clerk/nextjs/server";
+import { BarChart3, Bot, PhoneCall, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -25,15 +27,24 @@ export default async function Home() {
             <div>
               <p className="text-sm font-semibold text-pink-50">Riverline</p>
               <p className="text-xs text-zinc-500">
-                Secure, guided chat experiences.
+                AI borrower resolution workflow
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             {userId ? (
-              <Button asChild>
-                <Link href="/chat">Open Chat</Link>
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  className="hidden text-pink-100 hover:bg-pink-400/10 sm:inline-flex"
+                  asChild
+                >
+                  <Link href="/admin">Admin</Link>
+                </Button>
+                <Button asChild>
+                  <Link href="/chat">Open Chat</Link>
+                </Button>
+              </>
             ) : (
               <>
                 <Button
@@ -56,28 +67,38 @@ export default async function Home() {
       </header>
 
       <main className="relative flex flex-1 flex-col items-center justify-center px-6 py-16">
-        <div className="mx-auto grid w-full max-w-6xl gap-10 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="mx-auto grid w-full max-w-6xl gap-10 lg:grid-cols-[1.1fr_0.9fr]">
           <div className="space-y-6">
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-pink-300">
-              Riverline Chat
+              Collections intelligence
             </p>
             <h1 className="max-w-3xl text-4xl font-semibold leading-tight text-pink-50 md:text-6xl">
-              Dark, focused AI chat with a little heat.
+              One borrower experience across chat, voice, and final notice.
             </h1>
             <p className="max-w-xl text-lg leading-8 text-zinc-400">
-              Riverline brings your team into a focused chat experience with
-              guided prompts, shared context, source-aware answers, and a
-              polished interface built for real work.
+              Riverline coordinates ARIA assessment chat, NOVA resolution calls,
+              and DELTA final notice handling while preserving context,
+              compliance disclosures, prompt versions, and evaluation evidence.
             </p>
             <div className="flex flex-wrap gap-3">
               {userId ? (
-                <Button
-                  size="lg"
-                  className="rounded-full bg-pink-500 text-white shadow-[0_0_34px_rgba(236,72,153,0.4)] hover:bg-pink-400"
-                  asChild
-                >
-                  <Link href="/chat">Continue to chat</Link>
-                </Button>
+                <>
+                  <Button
+                    size="lg"
+                    className="rounded-full bg-pink-500 text-white shadow-[0_0_34px_rgba(236,72,153,0.4)] hover:bg-pink-400"
+                    asChild
+                  >
+                    <Link href="/chat">Continue borrower chat</Link>
+                  </Button>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="rounded-full border-pink-300/30 bg-white/[0.03] text-pink-100 hover:bg-pink-400/10"
+                    asChild
+                  >
+                    <Link href="/admin">View eval dashboard</Link>
+                  </Button>
+                </>
               ) : (
                 <>
                   <Button
@@ -103,68 +124,78 @@ export default async function Home() {
           <div className="space-y-6">
             <Card className="border-pink-300/15 bg-zinc-950/70 shadow-2xl shadow-pink-950/20 backdrop-blur-xl">
               <CardHeader>
-                <CardTitle className="text-pink-50">Why Riverline</CardTitle>
+                <CardTitle className="text-pink-50">
+                  Production workflow
+                </CardTitle>
                 <CardDescription>
-                  A crisp, modern chat hub powered by Clerk authentication.
+                  The borrower sees one Riverline assistant; internally each
+                  stage has its own prompt, context, and evaluator.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="rounded-2xl border border-pink-300/20 bg-pink-400/10 p-4">
-                  <p className="text-sm font-semibold text-pink-100">
-                    Seamless login
-                  </p>
-                  <p className="text-sm text-zinc-400">
-                    Sign in or sign up in seconds, then jump straight into the
-                    conversation.
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                  <p className="text-sm font-semibold text-pink-50">
-                    Full chat workspace
-                  </p>
-                  <p className="text-sm text-zinc-400">
-                    Threads, suggestions, reasoning, sources, and a rich prompt
-                    composer.
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                  <p className="text-sm font-semibold text-pink-50">
-                    Privacy-first
-                  </p>
-                  <p className="text-sm text-zinc-400">
-                    Clerk handles your authentication with secure best
-                    practices.
-                  </p>
-                </div>
+                <Feature
+                  icon={<Bot className="size-4" />}
+                  title="ARIA chat"
+                  body="Verifies identity safely, gathers assessment facts, and schedules NOVA without exposing internal context."
+                />
+                <Feature
+                  icon={<PhoneCall className="size-4" />}
+                  title="NOVA voice"
+                  body="Receives a bounded offer context, presents payment options, and produces a structured call outcome."
+                />
+                <Feature
+                  icon={<ShieldCheck className="size-4" />}
+                  title="DELTA final notice"
+                  body="Handles post-call chat with final offer, deadline, and audit-quality written continuity."
+                />
               </CardContent>
             </Card>
             <Card className="border-pink-300/15 bg-zinc-950/70 shadow-2xl shadow-pink-950/20 backdrop-blur-xl">
               <CardHeader>
-                <CardTitle className="text-pink-50">Get started</CardTitle>
+                <CardTitle className="text-pink-50">
+                  Self-learning visibility
+                </CardTitle>
                 <CardDescription>
-                  Choose a path and you’ll be chatting in minutes.
+                  Admins can inspect prompt experiments, judge scores, adoption
+                  decisions, meta-evaluator flags, canaries, and cost.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="flex flex-col gap-3">
+              <CardContent>
                 <Button
                   variant="secondary"
-                  className="rounded-full border border-pink-300/15 bg-pink-400/10 text-pink-100 hover:bg-pink-400/20"
+                  className="w-full rounded-full border border-pink-300/15 bg-pink-400/10 text-pink-100 hover:bg-pink-400/20"
                   asChild
                 >
-                  <Link href="/sign-in">I already have an account</Link>
-                </Button>
-                <Button
-                  variant="outline"
-                  className="rounded-full border-pink-300/25 bg-white/[0.03] text-pink-100 hover:bg-pink-400/10"
-                  asChild
-                >
-                  <Link href="/sign-up">I need to create one</Link>
+                  <Link href={userId ? "/admin" : "/sign-in"}>
+                    <BarChart3 className="size-4" />
+                    Open quantitative eval dashboard
+                  </Link>
                 </Button>
               </CardContent>
             </Card>
           </div>
         </div>
       </main>
+    </div>
+  );
+}
+
+function Feature({
+  icon,
+  title,
+  body,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+      <p className="flex items-center gap-2 text-sm font-semibold text-pink-50">
+        <span className="text-pink-300">{icon}</span>
+        {title}
+      </p>
+      <p className="mt-2 text-sm leading-6 text-zinc-400">{body}</p>
     </div>
   );
 }

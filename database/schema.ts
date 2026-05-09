@@ -84,6 +84,7 @@ export const users = pgTable("users", {
   phone: varchar("phone"),
   dob: timestamp("dob").notNull(),
   gender: varchar("gender").notNull(),
+  is_admin: boolean("is_admin").default(false).notNull(),
   extra: jsonb("extra").default({}), // flexible borrower attributes
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),

@@ -195,6 +195,14 @@ func AdminEvalSummary(c *fiber.Ctx) error {
 	defer expOrm.Close()
 	costOrm := orm.Load(&models.LlmCostLog{})
 	defer costOrm.Close()
+	promptOrm := orm.Load(&models.PromptVersion{})
+	defer promptOrm.Close()
+	metaOrm := orm.Load(&models.MetaFlag{})
+	defer metaOrm.Close()
+	evaluatorOrm := orm.Load(&models.EvaluatorVersion{})
+	defer evaluatorOrm.Close()
+	canaryOrm := orm.Load(&models.CanaryResult{})
+	defer canaryOrm.Close()
 
 	var scores []models.ConversationScore
 	if err := scoreOrm.GetAll().Scan(&scores); err != nil {
@@ -208,6 +216,22 @@ func AdminEvalSummary(c *fiber.Ctx) error {
 	if err := costOrm.GetAll().Scan(&costs); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
+	var promptVersions []models.PromptVersion
+	if err := promptOrm.GetAll().Scan(&promptVersions); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	var metaFlags []models.MetaFlag
+	if err := metaOrm.GetAll().Scan(&metaFlags); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	var evaluatorVersions []models.EvaluatorVersion
+	if err := evaluatorOrm.GetAll().Scan(&evaluatorVersions); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	var canaryResults []models.CanaryResult
+	if err := canaryOrm.GetAll().Scan(&canaryResults); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
 	totalCost := 0.0
 	for _, row := range costs {
 		totalCost += row.CostUsd
@@ -216,6 +240,10 @@ func AdminEvalSummary(c *fiber.Ctx) error {
 		"conversation_scores": scores,
 		"prompt_experiments":  experiments,
 		"cost_log":            costs,
+		"prompt_versions":     promptVersions,
+		"meta_flags":          metaFlags,
+		"evaluator_versions":  evaluatorVersions,
+		"canary_results":      canaryResults,
 		"total_cost_usd":      totalCost,
 	})
 }

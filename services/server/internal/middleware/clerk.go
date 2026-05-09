@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MelloB1989/karma/v2/orm"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -87,6 +88,25 @@ func verifyClerkToken(tokenString string) (*models.Claims, error) {
 	}
 
 	return claims, nil
+}
+
+func RequireAdmin() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID := GetUserID(c)
+		if userID == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Missing authenticated user"})
+		}
+		userOrm := orm.Load(&models.User{})
+		defer userOrm.Close()
+		var users []models.User
+		if err := userOrm.GetByFieldEquals("Id", userID).Scan(&users); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Unable to verify admin access"})
+		}
+		if len(users) == 0 || !users[0].IsAdmin {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Admin access required"})
+		}
+		return c.Next()
+	}
 }
 
 func GetUserID(c *fiber.Ctx) string {
