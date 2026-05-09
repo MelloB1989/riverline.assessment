@@ -18,6 +18,7 @@ type EvaluatorJudgeConfig struct {
 
 type SelfLearningConfig struct {
 	Judges                  []EvaluatorJudgeConfig `json:"judges"`
+	PromptGenerator         EvaluatorJudgeConfig   `json:"prompt_generator"`
 	PersonaLLMBaseURL       string                 `json:"persona_llm_base_url"`
 	PersonaLLMAPIKey        string                 `json:"-"`
 	PersonaLLMModel         string                 `json:"persona_llm_model"`
@@ -42,10 +43,11 @@ func DefaultSelfLearningConfig() SelfLearningConfig {
 	out := SelfLearningConfig{
 		Judges: []EvaluatorJudgeConfig{
 			{Name: "judge_a", Provider: string(ai.Groq), Model: string(ai.Llama31_8B), Weight: 1, Temperature: 1},
-			{Name: "judge_b", Provider: string(ai.Groq), Model: string(ai.GPTOSS_20B), Weight: 1, Temperature: 1},
+			{Name: "judge_b", Provider: string(ai.Groq), Model: string(ai.GPTOSS_120B), Weight: 1, Temperature: 1},
 			{Name: "judge_c", Provider: string(ai.XAI), Model: string(ai.Grok4ReasoningFast), Weight: 1, Temperature: 1},
-			// {Name: "judge_d", Provider: string(ai.Groq), Model: string(ai.Quew3_32B), Weight: 1, Temperature: 1},
+			{Name: "judge_d", Provider: string(ai.Groq), Model: string(ai.Llama33_70B), Weight: 1, Temperature: 1},
 		},
+		PromptGenerator:         EvaluatorJudgeConfig{Name: "prompt_generator", Provider: firstNonEmpty(cfg.PromptGenProvider, string(ai.Groq)), Model: firstNonEmpty(cfg.PromptGenModel, string(ai.GPTOSS_20B)), Weight: 1, Temperature: 0.2},
 		PersonaLLMBaseURL:       strings.TrimRight(cfg.PersonaLLMBaseURL, "/"),
 		PersonaLLMAPIKey:        cfg.PersonaLLMApiKey,
 		PersonaLLMModel:         cfg.PersonaLLMModel,
@@ -67,6 +69,7 @@ func DefaultSelfLearningConfig() SelfLearningConfig {
 		}
 	}
 	out.Judges = normalizeJudgeConfig(out.Judges)
+	out.PromptGenerator = normalizeJudgeConfig([]EvaluatorJudgeConfig{out.PromptGenerator})[0]
 	return out
 }
 
@@ -105,8 +108,12 @@ func defaultModelPricing() map[string]ModelPricing {
 		"llama-3.3-70b-versatile":      {InputPerMillion: 0.59, OutputPerMillion: 0.79},
 		"claude-3-5-haiku-20241022":    {InputPerMillion: 0.80, OutputPerMillion: 4.00},
 		"claude-3.5-haiku":             {InputPerMillion: 0.80, OutputPerMillion: 4.00},
-		"openai/gpt-oss-120b":          {InputPerMillion: 0.15, OutputPerMillion: 0.75},
-		"groq/openai/gpt-oss-120b":     {InputPerMillion: 0.15, OutputPerMillion: 0.75},
+		"openai/gpt-oss-120b":          {InputPerMillion: 0.15, OutputPerMillion: 0.60},
+		"groq/openai/gpt-oss-120b":     {InputPerMillion: 0.15, OutputPerMillion: 0.60},
+		"openai/gpt-oss-20b":           {InputPerMillion: 0.075, OutputPerMillion: 0.30},
+		"groq/openai/gpt-oss-20b":      {InputPerMillion: 0.075, OutputPerMillion: 0.30},
+		"grok-4-fast-reasoning":        {InputPerMillion: 0.20, OutputPerMillion: 0.50},
+		"xai/grok-4-fast-reasoning":    {InputPerMillion: 0.20, OutputPerMillion: 0.50},
 	}
 }
 

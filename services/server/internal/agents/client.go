@@ -1,7 +1,9 @@
 package agents
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -39,7 +41,7 @@ func NewWithPromptVersion(agentID models.AgentID, version int, cfg Config) (*Cli
 
 func newClientWithPrompt(agentID models.AgentID, promptVersion int, promptText string, cfg Config) *Client {
 	if cfg.Model == "" {
-		cfg.Model = ai.Llama33_70B
+		cfg.Model = ai.GPTOSS_20B
 	}
 	if cfg.Provider == "" {
 		cfg.Provider = ai.Groq
@@ -95,14 +97,22 @@ func (c *Client) Converse(handoff string, history []models.AgentMessage) (*karma
 	restoreSystemPrompt := c.useRuntimeSystemPrompt(handoff)
 	defer restoreSystemPrompt()
 	chatHistory := toKarmaHistory(history)
-	resp, err := c.aiClient.ChatCompletionManaged(chatHistory)
-	if err == nil && (strings.TrimSpace(resp.AIResponse) != "" || len(resp.ToolCalls) > 0) {
-		return resp, nil
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		resp, err := c.aiClient.ChatCompletionManaged(chatHistory)
+		if err == nil && (strings.TrimSpace(resp.AIResponse) != "" || len(resp.ToolCalls) > 0) {
+			return resp, nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = errors.New("empty AI response")
+		}
+		if attempt < 4 {
+			time.Sleep(time.Duration(attempt+1) * 300 * time.Millisecond)
+		}
 	}
-	if err != nil {
-		return nil, err
-	}
-	return nil, errors.New("empty AI response")
+	return nil, lastErr
 }
 
 func (c *Client) useRuntimeSystemPrompt(handoff string) func() {
@@ -122,13 +132,16 @@ func (c *Client) systemPrompt(handoff string) string {
 }
 
 func (c *Client) ConverseWithTools(handoff string, history []models.AgentMessage, tools ...ai.GoFunctionTool) (*karmaModels.AIChatResponse, error) {
+	previousToolsEnabled := c.aiClient.ToolsEnabled
+	previousUseMCPExecution := c.aiClient.UseMCPExecution
 	c.aiClient.ClearGoFunctionTools()
 	defer func() {
 		c.aiClient.ClearGoFunctionTools()
-		c.aiClient.ToolsEnabled = false
-		c.aiClient.UseMCPExecution = false
+		c.aiClient.ToolsEnabled = previousToolsEnabled
+		c.aiClient.UseMCPExecution = previousUseMCPExecution
 	}()
 	c.aiClient.EnableTools()
+	c.aiClient.UseMCPExecution = true
 	for _, tool := range tools {
 		if err := c.aiClient.AddGoFunctionTool(tool); err != nil {
 			return nil, err
@@ -148,20 +161,116 @@ func (c *Client) GenerateText(prompt string) (*karmaModels.AIChatResponse, error
 	return nil, errors.New("empty AI response")
 }
 
+func (c *Client) GenerateTextViaChat(prompt string) (*karmaModels.AIChatResponse, error) {
+	history := &karmaModels.AIChatHistory{
+		Messages: []karmaModels.AIMessage{{
+			UniqueId:  "prompt-generation",
+			Role:      karmaModels.User,
+			Message:   prompt,
+			Timestamp: time.Now().UTC(),
+		}},
+	}
+	resp, err := c.aiClient.ChatCompletionManaged(history)
+	if err == nil && strings.TrimSpace(resp.AIResponse) != "" {
+		return resp, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, errors.New("empty AI response")
+}
+
+func (c *Client) GenerateTextReliable(prompt string, attempts int) (*karmaModels.AIChatResponse, error) {
+	if attempts <= 0 {
+		attempts = 3
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		resp, err := c.GenerateText(prompt)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		resp, err = c.GenerateTextViaChat(prompt)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if attempt < attempts-1 {
+			time.Sleep(time.Duration(attempt+1) * 300 * time.Millisecond)
+		}
+	}
+	return nil, lastErr
+}
+
+func (c *Client) GenerateTextWithTemporarySystem(systemPrompt string, prompt string, attempts int) (*karmaModels.AIChatResponse, error) {
+	previous := c.aiClient.SystemMessage
+	c.aiClient.SystemMessage = systemPrompt
+	defer func() {
+		c.aiClient.SystemMessage = previous
+	}()
+	return c.GenerateTextReliable(prompt, attempts)
+}
+
 func (c *Client) GenerateTextWithContext(handoff string, prompt string) (*karmaModels.AIChatResponse, error) {
 	restoreSystemPrompt := c.useRuntimeSystemPrompt(handoff)
 	defer restoreSystemPrompt()
-	return c.GenerateText(prompt)
+	return c.GenerateTextReliable(prompt, 6)
 }
 
 func (c *Client) ParseStructured(prompt string, output any) (int, error) {
-	p := parser.NewParser(parser.WithAIClient(c.aiClient), parser.WithMaxRetries(2))
+	previous := c.aiClient.SystemMessage
+	c.aiClient.SystemMessage = "You are Riverline's internal structured-output generator for the active agent model. Return only valid JSON matching the requested schema. Do not speak to the borrower, do not roleplay, and do not include explanations or markdown."
+	defer func() {
+		c.aiClient.SystemMessage = previous
+	}()
+	p := parser.NewParser(parser.WithAIClient(c.aiClient), parser.WithMaxRetries(6))
 	_, tokens, err := p.Parse(prompt, "", output)
-	return tokens, err
+	if err == nil {
+		return tokens, nil
+	}
+	fallbackTokens, fallbackErr := c.parseStructuredViaChat(prompt, output)
+	if fallbackErr == nil {
+		return fallbackTokens, nil
+	}
+	return tokens + fallbackTokens, fmt.Errorf("%w; fallback parse failed: %v", err, fallbackErr)
 }
 
 func (c *Client) ParseHandoff(prompt string, output any) (int, error) {
 	return c.ParseStructured(prompt, output)
+}
+
+func (c *Client) parseStructuredViaChat(prompt string, output any) (int, error) {
+	currentPrompt := prompt + "\n\nReturn only valid JSON. No markdown. No explanation."
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		resp, err := c.GenerateTextViaChat(currentPrompt)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if err := json.Unmarshal([]byte(extractJSONObject(resp.AIResponse)), output); err == nil {
+			return resp.InputTokens + resp.OutputTokens, nil
+		} else {
+			lastErr = err
+			currentPrompt = fmt.Sprintf("Fix this JSON. Return only valid JSON matching the requested schema.\nError: %v\nBad response:\n%s", err, resp.AIResponse)
+		}
+	}
+	return 0, lastErr
+}
+
+func extractJSONObject(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "```json")
+	value = strings.TrimPrefix(value, "```")
+	value = strings.TrimSuffix(value, "```")
+	value = strings.TrimSpace(value)
+	start := strings.Index(value, "{")
+	end := strings.LastIndex(value, "}")
+	if start >= 0 && end >= start {
+		return value[start : end+1]
+	}
+	return value
 }
 
 func MessagesForCompletion(messages []models.AgentMessage) []models.AgentMessage {

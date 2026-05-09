@@ -41,6 +41,8 @@ type AppConfig struct {
 	PersonaLLMApiKey   string `env:"PERSONA_LLM_API_KEY" optional:"true" default:""`
 	PersonaLLMModel    string `env:"PERSONA_LLM_MODEL" optional:"true" default:"claude-3-5-haiku-20241022"`
 	EvaluatorJudges    string `env:"EVALUATOR_JUDGES_JSON" optional:"true" default:""`
+	PromptGenProvider  string `env:"PROMPT_GENERATOR_PROVIDER" optional:"true" default:"groq"`
+	PromptGenModel     string `env:"PROMPT_GENERATOR_MODEL" optional:"true" default:"gpt-oss-20b"`
 	LlmPricing         string `env:"LLM_PRICING_JSON" optional:"true" default:""`
 	Port               string `env:"PORT" optional:"true" default:"8080"`
 }

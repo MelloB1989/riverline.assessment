@@ -20,37 +20,40 @@ type FullCycleConfig struct {
 	Personas         []models.Persona                 `json:"personas"`
 	MaxTurnsPerAgent int                              `json:"max_turns_per_agent"`
 	Judges           []constants.EvaluatorJudgeConfig `json:"judges"`
+	MaxCostUSD       float64                          `json:"max_cost_usd"`
 }
 
 type FullCycleReport struct {
-	Config         FullCycleConfig                 `json:"config"`
-	AgentReports   []AgentCycleReport              `json:"agent_reports"`
-	CostBreakdown  CostBreakdown                   `json:"cost_breakdown"`
-	PromptHistory  []models.PromptVersion           `json:"prompt_history"`
-	EvalHistory    []models.EvaluatorVersion        `json:"evaluator_history"`
-	AllScores      []models.ConversationScore       `json:"all_scores"`
-	StartedAt      time.Time                        `json:"started_at"`
-	CompletedAt    time.Time                        `json:"completed_at"`
-	DurationSec    float64                          `json:"duration_sec"`
+	Config        FullCycleConfig            `json:"config"`
+	AgentReports  []AgentCycleReport         `json:"agent_reports"`
+	CostBreakdown CostBreakdown              `json:"cost_breakdown"`
+	PromptHistory []models.PromptVersion     `json:"prompt_history"`
+	EvalHistory   []models.EvaluatorVersion  `json:"evaluator_history"`
+	AllScores     []models.ConversationScore `json:"all_scores"`
+	StartedAt     time.Time                  `json:"started_at"`
+	CompletedAt   time.Time                  `json:"completed_at"`
+	DurationSec   float64                    `json:"duration_sec"`
 }
 
 type AgentCycleReport struct {
-	AgentID    models.AgentID       `json:"agent_id"`
-	Experiment ExperimentReport     `json:"experiment"`
-	MetaEval   MetaEvalReport       `json:"meta_eval"`
-	Canaries   CanaryReport         `json:"canaries"`
-	DurationSec float64             `json:"duration_sec"`
+	AgentID     models.AgentID   `json:"agent_id"`
+	Experiment  ExperimentReport `json:"experiment"`
+	MetaEval    MetaEvalReport   `json:"meta_eval"`
+	Canaries    CanaryReport     `json:"canaries"`
+	DurationSec float64          `json:"duration_sec"`
 }
 
 type ExperimentReport struct {
-	Experiment        models.PromptExperiment `json:"experiment"`
-	ControlScores     []SimulationScore       `json:"control_scores"`
-	TreatmentScores   []SimulationScore       `json:"treatment_scores"`
-	ControlByPersona  map[models.Persona]PersonaStats `json:"control_by_persona"`
+	Experiment         models.PromptExperiment         `json:"experiment"`
+	ControlScores      []SimulationScore               `json:"control_scores"`
+	TreatmentScores    []SimulationScore               `json:"treatment_scores"`
+	ControlByPersona   map[models.Persona]PersonaStats `json:"control_by_persona"`
 	TreatmentByPersona map[models.Persona]PersonaStats `json:"treatment_by_persona"`
-	Adopted           bool                    `json:"adopted"`
-	Decision          string                  `json:"decision"`
-	StatSummary       StatSummary             `json:"stat_summary"`
+	ControlByJudge     map[string]JudgeStats           `json:"control_by_judge"`
+	TreatmentByJudge   map[string]JudgeStats           `json:"treatment_by_judge"`
+	Adopted            bool                            `json:"adopted"`
+	Decision           string                          `json:"decision"`
+	StatSummary        StatSummary                     `json:"stat_summary"`
 }
 
 type PersonaStats struct {
@@ -60,25 +63,35 @@ type PersonaStats struct {
 	ComplianceRate float64 `json:"compliance_rate"`
 }
 
+type JudgeStats struct {
+	N              int     `json:"n"`
+	Mean           float64 `json:"mean"`
+	Stddev         float64 `json:"stddev"`
+	ComplianceRate float64 `json:"compliance_rate"`
+	MeanCostUSD    float64 `json:"mean_cost_usd"`
+	MeanInputTok   float64 `json:"mean_input_tokens"`
+	MeanOutputTok  float64 `json:"mean_output_tokens"`
+}
+
 type StatSummary struct {
-	ControlMean            float64 `json:"control_mean"`
-	ControlStddev          float64 `json:"control_stddev"`
-	ControlMedian          float64 `json:"control_median"`
-	ControlComplianceRate  float64 `json:"control_compliance_rate"`
-	TreatmentMean          float64 `json:"treatment_mean"`
-	TreatmentStddev        float64 `json:"treatment_stddev"`
-	TreatmentMedian        float64 `json:"treatment_median"`
+	ControlMean             float64 `json:"control_mean"`
+	ControlStddev           float64 `json:"control_stddev"`
+	ControlMedian           float64 `json:"control_median"`
+	ControlComplianceRate   float64 `json:"control_compliance_rate"`
+	TreatmentMean           float64 `json:"treatment_mean"`
+	TreatmentStddev         float64 `json:"treatment_stddev"`
+	TreatmentMedian         float64 `json:"treatment_median"`
 	TreatmentComplianceRate float64 `json:"treatment_compliance_rate"`
-	MeanDelta              float64 `json:"mean_delta"`
-	PValue                 float64 `json:"p_value"`
-	CohensD                float64 `json:"cohens_d"`
-	IsSignificant          bool    `json:"is_significant"`
+	MeanDelta               float64 `json:"mean_delta"`
+	PValue                  float64 `json:"p_value"`
+	CohensD                 float64 `json:"cohens_d"`
+	IsSignificant           bool    `json:"is_significant"`
 }
 
 type MetaEvalReport struct {
-	Flags        []models.MetaFlag `json:"flags"`
-	FlagCount    int               `json:"flag_count"`
-	ResolvedCount int              `json:"resolved_count"`
+	Flags         []models.MetaFlag `json:"flags"`
+	FlagCount     int               `json:"flag_count"`
+	ResolvedCount int               `json:"resolved_count"`
 }
 
 type CanaryReport struct {
@@ -89,11 +102,11 @@ type CanaryReport struct {
 }
 
 type CostBreakdown struct {
-	TotalUSD         float64            `json:"total_usd"`
-	ByUsageType      map[string]float64 `json:"by_usage_type"`
-	ByModel          map[string]float64 `json:"by_model"`
-	TotalPromptTokens     int           `json:"total_prompt_tokens"`
-	TotalCompletionTokens int           `json:"total_completion_tokens"`
+	TotalUSD              float64            `json:"total_usd"`
+	ByUsageType           map[string]float64 `json:"by_usage_type"`
+	ByModel               map[string]float64 `json:"by_model"`
+	TotalPromptTokens     int                `json:"total_prompt_tokens"`
+	TotalCompletionTokens int                `json:"total_completion_tokens"`
 }
 
 func RunFullCycle(cfg FullCycleConfig) (*FullCycleReport, error) {
@@ -113,6 +126,10 @@ func RunFullCycle(cfg FullCycleConfig) (*FullCycleReport, error) {
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = constants.DefaultSelfLearningConfig().DefaultBatchSize
 	}
+	baseCost, err := currentTotalCostUSD()
+	if err != nil {
+		return nil, fmt.Errorf("load initial cost: %w", err)
+	}
 
 	report := &FullCycleReport{
 		Config:    cfg,
@@ -120,10 +137,19 @@ func RunFullCycle(cfg FullCycleConfig) (*FullCycleReport, error) {
 	}
 
 	for _, agentID := range cfg.Agents {
+		if cfg.MaxCostUSD > 0 {
+			currentCost, err := currentTotalCostUSD()
+			if err != nil {
+				return nil, err
+			}
+			if spent := currentCost - baseCost; spent >= cfg.MaxCostUSD {
+				return nil, fmt.Errorf("eval run cost budget exceeded before agent %s: spent=$%.4f budget=$%.4f", agentID, spent, cfg.MaxCostUSD)
+			}
+		}
 		agentStart := time.Now()
 		log.Printf("[eval] full cycle agent start agent=%s", agentID)
 
-		agentReport, err := runAgentCycle(agentID, cfg)
+		agentReport, err := runAgentCycle(agentID, cfg, baseCost)
 		if err != nil {
 			return nil, fmt.Errorf("agent cycle %s: %w", agentID, err)
 		}
@@ -168,7 +194,7 @@ func RunFullCycle(cfg FullCycleConfig) (*FullCycleReport, error) {
 	return report, nil
 }
 
-func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig) (*AgentCycleReport, error) {
+func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig, baseCost float64) (*AgentCycleReport, error) {
 	simCfg := SimConfig{
 		Seed:             cfg.Seed,
 		BatchSize:        cfg.BatchSize,
@@ -176,6 +202,8 @@ func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig) (*AgentCycleRepo
 		Personas:         cfg.Personas,
 		MaxTurnsPerAgent: cfg.MaxTurnsPerAgent,
 		Judges:           cfg.Judges,
+		MaxRunCostUSD:    cfg.MaxCostUSD,
+		BaseRunCostUSD:   baseCost,
 	}
 
 	exp, controlScores, treatmentScores, err := runImprovementCycleDetailed(agentID, simCfg)
@@ -189,6 +217,8 @@ func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig) (*AgentCycleRepo
 		TreatmentScores:    treatmentScores,
 		ControlByPersona:   groupByPersona(controlScores),
 		TreatmentByPersona: groupByPersona(treatmentScores),
+		ControlByJudge:     groupByJudge(controlScores),
+		TreatmentByJudge:   groupByJudge(treatmentScores),
 		Adopted:            exp.Adopted,
 		Decision:           experimentDecision(exp),
 		StatSummary: StatSummary{
@@ -267,18 +297,21 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 
 	log.Printf("[eval] experiment start agent=%s control_version=%d candidate_version=%d batch_size=%d personas=%d", agentID, current.VersionNumber, candidateVersion, cfg.BatchSize, len(cfg.Personas))
 
-	candidatePrompt, tokens, modelUsed, err := generateCandidatePrompt(agentID, current.PromptText)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	log.Printf("[eval] candidate prompt generated agent=%s candidate_version=%d tokens=%d model=%s prompt_chars=%d", agentID, candidateVersion, tokens, modelUsed, len(candidatePrompt))
-
 	cfg.AgentID = agentID
 	cfg.PromptOverrides = nil
 	_, controlStats, err := RunSimulationScored(cfg, cfg.Judges)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	controlScores := aggregateSimulationMeans(controlStats)
+	controlCompliance := aggregateComplianceRate(controlStats)
+
+	evidence := PromptGenerationEvidenceFromScores(agentID, current.VersionNumber, candidateVersion, controlStats)
+	candidatePrompt, inputTokens, outputTokens, modelUsed, err := generateCandidatePrompt(agentID, current.PromptText, evidence)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	log.Printf("[eval] candidate prompt generated agent=%s candidate_version=%d tokens_in=%d tokens_out=%d model=%s prompt_chars=%d evidence_chars=%d", agentID, candidateVersion, inputTokens, outputTokens, modelUsed, len(candidatePrompt), len(evidence))
 
 	treatmentCfg := cfg
 	treatmentCfg.PromptOverrides = map[models.AgentID]PromptOverride{
@@ -289,9 +322,7 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 		return nil, nil, nil, err
 	}
 
-	controlScores := aggregateSimulationMeans(controlStats)
 	treatmentScores := aggregateSimulationMeans(treatmentStats)
-	controlCompliance := aggregateComplianceRate(controlStats)
 	treatmentCompliance := aggregateComplianceRate(treatmentStats)
 
 	slCfg := constants.DefaultSelfLearningConfig()
@@ -341,7 +372,7 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 	if err := saveCandidatePrompt(agentID, candidateVersion, candidatePrompt, adopt, exp); err != nil {
 		return nil, nil, nil, err
 	}
-	if err := collections.LogCost("prompt_generation", &agentID, modelUsed, tokens, 0, nil, &exp.Id); err != nil {
+	if err := collections.LogCost("prompt_generation", &agentID, modelUsed, inputTokens, outputTokens, nil, &exp.Id); err != nil {
 		return nil, nil, nil, err
 	}
 
@@ -386,6 +417,59 @@ func groupByPersona(scores []SimulationScore) map[models.Persona]PersonaStats {
 	return result
 }
 
+func groupByJudge(scores []SimulationScore) map[string]JudgeStats {
+	type row struct {
+		score        float64
+		compliance   bool
+		cost         float64
+		inputTokens  int
+		outputTokens int
+	}
+	groups := map[string][]row{}
+	for _, simScore := range scores {
+		for _, judge := range simScore.JudgeResults {
+			key := judge.Name
+			if key == "" {
+				key = judge.ModelUsed
+			}
+			groups[key] = append(groups[key], row{
+				score:        judge.Metrics.CompositeScore,
+				compliance:   judge.Metrics.CompliancePass > 0,
+				cost:         judge.CostUSD,
+				inputTokens:  judge.InputTokens,
+				outputTokens: judge.OutputTokens,
+			})
+		}
+	}
+	out := map[string]JudgeStats{}
+	for key, rows := range groups {
+		values := make([]float64, 0, len(rows))
+		costs := make([]float64, 0, len(rows))
+		inputs := make([]float64, 0, len(rows))
+		outputs := make([]float64, 0, len(rows))
+		compliance := 0
+		for _, row := range rows {
+			values = append(values, row.score)
+			costs = append(costs, row.cost)
+			inputs = append(inputs, float64(row.inputTokens))
+			outputs = append(outputs, float64(row.outputTokens))
+			if row.compliance {
+				compliance++
+			}
+		}
+		out[key] = JudgeStats{
+			N:              len(rows),
+			Mean:           Mean(values),
+			Stddev:         Stddev(values),
+			ComplianceRate: float64(compliance) / float64(len(rows)),
+			MeanCostUSD:    Mean(costs),
+			MeanInputTok:   Mean(inputs),
+			MeanOutputTok:  Mean(outputs),
+		}
+	}
+	return out
+}
+
 func loadCostBreakdown() (*CostBreakdown, error) {
 	o := orm.Load(&models.LlmCostLog{})
 	defer o.Close()
@@ -394,8 +478,8 @@ func loadCostBreakdown() (*CostBreakdown, error) {
 		return nil, err
 	}
 	breakdown := &CostBreakdown{
-		ByUsageType:      map[string]float64{},
-		ByModel:          map[string]float64{},
+		ByUsageType: map[string]float64{},
+		ByModel:     map[string]float64{},
 	}
 	for _, cost := range costs {
 		breakdown.TotalUSD += cost.CostUsd
@@ -405,6 +489,14 @@ func loadCostBreakdown() (*CostBreakdown, error) {
 		breakdown.TotalCompletionTokens += cost.CompletionTokens
 	}
 	return breakdown, nil
+}
+
+func currentTotalCostUSD() (float64, error) {
+	breakdown, err := loadCostBreakdown()
+	if err != nil {
+		return 0, err
+	}
+	return breakdown.TotalUSD, nil
 }
 
 func loadAllPromptVersions() ([]models.PromptVersion, error) {

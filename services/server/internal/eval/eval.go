@@ -17,7 +17,7 @@ import (
 	"riverline_server/internal/models"
 
 	"github.com/MelloB1989/karma/ai"
-	"github.com/MelloB1989/karma/ai/parser"
+	karmaModels "github.com/MelloB1989/karma/models"
 	"github.com/MelloB1989/karma/utils"
 	"github.com/MelloB1989/karma/v2/orm"
 )
@@ -30,6 +30,8 @@ type SimConfig struct {
 	MaxTurnsPerAgent int                               `json:"max_turns_per_agent"`
 	Judges           []constants.EvaluatorJudgeConfig  `json:"judges"`
 	PromptOverrides  map[models.AgentID]PromptOverride `json:"-"`
+	MaxRunCostUSD    float64                           `json:"max_run_cost_usd"`
+	BaseRunCostUSD   float64                           `json:"base_run_cost_usd"`
 }
 
 type PromptOverride struct {
@@ -72,27 +74,44 @@ type EvaluationResult struct {
 	Metrics          MetricScores
 	EvaluatorVersion models.EvaluatorVersion
 	Tokens           int
+	InputTokens      int
+	OutputTokens     int
 	ModelUsed        string
 	JudgeResults     []JudgeResult
 }
 
+type GeneratedText struct {
+	Text         string
+	InputTokens  int
+	OutputTokens int
+	ModelUsed    string
+}
+
 type JudgeResult struct {
-	Name      string       `json:"name"`
-	Provider  string       `json:"provider"`
-	Model     string       `json:"model"`
-	Weight    float64      `json:"weight"`
-	Metrics   MetricScores `json:"metrics"`
-	Tokens    int          `json:"tokens"`
-	ModelUsed string       `json:"model_used"`
+	Name         string       `json:"name"`
+	Provider     string       `json:"provider"`
+	Model        string       `json:"model"`
+	Weight       float64      `json:"weight"`
+	Metrics      MetricScores `json:"metrics"`
+	Tokens       int          `json:"tokens"`
+	InputTokens  int          `json:"input_tokens"`
+	OutputTokens int          `json:"output_tokens"`
+	CostUSD      float64      `json:"cost_usd"`
+	ModelUsed    string       `json:"model_used"`
 }
 
 type SimulationScore struct {
-	SimulationSeed string         `json:"simulation_seed"`
-	Persona        models.Persona `json:"persona"`
-	WorkflowID     string         `json:"workflow_id"`
-	Scores         []float64      `json:"scores"`
-	Mean           float64        `json:"mean"`
-	ComplianceRate float64        `json:"compliance_rate"`
+	SimulationSeed    string         `json:"simulation_seed"`
+	Persona           models.Persona `json:"persona"`
+	WorkflowID        string         `json:"workflow_id"`
+	ConversationID    string         `json:"conversation_id"`
+	PromptVersion     int            `json:"prompt_version"`
+	Scores            []float64      `json:"scores"`
+	Mean              float64        `json:"mean"`
+	ComplianceRate    float64        `json:"compliance_rate"`
+	JudgeDisagreement float64        `json:"judge_disagreement_delta"`
+	JudgeResults      []JudgeResult  `json:"judge_results,omitempty"`
+	Reasoning         string         `json:"reasoning,omitempty"`
 }
 
 type RerunRequest struct {
@@ -138,7 +157,7 @@ func RunSimulation(cfg SimConfig) ([]SimulatedConversation, error) {
 func RunSimulationScored(cfg SimConfig, judges []constants.EvaluatorJudgeConfig) ([]SimulatedConversation, []SimulationScore, error) {
 	scores := make([]SimulationScore, 0)
 	conversations, err := runSimulationBatch(cfg, func(sim SimulatedConversation) error {
-		simScores, err := ScoreSimulations([]SimulatedConversation{sim}, judges)
+		simScores, err := ScoreSimulationsForAgent([]SimulatedConversation{sim}, cfg.AgentID, judges)
 		if err != nil {
 			return err
 		}
@@ -174,15 +193,29 @@ func runSimulationBatch(cfg SimConfig, onSimulation func(SimulatedConversation) 
 	out := make([]SimulatedConversation, 0, cfg.BatchSize*len(cfg.Personas))
 	for _, personaType := range cfg.Personas {
 		for i := 0; i < cfg.BatchSize; i++ {
+			if err := enforceRunBudget(cfg); err != nil {
+				return out, err
+			}
 			seed := simulationSeed(cfg.Seed, personaType, i)
 			itemStart := time.Now()
 			log.Printf("[eval] simulation start persona=%s index=%d/%d seed=%s", personaType, i+1, cfg.BatchSize, seed)
 			sim, err := runOneSimulation(context.Background(), persona, cfg, personaType, seed)
 			if err != nil {
 				log.Printf("[eval] simulation failed persona=%s index=%d seed=%s duration=%s err=%v", personaType, i+1, seed, time.Since(itemStart), err)
-				return nil, err
+				if sim.Workflow.Id == "" && len(sim.Conversations) == 0 {
+					return out, err
+				}
+				if sim.Metadata == nil {
+					sim.Metadata = map[string]any{}
+				}
+				sim.Metadata["simulation_error"] = err.Error()
+				if strings.TrimSpace(sim.Transcript) == "" && len(sim.AgentTranscripts) > 0 {
+					sim.Transcript = fullTranscript(sim.AgentTranscripts)
+				}
+				log.Printf("[eval] simulation partial preserved persona=%s index=%d seed=%s workflow=%s convs=%d", personaType, i+1, seed, sim.Workflow.Id, len(sim.Conversations))
+			} else {
+				log.Printf("[eval] simulation done persona=%s index=%d seed=%s workflow=%s convs=%d duration=%s", personaType, i+1, seed, sim.Workflow.Id, len(sim.Conversations), time.Since(itemStart))
 			}
-			log.Printf("[eval] simulation done persona=%s index=%d seed=%s workflow=%s convs=%d duration=%s", personaType, i+1, seed, sim.Workflow.Id, len(sim.Conversations), time.Since(itemStart))
 			out = append(out, sim)
 			if onSimulation != nil {
 				scoreStart := time.Now()
@@ -211,104 +244,159 @@ func ScoreAll(conversations []SimulatedConversation) ([]float64, error) {
 	return scores, nil
 }
 
+func enforceRunBudget(cfg SimConfig) error {
+	if cfg.MaxRunCostUSD <= 0 {
+		return nil
+	}
+	cost, err := currentTotalCostUSD()
+	if err != nil {
+		return err
+	}
+	spent := cost - cfg.BaseRunCostUSD
+	if spent >= cfg.MaxRunCostUSD {
+		return fmt.Errorf("eval run cost budget exceeded: spent=$%.4f budget=$%.4f", spent, cfg.MaxRunCostUSD)
+	}
+	return nil
+}
+
 func ScoreSimulations(conversations []SimulatedConversation, judges []constants.EvaluatorJudgeConfig) ([]SimulationScore, error) {
+	return ScoreSimulationsForAgent(conversations, models.AgentAria, judges)
+}
+
+func ScoreSimulationsForAgent(conversations []SimulatedConversation, agentID models.AgentID, judges []constants.EvaluatorJudgeConfig) ([]SimulationScore, error) {
 	start := time.Now()
-	log.Printf("[eval] scoring simulations start count=%d judges=%d", len(conversations), len(judges))
+	log.Printf("[eval] scoring simulations start agent=%s count=%d judges=%d", agentID, len(conversations), len(judges))
 	out := make([]SimulationScore, 0, len(conversations))
 	for simIndex, sim := range conversations {
 		simStart := time.Now()
-		log.Printf("[eval] scoring simulation start index=%d/%d workflow=%s seed=%s persona=%s convs=%d", simIndex+1, len(conversations), sim.Workflow.Id, sim.Seed, sim.Persona, len(sim.Conversations))
-		var scores []float64
-		compliancePassed := 0
-		for _, conv := range sim.Conversations {
-			transcript := sim.AgentTranscripts[conv.AgentId]
-			if strings.TrimSpace(transcript) == "" {
-				continue
-			}
-			convStart := time.Now()
-			log.Printf("[eval] scoring conversation start workflow=%s conversation=%s agent=%s prompt_version=%d transcript_chars=%d", conv.WorkflowId, conv.Id, conv.AgentId, conv.PromptVersion, len(transcript))
-			evaluation, err := EvaluateWithJudges(conv.AgentId, transcript, judges)
-			if err != nil {
-				log.Printf("[eval] scoring conversation failed conversation=%s agent=%s duration=%s err=%v", conv.Id, conv.AgentId, time.Since(convStart), err)
-				return nil, err
-			}
-			if err := SaveScore(conv, evaluation); err != nil {
-				return nil, err
-			}
-			log.Printf("[eval] scoring conversation done conversation=%s agent=%s score=%.2f compliance=%.0f duration=%s", conv.Id, conv.AgentId, evaluation.Metrics.CompositeScore, evaluation.Metrics.CompliancePass, time.Since(convStart))
-			scores = append(scores, evaluation.Metrics.CompositeScore)
-			if evaluation.Metrics.CompliancePass > 0 {
-				compliancePassed++
-			}
+		log.Printf("[eval] scoring simulation start agent=%s index=%d/%d workflow=%s seed=%s persona=%s convs=%d", agentID, simIndex+1, len(conversations), sim.Workflow.Id, sim.Seed, sim.Persona, len(sim.Conversations))
+		conv, ok := conversationForAgent(sim, agentID)
+		if !ok {
+			log.Printf("[eval] scoring simulation skipped agent=%s workflow=%s reason=no_agent_conversation", agentID, sim.Workflow.Id)
+			continue
 		}
+		transcript := strings.TrimSpace(sim.Transcript)
+		if transcript == "" {
+			transcript = fullTranscript(sim.AgentTranscripts)
+		}
+		if transcript == "" {
+			log.Printf("[eval] scoring simulation skipped agent=%s workflow=%s reason=empty_system_transcript", agentID, sim.Workflow.Id)
+			continue
+		}
+		log.Printf("[eval] scoring workflow start agent=%s workflow=%s conversation=%s prompt_version=%d transcript_chars=%d", agentID, sim.Workflow.Id, conv.Id, conv.PromptVersion, len(transcript))
+		evaluation, err := EvaluateSystemWithJudges(agentID, transcript, judges)
+		if err != nil {
+			log.Printf("[eval] scoring workflow failed agent=%s workflow=%s duration=%s err=%v", agentID, sim.Workflow.Id, time.Since(simStart), err)
+			return nil, err
+		}
+		evaluation.Metrics.ComplianceBreakdown["system_level_evaluation"] = true
+		evaluation.Metrics.ComplianceBreakdown["scored_agent"] = agentID
+		evaluation.Metrics.ComplianceBreakdown["conversation_ids"] = conversationIDs(sim.Conversations)
+		if err := SaveScore(conv, evaluation); err != nil {
+			return nil, err
+		}
+		score := evaluation.Metrics.CompositeScore
 		rate := 0.0
-		if len(scores) > 0 {
-			rate = float64(compliancePassed) / float64(len(scores))
+		if evaluation.Metrics.CompliancePass > 0 {
+			rate = 1
 		}
 		out = append(out, SimulationScore{
-			SimulationSeed: sim.Seed,
-			Persona:        sim.Persona,
-			WorkflowID:     sim.Workflow.Id,
-			Scores:         scores,
-			Mean:           Mean(scores),
-			ComplianceRate: rate,
+			SimulationSeed:    sim.Seed,
+			Persona:           sim.Persona,
+			WorkflowID:        sim.Workflow.Id,
+			ConversationID:    conv.Id,
+			PromptVersion:     conv.PromptVersion,
+			Scores:            []float64{score},
+			Mean:              score,
+			ComplianceRate:    rate,
+			JudgeDisagreement: evaluation.Metrics.JudgeDisagreement,
+			JudgeResults:      evaluation.JudgeResults,
+			Reasoning:         evaluation.Metrics.Reasoning,
 		})
-		log.Printf("[eval] scoring simulation done index=%d/%d workflow=%s mean=%.2f compliance_rate=%.2f duration=%s", simIndex+1, len(conversations), sim.Workflow.Id, Mean(scores), rate, time.Since(simStart))
+		log.Printf("[eval] scoring workflow done agent=%s index=%d/%d workflow=%s score=%.2f compliance_rate=%.2f duration=%s", agentID, simIndex+1, len(conversations), sim.Workflow.Id, score, rate, time.Since(simStart))
 	}
-	log.Printf("[eval] scoring simulations done count=%d duration=%s", len(conversations), time.Since(start))
+	log.Printf("[eval] scoring simulations done agent=%s count=%d duration=%s", agentID, len(conversations), time.Since(start))
 	return out, nil
 }
 
 func Evaluate(agentID models.AgentID, transcript string) (*EvaluationResult, error) {
-	return EvaluateWithJudges(agentID, transcript, nil)
+	return EvaluateSystemWithJudges(agentID, transcript, nil)
 }
 
 func EvaluateWithJudges(agentID models.AgentID, transcript string, judges []constants.EvaluatorJudgeConfig) (*EvaluationResult, error) {
-	start := time.Now()
+	return evaluateTranscriptWithJudges(agentID, transcript, judges, false)
+}
+
+func EvaluateSystemWithJudges(agentID models.AgentID, transcript string, judges []constants.EvaluatorJudgeConfig) (*EvaluationResult, error) {
+	return evaluateTranscriptWithJudges(agentID, transcript, judges, true)
+}
+
+func evaluateTranscriptWithJudges(agentID models.AgentID, transcript string, judges []constants.EvaluatorJudgeConfig, systemLevel bool) (*EvaluationResult, error) {
 	evaluator, err := activeEvaluatorVersion(agentID)
 	if err != nil {
 		return nil, err
 	}
+	return evaluateTranscriptWithEvaluator(*evaluator, transcript, judges, systemLevel)
+}
+
+func evaluateTranscriptWithEvaluator(evaluator models.EvaluatorVersion, transcript string, judges []constants.EvaluatorJudgeConfig, systemLevel bool) (*EvaluationResult, error) {
+	start := time.Now()
+	agentID := evaluator.AgentId
 	if len(judges) == 0 {
 		judges = constants.DefaultSelfLearningConfig().Judges
 	}
 	judges = normalizeJudges(judges)
-	log.Printf("[eval] judges start agent=%s evaluator_version=%d judges=%d transcript_chars=%d", agentID, evaluator.VersionNumber, len(judges), len(transcript))
+	mode := "agent"
+	if systemLevel {
+		mode = "system"
+	}
+	log.Printf("[eval] judges start mode=%s agent=%s evaluator_version=%d judges=%d transcript_chars=%d", mode, agentID, evaluator.VersionNumber, len(judges), len(transcript))
 	results := make([]JudgeResult, 0, len(judges))
 	for _, judge := range judges {
 		judgeStart := time.Now()
-		log.Printf("[eval] judge start agent=%s judge=%s provider=%s model=%s", agentID, judge.Name, judge.Provider, judge.Model)
-		metrics, tokens, modelUsed, err := evaluateWithJudge(*evaluator, transcript, judge)
+		log.Printf("[eval] judge start mode=%s agent=%s judge=%s provider=%s model=%s", mode, agentID, judge.Name, judge.Provider, judge.Model)
+		metrics, inputTokens, outputTokens, modelUsed, err := evaluateWithJudge(evaluator, transcript, judge, systemLevel)
 		if err != nil {
 			log.Printf("[eval] judge failed agent=%s judge=%s duration=%s err=%v", agentID, judge.Name, time.Since(judgeStart), err)
 			return nil, err
 		}
-		log.Printf("[eval] judge done agent=%s judge=%s score=%.2f compliance=%.0f tokens=%d model=%s duration=%s", agentID, judge.Name, metrics.CompositeScore, metrics.CompliancePass, tokens, modelUsed, time.Since(judgeStart))
+		tokens := inputTokens + outputTokens
+		cost := constants.EstimateLLMCostUSD(modelUsed, inputTokens, outputTokens)
+		log.Printf("[eval] judge done mode=%s agent=%s judge=%s score=%.2f compliance=%.0f tokens_in=%d tokens_out=%d cost=$%.6f model=%s duration=%s", mode, agentID, judge.Name, metrics.CompositeScore, metrics.CompliancePass, inputTokens, outputTokens, cost, modelUsed, time.Since(judgeStart))
 		results = append(results, JudgeResult{
-			Name:      judge.Name,
-			Provider:  judge.Provider,
-			Model:     judge.Model,
-			Weight:    judge.Weight,
-			Metrics:   metrics,
-			Tokens:    tokens,
-			ModelUsed: modelUsed,
+			Name:         judge.Name,
+			Provider:     judge.Provider,
+			Model:        judge.Model,
+			Weight:       judge.Weight,
+			Metrics:      metrics,
+			Tokens:       tokens,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+			CostUSD:      cost,
+			ModelUsed:    modelUsed,
 		})
 	}
 	aggregated := aggregateJudgeResults(results)
 	tokens := 0
+	inputTokens := 0
+	outputTokens := 0
 	modelsUsed := make([]string, 0, len(results))
 	for _, result := range results {
 		tokens += result.Tokens
+		inputTokens += result.InputTokens
+		outputTokens += result.OutputTokens
 		modelsUsed = append(modelsUsed, result.ModelUsed)
 	}
 	result := &EvaluationResult{
 		Metrics:          aggregated,
-		EvaluatorVersion: *evaluator,
+		EvaluatorVersion: evaluator,
 		Tokens:           tokens,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
 		ModelUsed:        strings.Join(modelsUsed, ","),
 		JudgeResults:     results,
 	}
-	log.Printf("[eval] judges done agent=%s aggregate_score=%.2f tokens=%d duration=%s", agentID, aggregated.CompositeScore, tokens, time.Since(start))
+	log.Printf("[eval] judges done mode=%s agent=%s aggregate_score=%.2f tokens_in=%d tokens_out=%d duration=%s", mode, agentID, aggregated.CompositeScore, inputTokens, outputTokens, time.Since(start))
 	return result, nil
 }
 
@@ -352,13 +440,18 @@ func SaveScore(conv models.AgentConversation, evaluation *EvaluationResult) erro
 		JudgeBComposite:          floatPtr(score.JudgeBComposite),
 		JudgeDisagreementDelta:   floatPtr(score.JudgeDisagreement),
 		EvalModelUsed:            stringPtr(evaluation.ModelUsed),
-		EvalCostUsd:              floatPtr(0),
+		EvalCostUsd:              floatPtr(evaluationCost(evaluation)),
 		CreatedAt:                time.Now().UTC(),
 	}
 	if err := o.Insert(&row); err != nil {
 		return err
 	}
-	return collections.LogCost("evaluation", &conv.AgentId, evaluation.ModelUsed, evaluation.Tokens, 0, &conv.Id, nil)
+	for _, judge := range evaluation.JudgeResults {
+		if err := collections.LogCost("evaluation", &conv.AgentId, judge.ModelUsed, judge.InputTokens, judge.OutputTokens, &conv.Id, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptExperiment, error) {
@@ -391,8 +484,14 @@ func RunMetaEvaluation(agentID models.AgentID) ([]models.MetaFlag, error) {
 		pctDiverged, avgDelta := judgeDisagreementStats(scores, slCfg.MaxJudgeDisagreement)
 		if pctDiverged >= 0.25 {
 			flags = append(flags, newMetaFlag(models.FlagTypeJudgeDisagreement, agentID, map[string]any{
-				"pct_diverged": pctDiverged, "avg_delta": avgDelta, "threshold": slCfg.MaxJudgeDisagreement,
+				"pct_diverged": pctDiverged, "avg_delta": avgDelta, "threshold": slCfg.MaxJudgeDisagreement, "examples": judgeDisagreementExamples(scores, slCfg.MaxJudgeDisagreement, 4),
 			}, "Clarify ambiguous rubric boundaries that cause judge disagreement."))
+		}
+		invalidRate, invalidCount := judgeInvalidJSONStats(scores)
+		if invalidCount > 0 {
+			flags = append(flags, newMetaFlag(models.FlagTypeJudgeDisagreement, agentID, map[string]any{
+				"invalid_json_rate": invalidRate, "invalid_json_count": invalidCount, "sample_n": len(values),
+			}, "Revise the evaluator prompt to enforce strict JSON-only scoring and avoid schema-invalid judge outputs."))
 		}
 		if reg := postAdoptionRegression(scores); reg != nil {
 			flags = append(flags, newMetaFlag(models.FlagTypePostAdoptionRegression, agentID, reg, "Rollback or tighten adoption gates for the regressed prompt version."))
@@ -474,26 +573,30 @@ func RerunEvaluations(req RerunRequest) (*RerunResult, error) {
 		return nil, err
 	}
 	scored := make([]string, 0, len(convs))
-	for _, conv := range convs {
-		if req.AgentID != nil && conv.AgentId != *req.AgentID {
-			continue
-		}
-		messages, err := collections.ListMessages(conv.Id, conv.WorkflowId)
+	for workflowID, group := range groupConversationsByWorkflow(convs) {
+		transcript, err := workflowTranscriptFromConversations(group)
 		if err != nil {
 			return nil, err
 		}
-		transcript := transcriptFromMessages(messages)
 		if strings.TrimSpace(transcript) == "" {
 			continue
 		}
-		evaluation, err := EvaluateWithJudges(conv.AgentId, transcript, req.Judges)
-		if err != nil {
-			return nil, err
+		for _, conv := range group {
+			if req.AgentID != nil && conv.AgentId != *req.AgentID {
+				continue
+			}
+			log.Printf("[eval] rerun system evaluation workflow=%s conversation=%s agent=%s transcript_chars=%d", workflowID, conv.Id, conv.AgentId, len(transcript))
+			evaluation, err := EvaluateSystemWithJudges(conv.AgentId, transcript, req.Judges)
+			if err != nil {
+				return nil, err
+			}
+			evaluation.Metrics.ComplianceBreakdown["system_level_evaluation"] = true
+			evaluation.Metrics.ComplianceBreakdown["rerun"] = true
+			if err := SaveScore(conv, evaluation); err != nil {
+				return nil, err
+			}
+			scored = append(scored, conv.Id)
 		}
-		if err := SaveScore(conv, evaluation); err != nil {
-			return nil, err
-		}
-		scored = append(scored, conv.Id)
 	}
 	return &RerunResult{ScoredConversationIDs: scored, ScoreCount: len(scored)}, nil
 }
@@ -911,7 +1014,7 @@ func (p *personaSimulator) Next(ctx context.Context, persona models.Persona, see
 	return "", lastErr
 }
 
-func evaluateWithJudge(evaluator models.EvaluatorVersion, transcript string, judge constants.EvaluatorJudgeConfig) (MetricScores, int, string, error) {
+func evaluateWithJudge(evaluator models.EvaluatorVersion, transcript string, judge constants.EvaluatorJudgeConfig, systemLevel bool) (MetricScores, int, int, string, error) {
 	modelCfg := ai.ModelConfig{BaseModel: ai.BaseModel(judge.Model), Provider: ai.Provider(judge.Provider)}
 	client := ai.NewKarmaAI(
 		ai.BaseModel(judge.Model),
@@ -920,18 +1023,105 @@ func evaluateWithJudge(evaluator models.EvaluatorVersion, transcript string, jud
 		ai.WithTemperature(judge.Temperature),
 	)
 	var metrics MetricScores
-	p := parser.NewParser(parser.WithAIClient(client), parser.WithMaxRetries(6))
-	tokens, err := parseWithParser(p, buildEvaluationPrompt(evaluator, transcript), &metrics)
+	prompt := buildEvaluationPrompt(evaluator, transcript, systemLevel)
+	inputTokens, outputTokens, err := parseMetricScores(client, prompt, &metrics)
 	if err != nil {
-		return MetricScores{}, 0, "", fmt.Errorf("judge %s evaluate %s: %w", judge.Name, evaluator.AgentId, err)
+		return MetricScores{}, 0, 0, "", fmt.Errorf("judge %s evaluate %s: %w", judge.Name, evaluator.AgentId, err)
 	}
 	normalizeMetrics(&metrics)
-	return metrics, tokens, string(judge.Provider) + "/" + modelCfg.GetModelString(), nil
+	return metrics, inputTokens, outputTokens, string(judge.Provider) + "/" + modelCfg.GetModelString(), nil
 }
 
-func parseWithParser(p *parser.Parser, prompt string, output any) (int, error) {
-	_, tokens, err := p.Parse(prompt, "", output)
-	return tokens, err
+func parseMetricScores(client *ai.KarmaAI, prompt string, output *MetricScores) (int, int, error) {
+	currentPrompt := prompt
+	var lastErr error
+	totalInput := 0
+	totalOutput := 0
+	for attempt := 0; attempt < 5; attempt++ {
+		resp, err := client.GenerateFromSinglePrompt(currentPrompt)
+		if err != nil {
+			lastErr = err
+		} else {
+			totalInput += resp.InputTokens
+			totalOutput += resp.OutputTokens
+			if err := json.Unmarshal([]byte(extractJSONObject(resp.AIResponse)), output); err == nil && validMetricScores(*output) {
+				return totalInput, totalOutput, nil
+			} else {
+				lastErr = metricParseError(err, *output)
+				currentPrompt = fmt.Sprintf("Fix this JSON so it exactly matches the requested metric schema. Return only JSON.\nError: %v\nBad response:\n%s", lastErr, resp.AIResponse)
+			}
+		}
+		chatResp, chatErr := client.ChatCompletionManaged(&karmaModels.AIChatHistory{
+			Messages: []karmaModels.AIMessage{{
+				UniqueId:  fmt.Sprintf("judge-json-repair-%d", attempt+1),
+				Role:      karmaModels.User,
+				Message:   currentPrompt,
+				Timestamp: time.Now().UTC(),
+			}},
+		})
+		if chatErr != nil {
+			lastErr = chatErr
+			continue
+		}
+		totalInput += chatResp.InputTokens
+		totalOutput += chatResp.OutputTokens
+		if err := json.Unmarshal([]byte(extractJSONObject(chatResp.AIResponse)), output); err == nil && validMetricScores(*output) {
+			return totalInput, totalOutput, nil
+		} else {
+			lastErr = metricParseError(err, *output)
+			currentPrompt = fmt.Sprintf("Fix this JSON so it exactly matches the requested metric schema. Return only JSON.\nError: %v\nBad response:\n%s", lastErr, chatResp.AIResponse)
+		}
+	}
+	*output = fallbackInvalidJudgeMetrics(lastErr)
+	return totalInput, totalOutput, nil
+}
+
+func fallbackInvalidJudgeMetrics(err error) MetricScores {
+	reason := "Judge returned invalid JSON after retries."
+	if err != nil {
+		reason += " Last error: " + err.Error()
+	}
+	return MetricScores{
+		CompositeScore:      0,
+		IdentityVerified:    0,
+		InfoCompleteness:    0,
+		NoRedundancy:        0,
+		ToneAppropriateness: 0,
+		OfferClarity:        0,
+		ObjectionHandling:   0,
+		CommitmentAttempt:   0,
+		ContextContinuity:   0,
+		ConsequenceAccuracy: 0,
+		DeadlineSpecificity: 0,
+		NoNegotiationDrift:  0,
+		CompliancePass:      0,
+		ComplianceBreakdown: map[string]any{"judge_invalid_json": true},
+		Reasoning:           reason,
+	}
+}
+
+func validMetricScores(scores MetricScores) bool {
+	if strings.TrimSpace(scores.Reasoning) == "" {
+		return false
+	}
+	if scores.CompositeScore < 0 || scores.CompositeScore > 100 {
+		return false
+	}
+	metricSum := scores.IdentityVerified + scores.InfoCompleteness + scores.NoRedundancy + scores.ToneAppropriateness + scores.OfferClarity + scores.ObjectionHandling + scores.CommitmentAttempt + scores.ContextContinuity + scores.ConsequenceAccuracy + scores.DeadlineSpecificity + scores.NoNegotiationDrift + scores.CompliancePass
+	if scores.CompositeScore == 0 && metricSum == 0 {
+		return false
+	}
+	return true
+}
+
+func metricParseError(err error, scores MetricScores) error {
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(scores.Reasoning) == "" {
+		return errors.New("judge JSON missing non-empty reasoning")
+	}
+	return errors.New("judge JSON did not contain usable metric scores")
 }
 
 func activeEvaluatorVersion(agentID models.AgentID) (*models.EvaluatorVersion, error) {
@@ -959,15 +1149,28 @@ func filterActiveEvaluators(rows []models.EvaluatorVersion) []models.EvaluatorVe
 	return activeRows
 }
 
-func buildEvaluationPrompt(evaluator models.EvaluatorVersion, transcript string) string {
+func buildEvaluationPrompt(evaluator models.EvaluatorVersion, transcript string, systemLevel bool) string {
+	scope := "completed collections conversation"
+	requirements := []string{
+		"Score only visible transcript evidence; do not assume hidden context repaired poor behavior.",
+	}
+	if systemLevel {
+		scope = "completed end-to-end Riverline workflow transcript containing ARIA, NOVA, and DELTA sections"
+		requirements = append(requirements,
+			"Evaluate the three-agent system as one borrower experience, not an isolated agent segment.",
+			"Score ARIA intake, NOVA offer handling, DELTA final notice, and cross-stage handoff continuity from the full transcript.",
+			"Attribute the score to the prompt under test, but penalize any downstream or upstream defect caused by that prompt's behavior.",
+		)
+	}
 	payload := map[string]any{
 		"agent_id":          evaluator.AgentId,
 		"evaluator_version": evaluator.VersionNumber,
 		"judge_prompt":      evaluator.JudgePrompt,
+		"system_level":      systemLevel,
 		"transcript":        transcript,
 	}
 	data, _ := json.Marshal(payload)
-	return fmt.Sprintf(`Use the judge prompt in INPUT JSON to score the completed collections conversation.
+	return fmt.Sprintf(`Use the judge prompt in INPUT JSON to score the %s.
 
 Return ONLY valid JSON with these keys:
 {
@@ -995,9 +1198,10 @@ Scoring constraints:
 - composite_score and judge_b_composite must be 0 to 100.
 - compliance_pass must be 10 only if every compliance rule passes, otherwise 0.
 - Do not use hidden assumptions or invent transcript details.
+- %s
 
 INPUT JSON:
-%s`, string(data))
+%s`, scope, strings.Join(requirements, "\n- "), string(data))
 }
 
 func normalizeMetrics(scores *MetricScores) {
@@ -1132,7 +1336,7 @@ func createSimulatedWorkflow(persona models.Persona, seed string) (*models.Borro
 		Phone:     &phone,
 		Dob:       time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC),
 		Gender:    "unspecified",
-		Extra:     map[string]any{"simulated": true, "persona": persona, "seed": seed},
+		Extra:     map[string]any{"simulated": true, "persona": persona, "seed": seed, "scenario_profile": personaScenarioFacts(persona)},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -1290,10 +1494,80 @@ func fullTranscript(byAgent map[models.AgentID]string) string {
 	return strings.Join(parts, "\n\n")
 }
 
+func conversationForAgent(sim SimulatedConversation, agentID models.AgentID) (models.AgentConversation, bool) {
+	for _, conv := range sim.Conversations {
+		if conv.AgentId == agentID {
+			return conv, true
+		}
+	}
+	if len(sim.Conversations) == 0 {
+		return models.AgentConversation{}, false
+	}
+	return sim.Conversations[0], true
+}
+
+func conversationIDs(convs []models.AgentConversation) []string {
+	ids := make([]string, 0, len(convs))
+	for _, conv := range convs {
+		ids = append(ids, conv.Id)
+	}
+	return ids
+}
+
+func groupConversationsByWorkflow(convs []models.AgentConversation) map[string][]models.AgentConversation {
+	groups := map[string][]models.AgentConversation{}
+	for _, conv := range convs {
+		groups[conv.WorkflowId] = append(groups[conv.WorkflowId], conv)
+	}
+	for workflowID := range groups {
+		sort.Slice(groups[workflowID], func(i, j int) bool {
+			return groups[workflowID][i].StartedAt.Before(groups[workflowID][j].StartedAt)
+		})
+	}
+	return groups
+}
+
+func workflowTranscriptFromConversations(convs []models.AgentConversation) (string, error) {
+	byAgent := map[models.AgentID]string{}
+	for _, conv := range convs {
+		messages, err := collections.ListMessages(conv.Id, conv.WorkflowId)
+		if err != nil {
+			return "", err
+		}
+		byAgent[conv.AgentId] = transcriptFromMessages(messages)
+	}
+	return fullTranscript(byAgent), nil
+}
+
+func evaluationCost(evaluation *EvaluationResult) float64 {
+	total := 0.0
+	for _, judge := range evaluation.JudgeResults {
+		total += judge.CostUSD
+	}
+	return total
+}
+
+func extractJSONObject(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "```json")
+	value = strings.TrimPrefix(value, "```")
+	value = strings.TrimSuffix(value, "```")
+	value = strings.TrimSpace(value)
+	start := strings.Index(value, "{")
+	end := strings.LastIndex(value, "}")
+	if start >= 0 && end >= start {
+		return value[start : end+1]
+	}
+	return value
+}
+
 func personaSystemPrompt(persona models.Persona, seed string, borrowerContext string) string {
 	return fmt.Sprintf(`You are simulating a borrower in Riverline's debt collection assessment. You are not the Riverline agent.
 
 Authoritative borrower and loan row context:
+%s
+
+Scenario facts for this simulated borrower:
 %s
 
 Persona: %s.
@@ -1304,12 +1578,13 @@ Behavior rules:
 - Never write the agent's lines.
 - Do not output labels like "Borrower:".
 - Keep replies short and realistic.
+- Use the borrower row, loan row, and scenario facts as truth. Do not invent contradictory account details, hardship claims, stop-contact requests, or payment capacity.
 - For cooperative, answer directly and accept a reasonable plan if clearly presented.
 - For combative, resist and challenge but do not invent legal facts.
 - For evasive, avoid exact details until pressed, then provide partial answers.
 - For confused, ask clarifying questions and misunderstand one important point.
 - For distressed, mention hardship or crisis pressure and avoid overcommitting.
-- If the agent asks for stop-contact handling, only request stop contact if it fits the persona trajectory.`, borrowerContext, persona, seed)
+- If the agent asks for stop-contact handling, only request stop contact if it fits the persona trajectory.`, borrowerContext, personaScenarioFacts(persona), persona, seed)
 }
 
 func borrowerPersonaContext(wf models.BorrowerWorkflow) string {
@@ -1353,6 +1628,23 @@ loans row:
 	)
 }
 
+func personaScenarioFacts(persona models.Persona) string {
+	switch persona {
+	case models.PersonaCooperative:
+		return "Employment: full-time salaried. Monthly income: about $3,500. Monthly obligations: about $2,100. Default reason: autopay failed after a bank-account change, not hardship. Preferred callback: tomorrow evening IST. Payment stance: willing to accept a reasonable lump-sum discount or EMI plan."
+	case models.PersonaCombative:
+		return "Employment: self-employed contractor. Monthly income: irregular, around $2,800 on average. Monthly obligations: about $2,400. Default reason: disputes fees and feels pressured, but this is not a stop-contact request. Preferred callback: tomorrow afternoon IST if the agent stays professional. Payment stance: may reject the first offer but can consider an EMI plan."
+	case models.PersonaEvasive:
+		return "Employment: part-time plus gig work. Monthly income: roughly $2,200 to $2,600. Monthly obligations: about $1,900. Default reason: cash-flow timing after reduced work hours, not severe hardship. Preferred callback: tomorrow evening IST. Payment stance: avoids exact numbers at first but can accept a lower monthly plan."
+	case models.PersonaConfused:
+		return "Employment: employed. Monthly income: about $3,100. Monthly obligations: about $2,000. Default reason: misunderstood due dates after moving. Preferred callback: later today IST. Payment stance: asks clarifying questions but can choose a clear plan."
+	case models.PersonaDistressed:
+		return "Employment: unstable. Monthly income: uncertain. Monthly obligations: high relative to income. Default reason: hardship and crisis pressure. Preferred callback: not ready until hardship handling is acknowledged. Payment stance: cannot commit until hardship support is discussed."
+	default:
+		return "Employment, income, obligations, default reason, callback preference, and payment stance should remain consistent with the borrower and loan rows."
+	}
+}
+
 func personaResponseComplete(content string) bool {
 	content = strings.TrimSpace(content)
 	if len(content) < 8 {
@@ -1392,24 +1684,136 @@ func previewText(value string, maxLen int) string {
 	return value[:maxLen] + "..."
 }
 
-func generateCandidatePrompt(agentID models.AgentID, currentPrompt string) (string, int, string, error) {
-	client, err := clientForSimulation(agentID, nil)
-	if err != nil {
-		return "", 0, "", err
+func PromptGenerationEvidenceFromScores(agentID models.AgentID, controlVersion int, candidateVersion int, scores []SimulationScore) string {
+	values := aggregateSimulationMeans(scores)
+	lines := []string{
+		fmt.Sprintf("Agent: %s", agentID),
+		fmt.Sprintf("Control prompt version: v%d", controlVersion),
+		fmt.Sprintf("Candidate prompt version to create: v%d", candidateVersion),
+		fmt.Sprintf("Control sample size: %d", len(values)),
+		fmt.Sprintf("Control mean composite: %.2f", Mean(values)),
+		fmt.Sprintf("Control stddev: %.2f", Stddev(values)),
+		fmt.Sprintf("Control median: %.2f", ComputePercentile(values, 50)),
+		fmt.Sprintf("Control compliance rate: %.2f", aggregateComplianceRate(scores)),
+		"",
+		"Per-simulation judge evidence:",
 	}
+	metricTotals := map[string][]float64{}
+	for _, score := range scores {
+		lines = append(lines, fmt.Sprintf("- workflow=%s persona=%s score=%.2f compliance=%.2f disagreement=%.2f prompt_v=%d", score.WorkflowID, score.Persona, score.Mean, score.ComplianceRate, score.JudgeDisagreement, score.PromptVersion))
+		if strings.TrimSpace(score.Reasoning) != "" {
+			lines = append(lines, "  defects: "+truncateForPrompt(score.Reasoning, 700))
+		}
+		for _, judge := range score.JudgeResults {
+			m := judge.Metrics
+			lines = append(lines, fmt.Sprintf("  judge=%s model=%s composite=%.2f compliance=%.0f disagreement_basis=true reasoning=%s", judge.Name, judge.ModelUsed, m.CompositeScore, m.CompliancePass, truncateForPrompt(m.Reasoning, 350)))
+			appendMetric(metricTotals, "identity_verified", m.IdentityVerified)
+			appendMetric(metricTotals, "info_completeness", m.InfoCompleteness)
+			appendMetric(metricTotals, "no_redundancy", m.NoRedundancy)
+			appendMetric(metricTotals, "tone_appropriateness", m.ToneAppropriateness)
+			appendMetric(metricTotals, "offer_clarity", m.OfferClarity)
+			appendMetric(metricTotals, "objection_handling", m.ObjectionHandling)
+			appendMetric(metricTotals, "commitment_attempt", m.CommitmentAttempt)
+			appendMetric(metricTotals, "context_continuity", m.ContextContinuity)
+			appendMetric(metricTotals, "consequence_accuracy", m.ConsequenceAccuracy)
+			appendMetric(metricTotals, "deadline_specificity", m.DeadlineSpecificity)
+			appendMetric(metricTotals, "no_negotiation_drift", m.NoNegotiationDrift)
+		}
+	}
+	lines = append(lines, "", "Lowest metric means:")
+	type metricMean struct {
+		Name string
+		Mean float64
+	}
+	metricMeans := make([]metricMean, 0, len(metricTotals))
+	for name, vals := range metricTotals {
+		metricMeans = append(metricMeans, metricMean{Name: name, Mean: Mean(vals)})
+	}
+	sort.Slice(metricMeans, func(i, j int) bool { return metricMeans[i].Mean < metricMeans[j].Mean })
+	for i, metric := range metricMeans {
+		if i >= 6 {
+			break
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %.2f", metric.Name, metric.Mean))
+	}
+	lines = append(lines,
+		"",
+		"Required improvement focus:",
+		"- Preserve the complete existing role, tools, context budgets, and Riverline single-agent user-facing identity.",
+		"- Fix the lowest-scoring metrics and judge-identified defects only; do not broaden scope.",
+		"- Improve compliance first: AI disclosure, logging/recording disclosure, stop-contact, hardship, data privacy, no false threats, no invented terms.",
+		"- Improve handoff timing: do not trigger handoff before required facts and confirmed callback time unless terminal stop-contact/hardship applies.",
+	)
+	return strings.Join(lines, "\n")
+}
+
+func appendMetric(metrics map[string][]float64, key string, value float64) {
+	metrics[key] = append(metrics[key], value)
+}
+
+func truncateForPrompt(value string, maxLen int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if maxLen <= 0 || len(value) <= maxLen {
+		return value
+	}
+	return value[:maxLen] + "..."
+}
+
+func generateCandidatePrompt(agentID models.AgentID, currentPrompt string, evidence string) (string, int, int, string, error) {
 	prompt := fmt.Sprintf(`Generate an improved production system prompt for the %s collections agent.
 
 Current prompt:
 %s
 
-Keep the same agent role, tools, compliance boundaries, context budgets, borrower-facing single Riverline identity, and handoff responsibilities. Improve measurable performance only where the current prompt is likely to cause missing disclosures, weak continuity, vague offers, skipped callback scheduling, weak objection handling, or compliance risk.
+Quantitative control-run evidence and judge defects:
+%s
 
-Return only the complete replacement system prompt.`, agentID, currentPrompt)
-	resp, err := client.GenerateText(prompt)
+Rewrite instructions:
+- Return the complete replacement system prompt, not a diff.
+- Preserve the same agent role, tools, compliance boundaries, context budgets, borrower-facing single Riverline identity, and handoff responsibilities.
+- Use the evidence to target concrete measurable improvements. Do not add unrelated policy.
+- Keep the prompt operationally precise: ordered flow, stop conditions, tool-use criteria, and failure recovery instructions.
+- Make the prompt robust against the exact defects and low metrics listed above.
+
+Return only the complete replacement system prompt.`, agentID, currentPrompt, evidence)
+	resp, err := generateInternalText(prompt, internalPromptOptimizerSystemPrompt(), 8)
 	if err != nil {
-		return "", 0, "", fmt.Errorf("generate candidate prompt for %s: %w", agentID, err)
+		log.Printf("[eval] candidate prompt generation fallback agent=%s err=%v", agentID, err)
+		return fallbackCandidatePrompt(agentID, currentPrompt), 0, 0, "deterministic/fallback", nil
 	}
-	return strings.TrimSpace(resp.AIResponse), resp.Tokens, client.ModelUsed(), nil
+	candidate := strings.TrimSpace(resp.Text)
+	if len(candidate) < int(float64(len(strings.TrimSpace(currentPrompt)))*0.75) {
+		candidate = strings.TrimSpace(currentPrompt) + "\n\n[Self-Learning Revision Based On Control-Run Evidence]\n" + candidate
+	}
+	return candidate, resp.InputTokens, resp.OutputTokens, resp.ModelUsed, nil
+}
+
+func fallbackCandidatePrompt(agentID models.AgentID, currentPrompt string) string {
+	currentPrompt = strings.TrimSpace(currentPrompt)
+	reinforcement := map[models.AgentID]string{
+		models.AgentAria: `Self-learning reinforcement:
+- Use one borrower-facing Riverline identity only; do not expose internal agent names.
+- Do not reveal account partials, borrower name, balances, or overdue facts before the borrower has supplied matching verification details.
+- First verify identity using borrower-provided name and account partial, then collect employment status, income range, monthly obligations, default reason, hardship/stop-contact flags, and preferred NOVA callback time.
+- Never call create_aria_handoff for ready_for_nova until the borrower has provided a specific callback time. If the tool returns a recoverable error, ask only for the missing item and retry after the borrower answers.
+- ARIA must not generate or negotiate repayment offers; it only collects assessment facts and schedules the resolution call.
+- If the borrower requests stop-contact or a terminal hardship path, produce the terminal handoff and do not schedule NOVA.`,
+		models.AgentNova: `Self-learning reinforcement:
+- Use one borrower-facing Riverline identity only; do not expose internal agent names.
+- Start by confirming whether it is a good time to discuss repayment options, then present the exact primary offer and fallback option before asking for commitment.
+- Do not end the call immediately after availability confirmation. The offer must be spoken with exact amounts, discount percent, EMI amount/months, deadlines or start dates, and the acceptance question.
+- Treat acceptance only as acceptance of exact payment terms after they were presented; availability confirmation is not offer acceptance.
+- If rejected, capture objections and outcome for DELTA without inventing new terms.`,
+		models.AgentDelta: `Self-learning reinforcement:
+- Use one borrower-facing Riverline identity only; do not expose internal agent names.
+- Use only NOVA outcome context. If NOVA was accepted, send confirmation details. If NOVA was rejected or unresolved, communicate the final offer with exact amount, deadline, and consequences accurately.
+- Do not reopen ARIA intake or invent new repayment plans. Keep chat aligned to the final notice and accepted/rejected offer state.
+- Mark the workflow resolved only after clear acceptance, rejection, stop-contact, hardship, or escalation outcome.`,
+	}
+	if extra, ok := reinforcement[agentID]; ok {
+		return currentPrompt + "\n\n" + extra
+	}
+	return currentPrompt
 }
 
 func saveCandidatePrompt(agentID models.AgentID, version int, candidatePrompt string, adopted bool, exp *models.PromptExperiment) error {
@@ -1465,7 +1869,7 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	if err != nil {
 		return err
 	}
-	judgePrompt, tokens, modelUsed, err := generateEvaluatorRevision(agentID, *before, *flag)
+	judgePrompt, inputTokens, outputTokens, modelUsed, err := generateEvaluatorRevision(agentID, *before, *flag)
 	if err != nil {
 		return err
 	}
@@ -1474,7 +1878,7 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 		return err
 	}
 	now := time.Now().UTC()
-	active := true
+	active := false
 	changeReason := "Generated from meta-evaluation flag " + flag.Id
 	evaluator := models.EvaluatorVersion{
 		Id:                utils.GenerateID(),
@@ -1488,42 +1892,56 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	}
 	evaluatorOrm := orm.Load(&models.EvaluatorVersion{})
 	defer evaluatorOrm.Close()
-	inactive := false
-	var existing []models.EvaluatorVersion
-	if err := evaluatorOrm.GetByFieldEquals("AgentId", agentID).Scan(&existing); err != nil {
-		return err
-	}
-	for i := range existing {
-		if existing[i].IsActive != nil && *existing[i].IsActive {
-			existing[i].IsActive = &inactive
-			if err := evaluatorOrm.Update(&existing[i], existing[i].Id); err != nil {
-				return err
-			}
-		}
-	}
 	if err := evaluatorOrm.Insert(&evaluator); err != nil {
 		return err
 	}
+	benchmark := benchmarkEvaluatorRevision(agentID, *before, evaluator)
+	improved := evaluatorBenchmarkImproved(benchmark)
+	if improved {
+		inactive := false
+		var existing []models.EvaluatorVersion
+		if err := evaluatorOrm.GetByFieldEquals("AgentId", agentID).Scan(&existing); err != nil {
+			return err
+		}
+		for i := range existing {
+			if existing[i].IsActive != nil && *existing[i].IsActive {
+				existing[i].IsActive = &inactive
+				if err := evaluatorOrm.Update(&existing[i], existing[i].Id); err != nil {
+					return err
+				}
+			}
+		}
+		active := true
+		evaluator.IsActive = &active
+		if err := evaluatorOrm.Update(&evaluator, evaluator.Id); err != nil {
+			return err
+		}
+	}
+	if flag.Evidence == nil {
+		flag.Evidence = map[string]any{}
+	}
+	flag.Evidence["revision_benchmark"] = benchmark
 	resolved := true
-	resolution := fmt.Sprintf("Created and activated evaluator version %d from meta-evaluation evidence.", nextVersion)
+	resolution := fmt.Sprintf("Created evaluator version %d but kept it inactive because benchmark did not improve.", nextVersion)
+	if improved {
+		resolution = fmt.Sprintf("Created and activated evaluator version %d after benchmark improvement.", nextVersion)
+	}
 	flag.Resolved = &resolved
 	flag.Resolution = &resolution
 	flag.EvaluatorVersionBefore = &before.VersionNumber
-	flag.EvaluatorVersionAfter = &nextVersion
+	if improved {
+		flag.EvaluatorVersionAfter = &nextVersion
+	}
 	flag.ResolvedAt = &now
 	flagOrm := orm.Load(&models.MetaFlag{})
 	defer flagOrm.Close()
 	if err := flagOrm.Update(flag, flag.Id); err != nil {
 		return err
 	}
-	return collections.LogCost("evaluator_prompt_generation", flag.AgentId, modelUsed, tokens, 0, nil, nil)
+	return collections.LogCost("evaluator_prompt_generation", flag.AgentId, modelUsed, inputTokens, outputTokens, nil, nil)
 }
 
-func generateEvaluatorRevision(agentID models.AgentID, current models.EvaluatorVersion, flag models.MetaFlag) (string, int, string, error) {
-	client, err := clientForSimulation(agentID, nil)
-	if err != nil {
-		return "", 0, "", err
-	}
+func generateEvaluatorRevision(agentID models.AgentID, current models.EvaluatorVersion, flag models.MetaFlag) (string, int, int, string, error) {
 	evidence, _ := json.Marshal(flag.Evidence)
 	prompt := fmt.Sprintf(`Generate a revised evaluator judge prompt for the %s collections agent.
 
@@ -1542,11 +1960,175 @@ The revised prompt must:
 - Improve stable rerun behavior for identical transcripts.
 
 Return only the revised judge prompt text.`, agentID, current.JudgePrompt, flag.FlagType, string(evidence), derefString(flag.ProposedAction))
-	resp, err := client.GenerateText(prompt)
+	resp, err := generateInternalText(prompt, internalPromptOptimizerSystemPrompt(), 8)
 	if err != nil {
-		return "", 0, "", fmt.Errorf("generate evaluator revision for %s: %w", agentID, err)
+		return "", 0, 0, "", fmt.Errorf("generate evaluator revision for %s: %w", agentID, err)
 	}
-	return strings.TrimSpace(resp.AIResponse), resp.Tokens, client.ModelUsed(), nil
+	return strings.TrimSpace(resp.Text), resp.InputTokens, resp.OutputTokens, resp.ModelUsed, nil
+}
+
+func benchmarkEvaluatorRevision(agentID models.AgentID, before models.EvaluatorVersion, after models.EvaluatorVersion) map[string]any {
+	transcripts, err := recentSystemTranscriptsForAgent(agentID, 4)
+	if err != nil || len(transcripts) == 0 {
+		return map[string]any{"error": fmt.Sprint(err), "sample_n": len(transcripts)}
+	}
+	judges := constants.DefaultSelfLearningConfig().Judges
+	beforeScores := make([]float64, 0, len(transcripts))
+	afterScores := make([]float64, 0, len(transcripts))
+	beforeDisagreements := make([]float64, 0, len(transcripts))
+	afterDisagreements := make([]float64, 0, len(transcripts))
+	beforeInvalid := 0
+	afterInvalid := 0
+	for _, transcript := range transcripts {
+		beforeEval, beforeErr := evaluateTranscriptWithEvaluator(before, transcript, judges, true)
+		afterEval, afterErr := evaluateTranscriptWithEvaluator(after, transcript, judges, true)
+		if beforeErr == nil {
+			beforeScores = append(beforeScores, beforeEval.Metrics.CompositeScore)
+			beforeDisagreements = append(beforeDisagreements, beforeEval.Metrics.JudgeDisagreement)
+			beforeInvalid += countInvalidJudgeResults(beforeEval.JudgeResults)
+		}
+		if afterErr == nil {
+			afterScores = append(afterScores, afterEval.Metrics.CompositeScore)
+			afterDisagreements = append(afterDisagreements, afterEval.Metrics.JudgeDisagreement)
+			afterInvalid += countInvalidJudgeResults(afterEval.JudgeResults)
+		}
+	}
+	return map[string]any{
+		"sample_n":                  len(transcripts),
+		"before_evaluator_version":  before.VersionNumber,
+		"after_evaluator_version":   after.VersionNumber,
+		"before_mean_score":         Mean(beforeScores),
+		"after_mean_score":          Mean(afterScores),
+		"score_delta":               Mean(afterScores) - Mean(beforeScores),
+		"before_mean_disagreement":  Mean(beforeDisagreements),
+		"after_mean_disagreement":   Mean(afterDisagreements),
+		"disagreement_delta":        Mean(afterDisagreements) - Mean(beforeDisagreements),
+		"before_invalid_json_count": beforeInvalid,
+		"after_invalid_json_count":  afterInvalid,
+		"invalid_json_delta":        afterInvalid - beforeInvalid,
+		"improved":                  evaluatorBenchmarkValuesImproved(Mean(beforeScores), Mean(afterScores), Mean(beforeDisagreements), Mean(afterDisagreements), beforeInvalid, afterInvalid),
+	}
+}
+
+func evaluatorBenchmarkImproved(benchmark map[string]any) bool {
+	beforeScore, ok1 := benchmark["before_mean_score"].(float64)
+	afterScore, ok2 := benchmark["after_mean_score"].(float64)
+	beforeDisagreement, ok3 := benchmark["before_mean_disagreement"].(float64)
+	afterDisagreement, ok4 := benchmark["after_mean_disagreement"].(float64)
+	beforeInvalid, ok5 := benchmark["before_invalid_json_count"].(int)
+	afterInvalid, ok6 := benchmark["after_invalid_json_count"].(int)
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 {
+		return false
+	}
+	return evaluatorBenchmarkValuesImproved(beforeScore, afterScore, beforeDisagreement, afterDisagreement, beforeInvalid, afterInvalid)
+}
+
+func evaluatorBenchmarkValuesImproved(beforeScore, afterScore, beforeDisagreement, afterDisagreement float64, beforeInvalid, afterInvalid int) bool {
+	if afterInvalid < beforeInvalid {
+		return true
+	}
+	scoreDrop := beforeScore - afterScore
+	disagreementDrop := beforeDisagreement - afterDisagreement
+	if afterInvalid <= beforeInvalid && disagreementDrop >= 5 && scoreDrop <= 2 {
+		return true
+	}
+	return afterInvalid <= beforeInvalid && afterScore > beforeScore+2 && afterDisagreement <= beforeDisagreement+2
+}
+
+func countInvalidJudgeResults(results []JudgeResult) int {
+	count := 0
+	for _, result := range results {
+		data, _ := json.Marshal(result.Metrics.ComplianceBreakdown)
+		if strings.Contains(string(data), "judge_invalid_json") {
+			count++
+		}
+	}
+	return count
+}
+
+func recentSystemTranscriptsForAgent(agentID models.AgentID, limit int) ([]string, error) {
+	o := orm.Load(&models.ConversationScore{})
+	defer o.Close()
+	var scores []models.ConversationScore
+	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&scores); err != nil {
+		return nil, err
+	}
+	sort.Slice(scores, func(i, j int) bool { return scores[i].CreatedAt.After(scores[j].CreatedAt) })
+	out := make([]string, 0, limit)
+	seen := map[string]bool{}
+	for _, score := range scores {
+		if score.WorkflowId == nil || *score.WorkflowId == "" || seen[*score.WorkflowId] {
+			continue
+		}
+		convOrm := orm.Load(&models.AgentConversation{})
+		var convs []models.AgentConversation
+		err := convOrm.GetByFieldEquals("WorkflowId", *score.WorkflowId).Scan(&convs)
+		convOrm.Close()
+		if err != nil {
+			return nil, err
+		}
+		transcript, err := workflowTranscriptFromConversations(convs)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(transcript) == "" {
+			continue
+		}
+		seen[*score.WorkflowId] = true
+		out = append(out, transcript)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func internalPromptOptimizerSystemPrompt() string {
+	return `You are Riverline's internal prompt optimization and evaluator-rubric repair service. You write production-ready agent prompts and evaluator prompts from quantitative evidence. Follow the requested output format exactly. Never roleplay as a borrower-facing collections agent. Preserve compliance, tool contracts, and context-budget constraints.`
+}
+
+func generateInternalText(prompt string, systemPrompt string, attempts int) (*GeneratedText, error) {
+	if attempts <= 0 {
+		attempts = 1
+	}
+	cfg := constants.DefaultSelfLearningConfig().PromptGenerator
+	modelCfg := ai.ModelConfig{BaseModel: ai.BaseModel(cfg.Model), Provider: ai.Provider(cfg.Provider)}
+	client := ai.NewKarmaAI(
+		ai.BaseModel(cfg.Model),
+		ai.Provider(cfg.Provider),
+		ai.WithMaxTokens(2200),
+		ai.WithSystemMessage(systemPrompt),
+		ai.WithTemperature(cfg.Temperature),
+	)
+	modelUsed := string(cfg.Provider) + "/" + modelCfg.GetModelString()
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		resp, err := client.GenerateFromSinglePrompt(prompt)
+		if err == nil && strings.TrimSpace(resp.AIResponse) != "" {
+			return &GeneratedText{Text: strings.TrimSpace(resp.AIResponse), InputTokens: resp.InputTokens, OutputTokens: resp.OutputTokens, ModelUsed: modelUsed}, nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = errors.New("empty AI response")
+		}
+		chatResp, chatErr := client.ChatCompletionManaged(&karmaModels.AIChatHistory{
+			Messages: []karmaModels.AIMessage{{
+				UniqueId:  fmt.Sprintf("internal-generation-%d", attempt+1),
+				Role:      karmaModels.User,
+				Message:   prompt,
+				Timestamp: time.Now().UTC(),
+			}},
+		})
+		if chatErr == nil && strings.TrimSpace(chatResp.AIResponse) != "" {
+			return &GeneratedText{Text: strings.TrimSpace(chatResp.AIResponse), InputTokens: chatResp.InputTokens, OutputTokens: chatResp.OutputTokens, ModelUsed: modelUsed}, nil
+		}
+		if chatErr != nil {
+			lastErr = chatErr
+		}
+		time.Sleep(time.Duration(attempt+1) * 300 * time.Millisecond)
+	}
+	return nil, lastErr
 }
 
 func conversationsForRerun(req RerunRequest) ([]models.AgentConversation, error) {
@@ -1702,6 +2284,72 @@ func judgeDisagreementStats(scores []models.ConversationScore, threshold float64
 		return 0, 0
 	}
 	return float64(diverged) / float64(len(values)), Mean(values)
+}
+
+func judgeDisagreementExamples(scores []models.ConversationScore, threshold float64, limit int) []map[string]any {
+	if limit <= 0 {
+		return nil
+	}
+	sort.Slice(scores, func(i, j int) bool {
+		return derefFloat(scores[i].JudgeDisagreementDelta) > derefFloat(scores[j].JudgeDisagreementDelta)
+	})
+	examples := make([]map[string]any, 0, limit)
+	for _, score := range scores {
+		if score.JudgeDisagreementDelta == nil || *score.JudgeDisagreementDelta <= threshold || score.ComplianceBreakdown == nil {
+			continue
+		}
+		var judges []JudgeResult
+		data, _ := json.Marshal(score.ComplianceBreakdown["judge_results"])
+		if err := json.Unmarshal(data, &judges); err != nil || len(judges) == 0 {
+			continue
+		}
+		judgeSummaries := make([]map[string]any, 0, len(judges))
+		for _, judge := range judges {
+			judgeSummaries = append(judgeSummaries, map[string]any{
+				"name":                 judge.Name,
+				"score":                judge.Metrics.CompositeScore,
+				"compliance_pass":      judge.Metrics.CompliancePass,
+				"compliance_breakdown": judge.Metrics.ComplianceBreakdown,
+				"reasoning":            truncateForPrompt(judge.Metrics.Reasoning, 320),
+			})
+		}
+		examples = append(examples, map[string]any{
+			"workflow_id":         score.WorkflowId,
+			"conversation_id":     score.ConversationId,
+			"prompt_version":      score.PromptVersion,
+			"persona":             score.PersonaType,
+			"aggregate_score":     score.CompositeScore,
+			"disagreement_delta":  derefFloat(score.JudgeDisagreementDelta),
+			"aggregate_breakdown": score.ComplianceBreakdown,
+			"judges":              judgeSummaries,
+		})
+		if len(examples) >= limit {
+			break
+		}
+	}
+	return examples
+}
+
+func judgeInvalidJSONStats(scores []models.ConversationScore) (float64, int) {
+	if len(scores) == 0 {
+		return 0, 0
+	}
+	invalid := 0
+	checked := 0
+	for _, score := range scores {
+		if score.ComplianceBreakdown == nil {
+			continue
+		}
+		checked++
+		data, _ := json.Marshal(score.ComplianceBreakdown["judge_results"])
+		if strings.Contains(string(data), "judge_invalid_json") {
+			invalid++
+		}
+	}
+	if checked == 0 {
+		return 0, 0
+	}
+	return float64(invalid) / float64(checked), invalid
 }
 
 func postAdoptionRegression(scores []models.ConversationScore) map[string]any {

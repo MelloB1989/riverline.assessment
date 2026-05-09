@@ -79,7 +79,7 @@ func AriaHandoffWorkflow(ctx workflow.Context, workflowID string) (BorrowerWorkf
 	if err := workflow.ExecuteActivity(ctx, CompleteARIA, workflowID).Get(ctx, &afterAriaOutcome); err != nil {
 		return BorrowerWorkflowResult{}, err
 	}
-	if afterAriaOutcome == string(models.OutcomeStopContact) {
+	if afterAriaOutcome == string(models.OutcomeStopContact) || afterAriaOutcome == string(models.OutcomeHardship) {
 		return BorrowerWorkflowResult{WorkflowID: workflowID, Outcome: afterAriaOutcome}, nil
 	}
 
@@ -482,16 +482,23 @@ func EvaluateWorkflowConversations(workflowID string) (int, error) {
 	sort.Slice(conversations, func(i, j int) bool {
 		return conversations[i].StartedAt.Before(conversations[j].StartedAt)
 	})
+	transcripts := map[models.AgentID]string{}
+	for _, conv := range conversations {
+		transcript, err := conversationTranscript(conv)
+		if err == nil && strings.TrimSpace(transcript) != "" {
+			transcripts[conv.AgentId] = transcript
+		}
+	}
+	systemTranscript := workflowTranscript(transcripts)
 	scored := 0
 	for _, conv := range conversations {
 		if derefBool(conv.IsSimulated) || hasConversationScore(conv.Id) {
 			continue
 		}
-		transcript, err := conversationTranscript(conv)
-		if err != nil || strings.TrimSpace(transcript) == "" {
+		if strings.TrimSpace(systemTranscript) == "" {
 			continue
 		}
-		evaluation, err := rivereval.Evaluate(conv.AgentId, transcript)
+		evaluation, err := rivereval.EvaluateSystemWithJudges(conv.AgentId, systemTranscript, nil)
 		if err != nil {
 			return scored, err
 		}
@@ -523,6 +530,17 @@ func conversationTranscript(conv models.AgentConversation) (string, error) {
 		b.WriteString("\n")
 	}
 	return strings.TrimSpace(b.String()), nil
+}
+
+func workflowTranscript(byAgent map[models.AgentID]string) string {
+	order := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
+	parts := make([]string, 0, len(order))
+	for _, agentID := range order {
+		if transcript := strings.TrimSpace(byAgent[agentID]); transcript != "" {
+			parts = append(parts, strings.ToUpper(string(agentID))+" TRANSCRIPT\n"+transcript)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func hasConversationScore(conversationID string) bool {

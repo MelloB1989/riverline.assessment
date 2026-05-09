@@ -229,7 +229,11 @@ func AdminRunSimulations(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
-	scores, err := rivereval.ScoreSimulations(sims, req.Judges)
+	agentID := req.AgentID
+	if agentID == "" {
+		agentID = models.AgentAria
+	}
+	scores, err := rivereval.ScoreSimulationsForAgent(sims, agentID, req.Judges)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}

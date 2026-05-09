@@ -168,8 +168,10 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 	if wf.CurrentStage == models.AgentAria && toolResults.AriaHandoff != nil {
 		handoffTokens = toolResults.AriaHandoff.Tokens
 		applyAriaHandoff(wf, toolResults.AriaHandoff.Result)
-		if err := setInitialNovaSchedule(wf, toolResults.AriaHandoff.Result); err != nil {
-			return nil, err
+		if !ariaTerminalOutcome(wf) {
+			if err := setInitialNovaSchedule(wf, toolResults.AriaHandoff.Result); err != nil {
+				return nil, err
+			}
 		}
 		stageComplete = true
 		workflowChanged = true

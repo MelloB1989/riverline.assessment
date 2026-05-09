@@ -2,10 +2,12 @@ package collections
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"riverline_server/internal/agents"
@@ -18,6 +20,37 @@ import (
 type StageToolResults struct {
 	AriaHandoff    *HandoffCall[AriaHandoffResult]
 	NovaReschedule *NovaRescheduleResult
+}
+
+func missingAriaReadyFields(result AriaHandoffResult) []string {
+	missing := []string{}
+	if result.IdentityVerified == nil || !*result.IdentityVerified {
+		missing = append(missing, "identity_verified")
+	}
+	if result.EmploymentStatus == nil || strings.TrimSpace(*result.EmploymentStatus) == "" {
+		missing = append(missing, "employment_status")
+	}
+	if result.MonthlyIncomeRange == nil || strings.TrimSpace(*result.MonthlyIncomeRange) == "" {
+		missing = append(missing, "monthly_income_range")
+	}
+	if result.MonthlyObligations == nil {
+		missing = append(missing, "monthly_obligations")
+	}
+	if result.DefaultReason == nil || strings.TrimSpace(*result.DefaultReason) == "" {
+		missing = append(missing, "default_reason")
+	}
+	if result.PreferredNovaCallAt == nil || strings.TrimSpace(*result.PreferredNovaCallAt) == "" {
+		missing = append(missing, "preferred_nova_call_at")
+	}
+	return missing
+}
+
+func jsonStringArray(values []string) string {
+	data, err := json.Marshal(values)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
 }
 
 type NovaRescheduleResult struct {
@@ -70,8 +103,9 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 			}
 			if outcome == "ready_for_nova" {
 				if _, err := parseBorrowerCallTime(preferredCallAt, time.Now().UTC()); err != nil {
-					toolErr = fmt.Errorf("preferred_nova_call_at is required before handoff: %w", err)
-					return "", toolErr
+					errText := fmt.Sprintf("preferred_nova_call_at is required before handoff: %v", err)
+					log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
+					return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Ask the borrower for a specific preferred NOVA callback time, then call this tool again with an ISO-8601 timestamp including timezone."}`, errText), nil
 				}
 			}
 			// Use an isolated client so structured parsing cannot recursively reuse
@@ -79,10 +113,19 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 			results.AriaHandoff, toolErr = GenerateAriaHandoffWithClient(client.Clone(), wf, messages)
 			if toolErr != nil {
 				log.Printf("[collections] aria tool failed workflow=%s tool=%s duration=%s err=%v", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), toolErr)
-				return "", toolErr
+				errText := toolErr.Error()
+				toolErr = nil
+				return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Continue the conversation, collect the missing required assessment and callback timing details, then call this tool again only when the transcript is complete."}`, errText), nil
 			}
+			applyExplicitAriaToolOutcome(&results.AriaHandoff.Result, outcome)
 			if outcome == "ready_for_nova" {
 				results.AriaHandoff.Result.PreferredNovaCallAt = &preferredCallAt
+				if missing := missingAriaReadyFields(results.AriaHandoff.Result); len(missing) > 0 {
+					results.AriaHandoff = nil
+					errText := fmt.Sprintf("ARIA handoff is missing required ready_for_nova fields: %v", missing)
+					log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
+					return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"missing_fields":%s,"instruction":"Ask only for the missing assessment facts, then call this tool again after the borrower answers."}`, errText, jsonStringArray(missing)), nil
+				}
 			}
 			log.Printf("[collections] aria tool done workflow=%s tool=%s outcome=%s duration=%s", wf.Id, agents.ToolCreateAriaHandoff, outcome, time.Since(start))
 			return `{"handoff_generated":true}`, nil
@@ -146,6 +189,23 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 		log.Printf("[collections] converse done workflow=%s agent=%s response_chars=%d tool_calls=%d aria_handoff=%t nova_reschedule=%t duration=%s", wf.Id, chatAgent, len(resp.AIResponse), len(resp.ToolCalls), results.AriaHandoff != nil, results.NovaReschedule != nil, time.Since(start))
 	}
 	return results, resp, err
+}
+
+func applyExplicitAriaToolOutcome(result *AriaHandoffResult, outcome string) {
+	switch outcome {
+	case "stop_contact":
+		stop := true
+		resolved := models.OutcomeStopContact
+		result.StopContactFlagged = &stop
+		result.Outcome = &resolved
+		result.PreferredNovaCallAt = nil
+	case "hardship":
+		hardship := true
+		resolved := models.OutcomeHardship
+		result.HardshipMentioned = &hardship
+		result.Outcome = &resolved
+		result.PreferredNovaCallAt = nil
+	}
 }
 
 func funcParamString(params ai.FuncParams, key string) (string, error) {
