@@ -15,6 +15,8 @@ import {
   loadAdminEvalProgressAction,
   resetAdminEvalDataAction,
   runAdminFullCycleAction,
+  runAdminPromptExperimentAction,
+  runAdminMetaEvaluationAction,
   type AdminConversationPreview,
   type AdminEvalProgress,
 } from "./actions";
@@ -26,6 +28,8 @@ export default function RunEvalButton() {
   const [status, setStatus] = React.useState<string>("Idle");
   const [isStarting, startEvalTransition] = React.useTransition();
   const [isResetting, resetTransition] = React.useTransition();
+  const [isStartingPromptExp, startPromptExpTransition] = React.useTransition();
+  const [isStartingMetaEval, startMetaEvalTransition] = React.useTransition();
   const didLoadInitialProgress = React.useRef(false);
 
   const selectedConversation =
@@ -51,7 +55,8 @@ export default function RunEvalButton() {
   }, [runId, selectedConversationId]);
 
   React.useEffect(() => {
-    if (!runId && progress?.run?.status !== "running") return;
+    const isActivelyRunning = progress?.run?.status === "running" || isStartingPromptExp || isStartingMetaEval;
+    if (!runId && !isActivelyRunning) return;
     const interval = window.setInterval(async () => {
       const next = await loadAdminEvalProgressAction(runId);
       if (!next) return;
@@ -69,9 +74,9 @@ export default function RunEvalButton() {
       }
     }, 2500);
     return () => window.clearInterval(interval);
-  }, [runId, progress?.run?.status, selectedConversationId]);
+  }, [runId, progress?.run?.status, selectedConversationId, isStartingPromptExp, isStartingMetaEval]);
 
-  const running = progress?.run?.status === "running" || isStarting;
+  const running = progress?.run?.status === "running" || isStarting || isStartingPromptExp || isStartingMetaEval;
 
   return (
     <section className="rounded-[2rem] border border-pink-300/15 bg-zinc-950/75 p-5 shadow-2xl shadow-pink-950/15 backdrop-blur-xl">
@@ -139,8 +144,48 @@ export default function RunEvalButton() {
             }}
             className="rounded-full bg-pink-500 hover:bg-pink-400"
           >
-            {running ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
-            {running ? "Running eval..." : "Regenerate evals"}
+            {isStarting ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4" />}
+            {isStarting ? "Running eval..." : "Regenerate evals"}
+          </Button>
+          <Button
+            type="button"
+            disabled={running || isResetting}
+            onClick={() => {
+              setStatus("Running prompt experiments...");
+              startPromptExpTransition(async () => {
+                const result = await runAdminPromptExperimentAction();
+                if (!result) {
+                  setStatus("Prompt experiment failed.");
+                  return;
+                }
+                setStatus("Prompt experiment completed. Refreshing...");
+                window.setTimeout(() => window.location.reload(), 1200);
+              });
+            }}
+            className="rounded-full bg-pink-600 hover:bg-pink-500"
+          >
+            {isStartingPromptExp ? <Loader2 className="size-4 animate-spin" /> : <Activity className="size-4" />}
+            {isStartingPromptExp ? "Running..." : "Run prompt experiments"}
+          </Button>
+          <Button
+            type="button"
+            disabled={running || isResetting}
+            onClick={() => {
+              setStatus("Running meta evaluator...");
+              startMetaEvalTransition(async () => {
+                const result = await runAdminMetaEvaluationAction();
+                if (!result) {
+                  setStatus("Meta evaluator failed.");
+                  return;
+                }
+                setStatus("Meta evaluator completed. Refreshing...");
+                window.setTimeout(() => window.location.reload(), 1200);
+              });
+            }}
+            className="rounded-full bg-purple-600 hover:bg-purple-500"
+          >
+            {isStartingMetaEval ? <Loader2 className="size-4 animate-spin" /> : <ShieldAlert className="size-4" />}
+            {isStartingMetaEval ? "Running..." : "Run meta evaluator"}
           </Button>
         </div>
       </div>

@@ -63,6 +63,28 @@ export async function runAdminFullCycleAction() {
   return result;
 }
 
+export async function runAdminPromptExperimentAction() {
+  const result = await backendJson<any>("/api/v1/admin/prompt-experiments", {
+    method: "POST",
+    body: JSON.stringify({
+      agent_id: "aria",
+      seed: 42,
+      batch_size: 1,
+      personas: ["cooperative", "combative", "evasive", "distressed", "confused"],
+      max_turns_per_agent: 6,
+    }),
+  });
+  return result;
+}
+
+export async function runAdminMetaEvaluationAction() {
+  const result = await backendJson<any>("/api/v1/admin/meta-evaluations", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return result;
+}
+
 export async function resetAdminEvalDataAction() {
   const result = await backendJson<{ ok: boolean; message: string }>("/api/v1/admin/eval/reset", {
     method: "POST",
