@@ -29,6 +29,18 @@ async function backendJson<T>(path: string, init?: RequestInit): Promise<T | nul
   return (await res.json()) as T;
 }
 
+async function backendDataUrl(path: string, contentType: string): Promise<string | null> {
+  const res = await fetch(`${apiBase}${path}`, {
+    headers: await backendHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    return null;
+  }
+  const bytes = Buffer.from(await res.arrayBuffer());
+  return `data:${contentType};base64,${bytes.toString("base64")}`;
+}
+
 export async function startWorkflowAction() {
   return backendJson("/api/v1/workflows/start", {
     method: "POST",
@@ -49,4 +61,8 @@ export async function sendChatMessageAction(workflowId: string, message: string)
 
 export async function loadDeltaHandoffAction(workflowId: string) {
   return backendJson(`/api/v1/workflows/${workflowId}/delta-handoff`);
+}
+
+export async function loadDeltaHandoffPdfAction(workflowId: string) {
+  return backendDataUrl(`/api/v1/workflows/${workflowId}/delta-handoff.pdf`, "application/pdf");
 }

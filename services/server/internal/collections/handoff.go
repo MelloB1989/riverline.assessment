@@ -518,6 +518,40 @@ func applyNovaCallHandoff(wf *models.BorrowerWorkflow, offer *models.ResolutionO
 	}
 }
 
+func applyDeltaHandoffFromNova(wf *models.BorrowerWorkflow, offer *models.ResolutionOffer, result NovaCallHandoffResult) {
+	lines := []string{
+		"DELTA handoff only; do not continue a borrower chat.",
+		"NOVA call outcome: " + emptyAsNotRecorded(result.AriaSummary),
+		fmt.Sprintf("NOVA offer accepted: %v.", derefBool(result.OfferAccepted)),
+	}
+	if result.AcceptedOfferType != nil {
+		lines = append(lines, "Accepted NOVA offer type: "+strings.TrimSpace(*result.AcceptedOfferType)+".")
+	}
+	if len(result.ObjectionsRaised) > 0 {
+		lines = append(lines, "NOVA objections: "+strings.Join(result.ObjectionsRaised, "; ")+".")
+	}
+	if offer != nil {
+		lines = append(lines, offerOptionLines(*wf, *offer)...)
+	}
+	if result.FinalOfferAmount != nil {
+		wf.FinalOfferAmount = result.FinalOfferAmount
+	}
+	if result.FinalOfferDeadlineHours != nil && *result.FinalOfferDeadlineHours > 0 {
+		deadline := time.Now().UTC().Add(time.Duration(*result.FinalOfferDeadlineHours) * time.Hour)
+		wf.FinalOfferDeadline = &deadline
+	}
+	if wf.FinalOfferAmount != nil {
+		lines = append(lines, "Handoff offer amount: "+moneyText(*wf.FinalOfferAmount)+".")
+	}
+	if wf.FinalOfferDeadline != nil {
+		lines = append(lines, "Handoff deadline: "+wf.FinalOfferDeadline.Format(time.RFC3339)+".")
+	}
+	wf.ContextForDelta = stringPtr(strings.Join(lines, "\n"))
+	if strings.TrimSpace(result.AriaSummary) != "" {
+		wf.AriaSummary = stringPtr(strings.TrimSpace(result.AriaSummary))
+	}
+}
+
 func offerStatusFromNovaHandoff(result NovaCallHandoffResult) models.OfferStatus {
 	if result.Outcome != nil && *result.Outcome == models.OutcomeCommitted {
 		return models.OfferStatusAccepted

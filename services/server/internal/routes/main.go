@@ -17,6 +17,7 @@ func SetupMainRoutes(v1 fiber.Router) {
 	protected.Get("/workflows/:id", handlers.GetWorkflow)
 	protected.Get("/conversations/:id", handlers.GetConversation)
 	protected.Get("/workflows/:workflowId/delta-handoff", handlers.GetDeltaHandoff)
+	protected.Get("/workflows/:workflowId/delta-handoff.pdf", handlers.GetDeltaHandoffPDF)
 
 	admin := protected.Group("/admin", middleware.RequireAdmin())
 	admin.Get("/eval", handlers.AdminEvalSummary)

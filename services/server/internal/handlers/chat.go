@@ -186,6 +186,26 @@ func GetDeltaHandoff(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"handoff": export})
 }
 
+func GetDeltaHandoffPDF(c *fiber.Ctx) error {
+	export, err := collections.DeltaHandoffForWorkflow(c.Params("workflowId"))
+	if err != nil {
+		if errors.Is(err, collections.ErrDeltaHandoffUnavailable) {
+			return fiber.NewError(fiber.StatusNotFound, err.Error())
+		}
+		return fiber.NewError(fiber.StatusNotFound, err.Error())
+	}
+	if export.UserID != middleware.GetUserID(c) {
+		return fiber.NewError(fiber.StatusForbidden, "workflow does not belong to authenticated user")
+	}
+	pdf, err := collections.DeltaHandoffPDF(export.WorkflowID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	c.Set("Content-Type", "application/pdf")
+	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="riverline-delta-handoff-%s.pdf"`, export.WorkflowID))
+	return c.Send(pdf)
+}
+
 func StreamChat(c *fiber.Ctx) error {
 	workflowID := c.Params("workflowId")
 	wf, err := collections.GetWorkflow(workflowID)

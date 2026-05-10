@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -241,6 +242,11 @@ func EvaluationWorkflow(ctx workflow.Context, workflowID string) (BorrowerWorkfl
 	var scored int
 	if err := workflow.ExecuteActivity(ctx, EvaluateWorkflowConversations, workflowID).Get(ctx, &scored); err != nil {
 		return BorrowerWorkflowResult{}, err
+	}
+	if scored > 0 {
+		if err := workflow.ExecuteActivity(ctx, RunProductionLearningCycle, workflowID).Get(ctx, nil); err != nil {
+			return BorrowerWorkflowResult{}, err
+		}
 	}
 	return BorrowerWorkflowResult{WorkflowID: workflowID, Outcome: "evaluated"}, nil
 }
@@ -489,10 +495,10 @@ func EvaluateWorkflowConversations(workflowID string) (int, error) {
 			transcripts[conv.AgentId] = transcript
 		}
 	}
-	systemTranscript := workflowTranscript(transcripts)
+	systemTranscript := workflowTranscript(workflowID, transcripts)
 	scored := 0
 	for _, conv := range conversations {
-		if derefBool(conv.IsSimulated) || hasConversationScore(conv.Id) {
+		if conv.AgentId == models.AgentDelta || derefBool(conv.IsSimulated) || hasConversationScore(conv.Id) {
 			continue
 		}
 		if strings.TrimSpace(systemTranscript) == "" {
@@ -508,6 +514,16 @@ func EvaluateWorkflowConversations(workflowID string) (int, error) {
 		scored++
 	}
 	return scored, nil
+}
+
+func RunProductionLearningCycle(workflowID string) error {
+	_ = workflowID
+	for _, agentID := range []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta} {
+		if err := rivereval.RunProductionLearningTick(agentID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func conversationTranscript(conv models.AgentConversation) (string, error) {
@@ -532,15 +548,57 @@ func conversationTranscript(conv models.AgentConversation) (string, error) {
 	return strings.TrimSpace(b.String()), nil
 }
 
-func workflowTranscript(byAgent map[models.AgentID]string) string {
+func workflowTranscript(workflowID string, byAgent map[models.AgentID]string) string {
 	order := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
 	parts := make([]string, 0, len(order))
 	for _, agentID := range order {
-		if transcript := strings.TrimSpace(byAgent[agentID]); transcript != "" {
+		transcript := strings.TrimSpace(byAgent[agentID])
+		if agentID == models.AgentDelta {
+			transcript = strings.TrimSpace(deltaHandoffTranscript(workflowID))
+		}
+		if transcript != "" {
 			parts = append(parts, strings.ToUpper(string(agentID))+" TRANSCRIPT\n"+transcript)
 		}
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func deltaHandoffTranscript(workflowID string) string {
+	export, err := collections.DeltaHandoffForWorkflow(workflowID)
+	if err != nil || export == nil {
+		return ""
+	}
+	lines := []string{}
+	if export.ContextForDelta != nil && strings.TrimSpace(*export.ContextForDelta) != "" {
+		lines = append(lines, "Delta handoff context: "+strings.TrimSpace(*export.ContextForDelta))
+	}
+	if export.Outcome != nil {
+		lines = append(lines, "Workflow outcome at Delta handoff: "+string(*export.Outcome)+".")
+	}
+	if export.FinalOfferAmount != nil {
+		lines = append(lines, fmt.Sprintf("Final handoff offer amount: %.2f.", *export.FinalOfferAmount))
+	}
+	if export.FinalOfferDeadline != nil {
+		lines = append(lines, "Final handoff offer deadline: "+export.FinalOfferDeadline.Format(time.RFC3339)+".")
+	}
+	if export.Offer != nil {
+		if export.Offer.OfferAccepted != nil {
+			lines = append(lines, fmt.Sprintf("NOVA offer accepted: %t.", *export.Offer.OfferAccepted))
+		}
+		if export.Offer.AcceptedOfferType != nil && strings.TrimSpace(*export.Offer.AcceptedOfferType) != "" {
+			lines = append(lines, "Accepted NOVA offer type: "+strings.TrimSpace(*export.Offer.AcceptedOfferType)+".")
+		}
+		if export.Offer.LumpSumOffered != nil {
+			lines = append(lines, fmt.Sprintf("NOVA lump-sum offer: %.2f.", *export.Offer.LumpSumOffered))
+		}
+		if export.Offer.EmiAmount != nil && export.Offer.EmiMonths != nil {
+			lines = append(lines, fmt.Sprintf("NOVA payment-plan offer: %.2f for %d months.", *export.Offer.EmiAmount, *export.Offer.EmiMonths))
+		}
+		if len(export.Offer.ObjectionsRaised) > 0 {
+			lines = append(lines, "NOVA objections raised: "+strings.Join(export.Offer.ObjectionsRaised, "; ")+".")
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func hasConversationScore(conversationID string) bool {

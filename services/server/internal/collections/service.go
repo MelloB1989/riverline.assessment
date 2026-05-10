@@ -112,6 +112,9 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	if wf.CurrentStage == models.AgentDelta {
+		return handleDeltaHandoffOnly(wf)
+	}
 	chatAgent := chatAgentForStage(wf.CurrentStage)
 	client, err := chatClient(chatAgent)
 	if err != nil {
@@ -237,6 +240,47 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 		out.NovaRescheduleReason = stringPtr(toolResults.NovaReschedule.Reason)
 	}
 	return out, nil
+}
+
+func handleDeltaHandoffOnly(wf *models.BorrowerWorkflow) (*ChatResponse, error) {
+	promptVersion, err := ActivePromptVersion(models.AgentDelta)
+	if err != nil {
+		return nil, err
+	}
+	conversation, err := getOrCreateConversation(*wf, models.AgentDelta, promptVersion.VersionNumber)
+	if err != nil {
+		return nil, err
+	}
+	content, err := DeltaHandoffMessageForWorkflow(wf.Id)
+	if err != nil {
+		return nil, err
+	}
+	msg := models.AgentMessage{
+		Id:             utils.GenerateID(),
+		ConversationId: conversation.Id,
+		WorkflowId:     wf.Id,
+		AgentId:        models.AgentDelta,
+		Role:           models.MessageRoleAgent,
+		Content:        content,
+		TokenCount:     intPtr(len(strings.Fields(content))),
+		CreatedAt:      time.Now().UTC(),
+	}
+	msgOrm := orm.Load(&models.AgentMessage{})
+	defer msgOrm.Close()
+	if err := msgOrm.Insert(&msg); err != nil {
+		return nil, err
+	}
+	conversation.TotalTurns = intPtr(0)
+	conversation.TotalTokensUsed = msg.TokenCount
+	if err := updateConversation(&conversation); err != nil {
+		return nil, err
+	}
+	return &ChatResponse{
+		Workflow:      *wf,
+		Conversation:  conversation,
+		AgentMessage:  msg,
+		StageComplete: false,
+	}, nil
 }
 
 var ErrActiveWorkflowNotFound = errors.New("active workflow not found")

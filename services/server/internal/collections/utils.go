@@ -3,6 +3,7 @@ package collections
 import (
 	"errors"
 	"fmt"
+	"html"
 	"sort"
 	"strings"
 	"time"
@@ -141,10 +142,19 @@ func sendOfferEmail(workflowID string, final bool) error {
 		subject = "Riverline final resolution offer"
 	}
 	body := buildResolutionOfferEmailBody(*user, *loan, *wf, *offer, final)
+	html := buildResolutionOfferEmailHTML(*user, *loan, *wf, *offer, final)
 	if final {
 		subject = "Riverline final resolution offer"
 	}
-	return (&mailer.Template{ToEmail: user.Email, Subject: subject, Text: body, HTML: "<pre>" + body + "</pre>"}).Send()
+	pdf, err := DeltaHandoffPDF(workflowID)
+	if err != nil {
+		return err
+	}
+	return (&mailer.Template{ToEmail: user.Email, Subject: subject, Text: body, HTML: html}).SendWithAttachment(mailer.Attachment{
+		Filename:    "riverline-delta-handoff.pdf",
+		ContentType: "application/pdf",
+		Data:        pdf,
+	})
 }
 
 func buildResolutionOfferEmailBody(user models.User, loan models.Loan, wf models.BorrowerWorkflow, offer models.ResolutionOffer, final bool) string {
@@ -198,6 +208,63 @@ func buildResolutionOfferEmailBody(user models.User, loan models.Loan, wf models
 		)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func buildResolutionOfferEmailHTML(user models.User, loan models.Loan, wf models.BorrowerWorkflow, offer models.ResolutionOffer, final bool) string {
+	title := "Payment arrangement confirmation"
+	intro := "This confirms the Riverline payment arrangement discussed on the call."
+	badge := "Confirmed"
+	if final {
+		title = "Final resolution offer"
+		intro = "The resolution call did not result in an accepted plan. Riverline is providing the final available offer below."
+		badge = "Final notice"
+	}
+	options := offerOptionLines(wf, offer)
+	optionItems := make([]string, 0, len(options))
+	for _, option := range options {
+		optionItems = append(optionItems, "<li>"+htmlEscape(strings.TrimPrefix(option, "- "))+"</li>")
+	}
+	deadline := deadlineText(wf.FinalOfferDeadline)
+	nextStep := "Reply ACCEPT if you need this confirmation recorded in chat as well."
+	if final {
+		nextStep = "Reply ACCEPT with the option you choose before the deadline. If unresolved after the deadline, the account may be escalated according to policy."
+	}
+	return fmt.Sprintf(`<!doctype html>
+<html>
+  <body style="margin:0;background:#f5f7fb;font-family:Inter,Arial,sans-serif;color:#172033;">
+    <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="background:#f5f7fb;padding:28px 12px;">
+      <tr><td align="center">
+        <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #dbe3ef;border-radius:14px;overflow:hidden;">
+          <tr><td style="background:#111827;color:#ffffff;padding:22px 26px;">
+            <div style="font-size:12px;letter-spacing:1.6px;text-transform:uppercase;color:#a7f3d0;">%s</div>
+            <h1 style="margin:8px 0 0;font-size:24px;line-height:1.25;">%s</h1>
+          </td></tr>
+          <tr><td style="padding:26px;">
+            <p style="margin:0 0 18px;font-size:15px;line-height:1.65;">Hello %s,</p>
+            <p style="margin:0 0 22px;font-size:15px;line-height:1.65;">%s</p>
+            <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:0 0 22px;">
+              <tr><td style="padding:10px 12px;background:#f8fafc;border:1px solid #e5e7eb;font-weight:700;">Account ending</td><td style="padding:10px 12px;border:1px solid #e5e7eb;">%s</td></tr>
+              <tr><td style="padding:10px 12px;background:#f8fafc;border:1px solid #e5e7eb;font-weight:700;">Loan type</td><td style="padding:10px 12px;border:1px solid #e5e7eb;">%s</td></tr>
+              <tr><td style="padding:10px 12px;background:#f8fafc;border:1px solid #e5e7eb;font-weight:700;">Outstanding balance</td><td style="padding:10px 12px;border:1px solid #e5e7eb;">%s</td></tr>
+              <tr><td style="padding:10px 12px;background:#f8fafc;border:1px solid #e5e7eb;font-weight:700;">Days overdue</td><td style="padding:10px 12px;border:1px solid #e5e7eb;">%d</td></tr>
+            </table>
+            <h2 style="margin:0 0 10px;font-size:17px;">Resolution options</h2>
+            <ul style="margin:0 0 22px;padding-left:20px;font-size:15px;line-height:1.7;">%s</ul>
+            <div style="border-left:4px solid #111827;background:#f8fafc;padding:14px 16px;margin:0 0 22px;">
+              <strong>Deadline:</strong> %s
+            </div>
+            <p style="margin:0;font-size:15px;line-height:1.65;">%s</p>
+            <p style="margin:18px 0 0;font-size:13px;line-height:1.55;color:#64748b;">A PDF copy of the handoff/final notice record is attached for your records.</p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`, badge, title, htmlEscape(user.FirstName), htmlEscape(intro), htmlEscape(loan.AccountNumberPartial), htmlEscape(loan.LoanType), htmlEscape(moneyText(loan.OutstandingAmount)), loan.DaysOverdue, strings.Join(optionItems, ""), htmlEscape(deadline), htmlEscape(nextStep))
+}
+
+func htmlEscape(value string) string {
+	return html.EscapeString(value)
 }
 
 func offerOptionLines(wf models.BorrowerWorkflow, offer models.ResolutionOffer) []string {

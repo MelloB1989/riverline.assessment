@@ -384,12 +384,14 @@ func buildAndSavePromptExperiment(agentID models.AgentID, controlVersion int, ca
 	delta := Mean(treatmentScores) - Mean(controlScores)
 	effectSize := CohensD(controlScores, treatmentScores)
 	isSignificant := pValue < slCfg.AdoptionPValue && effectSize >= slCfg.AdoptionMinCohensD
+	issueGatePassed, issueGateReason := targetedIssueGate(controlStats, treatmentStats)
 	adopt := isSignificant &&
 		delta >= slCfg.AdoptionMinMeanDelta &&
 		Stddev(treatmentScores) <= slCfg.AdoptionMaxStddev &&
 		treatmentCompliance >= slCfg.MinComplianceRate &&
-		treatmentCompliance >= controlCompliance
-	rejection := rejectionReason(adopt, pValue, delta, effectSize, controlCompliance, treatmentCompliance)
+		treatmentCompliance >= controlCompliance &&
+		issueGatePassed
+	rejection := rejectionReason(adopt, pValue, delta, effectSize, controlCompliance, treatmentCompliance, issueGatePassed, issueGateReason)
 	exp := &models.PromptExperiment{
 		Id:                      utils.GenerateID(),
 		AgentId:                 agentID,

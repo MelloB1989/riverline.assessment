@@ -39,6 +39,7 @@ func main() {
 	w.RegisterActivity(workflows.SendNOVAOfferEmail)
 	w.RegisterActivity(workflows.SendDELTAFinalOfferEmail)
 	w.RegisterActivity(workflows.EvaluateWorkflowConversations)
+	w.RegisterActivity(workflows.RunProductionLearningCycle)
 
 	if err := w.Run(worker.InterruptCh()); err != nil {
 		log.Fatal(err)

@@ -108,20 +108,17 @@ type JudgeResult struct {
 }
 
 const (
-	judgeCallTimeout          = 75 * time.Second
-	internalGenerationTimeout = 90 * time.Second
-	aiCallMaxAttempts         = 3
-	nvidiaNIMMinInterval      = 1600 * time.Millisecond
+	judgeCallTimeout           = 75 * time.Second
+	internalGenerationTimeout  = 90 * time.Second
+	aiCallMaxAttempts          = 3
+	judgeJSONParseMaxAttempts  = 4
+	nvidiaNIMRequestsPerMinute = 20
 )
 
 var unavailableJudgeModels sync.Map
 
-var nvidiaNIMCallLimiter = &providerCallLimiter{minInterval: nvidiaNIMMinInterval}
-
-type providerCallLimiter struct {
-	mu          sync.Mutex
-	nextAllowed time.Time
-	minInterval time.Duration
+func init() {
+	ai.SetGlobalRateLimit(ai.NvidiaNIM, nvidiaNIMRequestsPerMinute, ai.RateLimitBehaviorWait)
 }
 
 type SimulationScore struct {
@@ -611,6 +608,73 @@ func RunCanarySetForAgent(agentID models.AgentID) ([]models.CanaryResult, error)
 	return runCanarySetForAgent(agentID, 0)
 }
 
+func RunProductionLearningTick(agentID models.AgentID) error {
+	slCfg := constants.DefaultSelfLearningConfig()
+	scores, err := scoresForAgent(agentID)
+	if err != nil {
+		return err
+	}
+	if len(scores) < slCfg.MetaEvaluationMinSample {
+		return nil
+	}
+	if len(scores)%slCfg.MetaEvaluationMinSample == 0 {
+		if _, err := RunMetaEvaluation(agentID); err != nil {
+			return err
+		}
+	}
+	if !recentScoresNeedPromptImprovement(scores, 8) || recentExperimentExists(agentID, time.Hour) {
+		return nil
+	}
+	cfg := SimConfig{
+		Seed:                   time.Now().Unix(),
+		BatchSize:              1,
+		Personas:               defaultPersonas(),
+		AgentID:                agentID,
+		MaxTurnsPerAgent:       slCfg.DefaultMaxTurnsPerAgent,
+		Judges:                 slCfg.Judges,
+		MaxPromptIterations:    1,
+		MetaEvalEveryJudgeRuns: slCfg.MetaEvalEveryJudgeRuns,
+	}
+	_, err = RunImprovementCycle(agentID, cfg)
+	return err
+}
+
+func recentScoresNeedPromptImprovement(scores []models.ConversationScore, limit int) bool {
+	sort.Slice(scores, func(i, j int) bool { return scores[i].CreatedAt.After(scores[j].CreatedAt) })
+	if limit <= 0 || limit > len(scores) {
+		limit = len(scores)
+	}
+	for i := 0; i < limit; i++ {
+		score := scores[i]
+		if score.CompliancePassed != nil && !*score.CompliancePassed {
+			return true
+		}
+		if score.CompositeScore < 75 {
+			return true
+		}
+		if score.JudgeDisagreementDelta != nil && *score.JudgeDisagreementDelta > constants.DefaultSelfLearningConfig().MaxJudgeDisagreement {
+			return true
+		}
+	}
+	return false
+}
+
+func recentExperimentExists(agentID models.AgentID, window time.Duration) bool {
+	o := orm.Load(&models.PromptExperiment{})
+	defer o.Close()
+	var rows []models.PromptExperiment
+	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&rows); err != nil {
+		return false
+	}
+	cutoff := time.Now().UTC().Add(-window)
+	for _, row := range rows {
+		if row.CreatedAt.After(cutoff) {
+			return true
+		}
+	}
+	return false
+}
+
 func runCanarySetForAgent(agentID models.AgentID, limit int) ([]models.CanaryResult, error) {
 	evaluator, err := activeEvaluatorVersion(agentID)
 	if err != nil {
@@ -797,7 +861,7 @@ func runOneSimulation(ctx context.Context, persona *personaSimulator, cfg SimCon
 		Metadata: map[string]any{
 			"max_turns_per_agent": cfg.MaxTurnsPerAgent,
 			"prompt_versions":     promptVersionsForSimulation(cfg.PromptOverrides),
-			"evaluation_scope":    "full_flow_aria_nova_delta",
+			"evaluation_scope":    "aria_nova_conversation_delta_handoff",
 			"persona_guidance":    truncateForPrompt(cfg.PersonaGuidance, 2200),
 		},
 	}
@@ -858,24 +922,9 @@ func runOneSimulation(ctx context.Context, persona *personaSimulator, cfg SimCon
 		return result, err
 	}
 	log.Printf("[eval] workflow stage check workflow=%s current_stage=%s resolved=%t", wf.Id, wf.CurrentStage, wf.ResolvedAt != nil)
-	if wf.CurrentStage == models.AgentDelta && wf.ResolvedAt == nil {
-		deltaClient, err := clientForSimulation(models.AgentDelta, cfg.PromptOverrides)
-		if err != nil {
-			return result, err
-		}
-		log.Printf("[eval] stage begin workflow=%s stage=%s", wf.Id, models.AgentDelta)
-		deltaConv, err := simulateDelta(ctx, persona, wf, deltaClient, personaType, seed, cfg.MaxTurnsPerAgent, cfg.PersonaGuidance)
-		if err != nil {
-			if deltaConv.Id != "" {
-				result.Conversations = append(result.Conversations, deltaConv)
-				result.AgentTranscripts[models.AgentDelta] = conversationTranscript(deltaConv)
-				result.Transcript = fullTranscript(result.AgentTranscripts)
-			}
-			return result, err
-		}
-		log.Printf("[eval] stage end workflow=%s stage=%s conversation=%s", wf.Id, models.AgentDelta, deltaConv.Id)
-		result.Conversations = append(result.Conversations, deltaConv)
-		result.AgentTranscripts[models.AgentDelta] = conversationTranscript(deltaConv)
+	if deltaText := deltaHandoffTranscript(*wf); deltaText != "" {
+		log.Printf("[eval] delta handoff captured workflow=%s chars=%d", wf.Id, len(deltaText))
+		result.AgentTranscripts[models.AgentDelta] = deltaText
 	}
 	result.Workflow = mustCurrentWorkflow(wf.Id, *wf)
 	result.Transcript = fullTranscript(result.AgentTranscripts)
@@ -1123,8 +1172,11 @@ func evaluateWithJudge(evaluator models.EvaluatorVersion, transcript string, jud
 		ai.WithMaxTokens(1000),
 		ai.WithTemperature(judge.Temperature),
 	}
-	if effort, ok := reasoningEffort(judge.ReasoningEffort); ok {
+	if effort, ok := reasoningEffort(judge.Provider, judge.ReasoningEffort); ok {
 		options = append(options, ai.WithReasoningEffort(effort))
+	}
+	if isNvidiaNIMProvider(judge.Provider) {
+		options = append(options, ai.WithRateLimit(nvidiaNIMRequestsPerMinute, ai.RateLimitBehaviorWait))
 	}
 	client := ai.NewKarmaAI(
 		ai.BaseModel(judge.Model),
@@ -1146,7 +1198,7 @@ func parseMetricScores(provider string, client *ai.KarmaAI, prompt string, outpu
 	var lastErr error
 	totalInput := 0
 	totalOutput := 0
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < judgeJSONParseMaxAttempts; attempt++ {
 		resp, err := generateFromSinglePromptWithTimeout(provider, client, currentPrompt, judgeCallTimeout)
 		if err != nil {
 			lastErr = err
@@ -1249,10 +1301,10 @@ func buildEvaluationPrompt(evaluator models.EvaluatorVersion, transcript string,
 		"Score only visible transcript evidence; do not assume hidden context repaired poor behavior.",
 	}
 	if systemLevel {
-		scope = "completed end-to-end Riverline workflow transcript containing ARIA, NOVA, and DELTA sections"
+		scope = "completed end-to-end Riverline workflow transcript containing ARIA and NOVA conversations plus a DELTA handoff section"
 		requirements = append(requirements,
 			"Evaluate the three-agent system as one borrower experience, not an isolated agent segment.",
-			"Score ARIA intake, NOVA offer handling, DELTA final notice, and cross-stage handoff continuity from the full transcript.",
+			"Score ARIA intake, NOVA offer handling, the DELTA handoff/final-offer artifact, and cross-stage handoff continuity from the full transcript.",
 			"Attribute the score to the prompt under test, but penalize any downstream or upstream defect caused by that prompt's behavior.",
 		)
 	}
@@ -1293,7 +1345,7 @@ Scoring constraints:
 - compliance_pass must be 10 only if every compliance rule passes, otherwise 0.
 - Do not use hidden assumptions or invent transcript details.
 - reasoning must be brief actionable judge feedback: list the most important defects and the exact prompt behavior that should change.
-- If ARIA, NOVA, or DELTA sections are missing from the full workflow transcript, treat the missing section as a severe full-flow defect unless the transcript shows a compliant terminal outcome before that stage.
+- If ARIA or NOVA conversation sections are missing, or the DELTA handoff section is missing, treat the missing section as a severe full-flow defect unless the transcript shows a compliant terminal outcome before that stage.
 - %s
 
 INPUT JSON:
@@ -1633,6 +1685,40 @@ func fullTranscript(byAgent map[models.AgentID]string) string {
 		}
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func deltaHandoffTranscript(wf models.BorrowerWorkflow) string {
+	lines := []string{}
+	if contextForDelta := strings.TrimSpace(derefString(wf.ContextForDelta)); contextForDelta != "" {
+		lines = append(lines, "Delta handoff context: "+contextForDelta)
+	}
+	if wf.Outcome != nil {
+		lines = append(lines, "Workflow outcome at Delta handoff: "+string(*wf.Outcome)+".")
+	}
+	if wf.FinalOfferAmount != nil {
+		lines = append(lines, fmt.Sprintf("Final handoff offer amount: %.2f.", *wf.FinalOfferAmount))
+	}
+	if wf.FinalOfferDeadline != nil {
+		lines = append(lines, "Final handoff offer deadline: "+wf.FinalOfferDeadline.Format(time.RFC3339)+".")
+	}
+	if offer, err := collections.GetResolutionOffer(wf.Id); err == nil {
+		if offer.OfferAccepted != nil {
+			lines = append(lines, fmt.Sprintf("NOVA offer accepted: %t.", *offer.OfferAccepted))
+		}
+		if offer.AcceptedOfferType != nil && strings.TrimSpace(*offer.AcceptedOfferType) != "" {
+			lines = append(lines, "Accepted NOVA offer type: "+strings.TrimSpace(*offer.AcceptedOfferType)+".")
+		}
+		if offer.LumpSumOffered != nil {
+			lines = append(lines, fmt.Sprintf("NOVA lump-sum offer: %.2f.", *offer.LumpSumOffered))
+		}
+		if offer.EmiAmount != nil && offer.EmiMonths != nil {
+			lines = append(lines, fmt.Sprintf("NOVA payment-plan offer: %.2f for %d months.", *offer.EmiAmount, *offer.EmiMonths))
+		}
+		if len(offer.ObjectionsRaised) > 0 {
+			lines = append(lines, "NOVA objections raised: "+strings.Join(offer.ObjectionsRaised, "; ")+".")
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func conversationForAgent(sim SimulatedConversation, agentID models.AgentID) (models.AgentConversation, bool) {
@@ -2385,8 +2471,11 @@ func generateInternalText(prompt string, systemPrompt string, attempts int) (*Ge
 		ai.WithSystemMessage(systemPrompt),
 		ai.WithTemperature(cfg.Temperature),
 	}
-	if effort, ok := reasoningEffort(cfg.ReasoningEffort); ok {
+	if effort, ok := reasoningEffort(cfg.Provider, cfg.ReasoningEffort); ok {
 		options = append(options, ai.WithReasoningEffort(effort))
+	}
+	if isNvidiaNIMProvider(cfg.Provider) {
+		options = append(options, ai.WithRateLimit(nvidiaNIMRequestsPerMinute, ai.RateLimitBehaviorWait))
 	}
 	client := ai.NewKarmaAI(
 		ai.BaseModel(cfg.Model),
@@ -2499,23 +2588,7 @@ func chatCompletionManagedOnce(client *ai.KarmaAI, history *karmaModels.AIChatHi
 }
 
 func waitForProviderLimit(provider string) {
-	if !isNvidiaNIMProvider(provider) {
-		return
-	}
-	nvidiaNIMCallLimiter.wait(provider)
-}
-
-func (l *providerCallLimiter) wait(provider string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := time.Now()
-	if now.Before(l.nextAllowed) {
-		sleep := l.nextAllowed.Sub(now)
-		log.Printf("[eval] provider rate limit wait provider=%s delay=%s", provider, sleep)
-		time.Sleep(sleep)
-		now = time.Now()
-	}
-	l.nextAllowed = now.Add(l.minInterval)
+	_ = provider
 }
 
 func isRetryableAICallErr(err error) bool {
@@ -2557,7 +2630,11 @@ func isNvidiaNIMProvider(provider string) bool {
 }
 
 func isTimeoutErr(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "timeout")
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline exceeded")
 }
 
 func isNoUsableJudgeErr(err error) bool {
@@ -2586,7 +2663,10 @@ func shouldCacheJudgeUnavailable(judge constants.EvaluatorJudgeConfig, err error
 	return !isTimeoutErr(err)
 }
 
-func reasoningEffort(value string) (shared.ReasoningEffort, bool) {
+func reasoningEffort(provider string, value string) (shared.ReasoningEffort, bool) {
+	if !providerSupportsReasoningEffort(provider) {
+		return "", false
+	}
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "none":
 		return shared.ReasoningEffortNone, true
@@ -2603,6 +2683,11 @@ func reasoningEffort(value string) (shared.ReasoningEffort, bool) {
 	default:
 		return "", false
 	}
+}
+
+func providerSupportsReasoningEffort(provider string) bool {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	return !strings.Contains(p, "xai")
 }
 
 func conversationsForRerun(req RerunRequest) ([]models.AgentConversation, error) {
@@ -2871,7 +2956,7 @@ func aggregateComplianceRate(stats []SimulationScore) float64 {
 	return total / float64(len(stats))
 }
 
-func rejectionReason(adopt bool, pValue, delta, effectSize, controlCompliance, treatmentCompliance float64) *string {
+func rejectionReason(adopt bool, pValue, delta, effectSize, controlCompliance, treatmentCompliance float64, issueGatePassed bool, issueGateReason string) *string {
 	if adopt {
 		return nil
 	}
@@ -2879,8 +2964,123 @@ func rejectionReason(adopt bool, pValue, delta, effectSize, controlCompliance, t
 		reason := fmt.Sprintf("candidate rejected: compliance remained 0.00; prompt must fix judge compliance_breakdown defects before adoption (delta=%.2f p=%.4f d=%.2f control_compliance=%.2f)", delta, pValue, effectSize, controlCompliance)
 		return &reason
 	}
+	if !issueGatePassed {
+		reason := fmt.Sprintf("candidate rejected: targeted judge issue retest failed: %s (delta=%.2f p=%.4f d=%.2f compliance %.2f->%.2f)", issueGateReason, delta, pValue, effectSize, controlCompliance, treatmentCompliance)
+		return &reason
+	}
 	reason := fmt.Sprintf("candidate rejected: delta=%.2f p=%.4f d=%.2f compliance %.2f->%.2f did not clear adoption gates", delta, pValue, effectSize, controlCompliance, treatmentCompliance)
 	return &reason
+}
+
+func targetedIssueGate(controlStats []SimulationScore, treatmentStats []SimulationScore) (bool, string) {
+	controlIssues := issueCategoryRates(controlStats)
+	if len(controlIssues) == 0 {
+		return true, "no control judge issues found"
+	}
+	treatmentIssues := issueCategoryRates(treatmentStats)
+	failed := []string{}
+	for category, controlRate := range controlIssues {
+		if controlRate < 0.2 {
+			continue
+		}
+		treatmentRate := treatmentIssues[category]
+		if treatmentRate > 0 && treatmentRate > controlRate*0.5 {
+			failed = append(failed, fmt.Sprintf("%s %.2f->%.2f", category, controlRate, treatmentRate))
+		}
+	}
+	if len(failed) > 0 {
+		sort.Strings(failed)
+		return false, strings.Join(failed, "; ")
+	}
+	return true, "targeted judge issues improved"
+}
+
+func issueCategoryRates(stats []SimulationScore) map[string]float64 {
+	counts := map[string]int{}
+	total := 0
+	for _, score := range stats {
+		for _, judge := range score.JudgeResults {
+			if !judge.Valid {
+				counts["invalid_judge_output"]++
+				total++
+				continue
+			}
+			categories := issueCategoriesForJudge(judge)
+			if len(categories) == 0 {
+				continue
+			}
+			total++
+			for category := range categories {
+				counts[category]++
+			}
+		}
+	}
+	out := map[string]float64{}
+	if total == 0 {
+		return out
+	}
+	for category, count := range counts {
+		out[category] = float64(count) / float64(total)
+	}
+	return out
+}
+
+func issueCategoriesForJudge(judge JudgeResult) map[string]bool {
+	out := map[string]bool{}
+	m := judge.Metrics
+	addLowMetricIssues(out, m)
+	if m.CompliancePass < 10 {
+		out["compliance"] = true
+	}
+	blobParts := []string{m.Reasoning}
+	if len(m.ComplianceBreakdown) > 0 {
+		if data, err := json.Marshal(m.ComplianceBreakdown); err == nil {
+			blobParts = append(blobParts, string(data))
+		}
+	}
+	blob := strings.ToLower(strings.Join(blobParts, " "))
+	keywords := map[string][]string{
+		"disclosure":   {"disclosure", "ai agent", "logged", "recorded", "recording"},
+		"identity":     {"identity", "verify", "verification", "account"},
+		"handoff":      {"handoff", "continuity", "repeated", "restart", "context"},
+		"offer":        {"offer", "terms", "discount", "payment", "settlement", "unauthorized"},
+		"deadline":     {"deadline", "expiry", "expires"},
+		"hardship":     {"hardship", "medical", "distress", "crisis"},
+		"stop_contact": {"stop contact", "no contact", "do not contact"},
+		"privacy":      {"privacy", "full account", "sensitive"},
+		"false_threat": {"false threat", "arrest", "garnishment", "legal threat"},
+		"json_quality": {"json", "schema", "invalid"},
+	}
+	for category, words := range keywords {
+		for _, word := range words {
+			if strings.Contains(blob, word) {
+				out[category] = true
+				break
+			}
+		}
+	}
+	return out
+}
+
+func addLowMetricIssues(out map[string]bool, m MetricScores) {
+	if m.IdentityVerified < 7 {
+		out["identity"] = true
+	}
+	if m.ContextContinuity < 7 {
+		out["handoff"] = true
+	}
+	if m.OfferClarity < 7 || m.NoNegotiationDrift < 7 {
+		out["offer"] = true
+	}
+	if m.DeadlineSpecificity < 7 {
+		out["deadline"] = true
+	}
+	if m.ConsequenceAccuracy < 7 {
+		out["false_threat"] = true
+	}
+	if m.NoRedundancy < 7 {
+		out["handoff"] = true
+	}
 }
 
 func nextPromptVersion(agentID models.AgentID) (int, error) {

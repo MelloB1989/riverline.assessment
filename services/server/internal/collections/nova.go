@@ -295,6 +295,7 @@ func CompleteNOVAWithClients(workflowID, callID, transcript, recordingURL string
 		outcome = models.OutcomeCommitted
 	}
 	if outcome == models.OutcomeCommitted {
+		applyDeltaHandoffFromNova(wf, offer, handoff.Result)
 		wf.Outcome = &outcome
 		wf.ResolvedAt = &now
 	} else {

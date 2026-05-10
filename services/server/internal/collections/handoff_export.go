@@ -2,6 +2,7 @@ package collections
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -52,6 +53,38 @@ func DeltaHandoffForWorkflow(workflowID string) (*DeltaHandoffExport, error) {
 		Offer:              offer,
 		ExportedAt:         time.Now().UTC(),
 	}, nil
+}
+
+func DeltaHandoffMessageForWorkflow(workflowID string) (string, error) {
+	export, err := DeltaHandoffForWorkflow(workflowID)
+	if err != nil {
+		return "", err
+	}
+	lines := []string{}
+	if export.ContextForDelta != nil && strings.TrimSpace(*export.ContextForDelta) != "" {
+		lines = append(lines, strings.TrimSpace(*export.ContextForDelta))
+	}
+	if export.Outcome != nil {
+		lines = append(lines, "Outcome: "+string(*export.Outcome)+".")
+	}
+	if export.FinalOfferAmount != nil {
+		lines = append(lines, fmt.Sprintf("Final offer amount: %.2f.", *export.FinalOfferAmount))
+	}
+	if export.FinalOfferDeadline != nil {
+		lines = append(lines, "Final offer deadline: "+export.FinalOfferDeadline.Format(time.RFC3339)+".")
+	}
+	if export.Offer != nil {
+		if export.Offer.OfferAccepted != nil {
+			lines = append(lines, fmt.Sprintf("NOVA offer accepted: %t.", *export.Offer.OfferAccepted))
+		}
+		if export.Offer.AcceptedOfferType != nil && strings.TrimSpace(*export.Offer.AcceptedOfferType) != "" {
+			lines = append(lines, "Accepted NOVA offer type: "+strings.TrimSpace(*export.Offer.AcceptedOfferType)+".")
+		}
+	}
+	if len(lines) == 0 {
+		return "", ErrDeltaHandoffUnavailable
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n")), nil
 }
 
 func deltaHandoffAvailable(wf models.BorrowerWorkflow, offer *models.ResolutionOffer) bool {

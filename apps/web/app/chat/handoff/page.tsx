@@ -1,12 +1,8 @@
 import Link from "next/link";
-import { ArrowLeft, Download, FileJson, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Download, FileText, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { loadDeltaHandoffAction } from "../actions";
-
-type DeltaHandoffResponse = {
-  handoff?: Record<string, unknown>;
-};
+import { loadDeltaHandoffPdfAction } from "../actions";
 
 type HandoffPageProps = {
   searchParams: Promise<{ workflowId?: string }>;
@@ -15,14 +11,7 @@ type HandoffPageProps = {
 export default async function HandoffPage({ searchParams }: HandoffPageProps) {
   const params = await searchParams;
   const workflowId = params.workflowId?.trim() ?? "";
-  const data = workflowId
-    ? ((await loadDeltaHandoffAction(workflowId)) as DeltaHandoffResponse | null)
-    : null;
-  const handoff = data?.handoff ?? null;
-  const json = handoff ? JSON.stringify(handoff, null, 2) : "";
-  const downloadHref = handoff
-    ? `data:application/json;charset=utf-8,${encodeURIComponent(json)}`
-    : "";
+  const pdfHref = workflowId ? await loadDeltaHandoffPdfAction(workflowId) : null;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-background px-4 py-6 text-foreground md:px-8">
@@ -31,15 +20,15 @@ export default async function HandoffPage({ searchParams }: HandoffPageProps) {
         <header className="flex flex-col gap-4 rounded-[2rem] border border-pink-300/15 bg-black/30 p-5 shadow-2xl shadow-pink-950/20 backdrop-blur-xl md:flex-row md:items-center md:justify-between">
           <div>
             <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-pink-300">
-              <FileJson className="size-4" />
-              Delta handoff export
+              <FileText className="size-4" />
+              Delta handoff PDF
             </p>
             <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-pink-50 md:text-5xl">
               Final notice record
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
-              Downloadable JSON built from the persisted Delta workflow state and
-              latest resolution offer.
+              A borrower-ready PDF built from the persisted Delta workflow state
+              and latest resolution offer.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -53,18 +42,18 @@ export default async function HandoffPage({ searchParams }: HandoffPageProps) {
                 Back to chat
               </Link>
             </Button>
-            {handoff ? (
+            {pdfHref ? (
               <Button className="rounded-full bg-pink-500 text-white hover:bg-pink-400" asChild>
-                <a href={downloadHref} download={`delta-handoff-${workflowId}.json`}>
+                <a href={pdfHref} download={`riverline-delta-handoff-${workflowId}.pdf`}>
                   <Download className="size-4" />
-                  Download JSON
+                  Download PDF
                 </a>
               </Button>
             ) : null}
           </div>
         </header>
 
-        {handoff ? (
+        {pdfHref ? (
           <section className="rounded-[2rem] border border-pink-300/15 bg-zinc-950/75 p-5 shadow-2xl shadow-pink-950/20 backdrop-blur-xl">
             <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-zinc-400">
               <span className="inline-flex items-center gap-1.5 text-pink-100">
@@ -72,9 +61,11 @@ export default async function HandoffPage({ searchParams }: HandoffPageProps) {
                 Available for workflow {workflowId}
               </span>
             </div>
-            <pre className="max-h-[68vh] overflow-auto rounded-[1.5rem] border border-white/10 bg-black/45 p-4 text-xs leading-5 text-zinc-200">
-              {json}
-            </pre>
+            <iframe
+              src={pdfHref}
+              title="Delta handoff PDF"
+              className="h-[68vh] w-full rounded-[1.5rem] border border-white/10 bg-white"
+            />
           </section>
         ) : (
           <section className="rounded-[2rem] border border-pink-300/15 bg-zinc-950/75 p-6 shadow-2xl shadow-pink-950/20 backdrop-blur-xl">
