@@ -319,9 +319,15 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 
 	cfg.AgentID = agentID
 	cfg.PromptOverrides = nil
-	_, controlStats, err := RunSimulationScored(cfg, cfg.Judges)
-	if err != nil {
-		return nil, nil, nil, err
+	controlStats, err := lowScoringSimulationScores(agentID, cfg.BatchSize*len(cfg.Personas))
+	if err != nil || len(controlStats) == 0 {
+		log.Printf("[eval] no existing scores found, simulating control...")
+		_, controlStats, err = RunSimulationScored(cfg, cfg.Judges)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	} else {
+		log.Printf("[eval] using %d existing low-scoring runs as control", len(controlStats))
 	}
 	controlScores := aggregateSimulationMeans(controlStats)
 	controlCompliance := aggregateComplianceRate(controlStats)

@@ -158,8 +158,18 @@ export default function RunEvalButton() {
                   setStatus("Prompt experiment failed.");
                   return;
                 }
-                setStatus("Prompt experiment completed. Refreshing...");
-                window.setTimeout(() => window.location.reload(), 1200);
+                setRunId(result.run_id);
+                const next = await loadAdminEvalProgressAction(result.run_id);
+                setProgress(next ?? {
+                  run: result.run,
+                  counts: { conversations: 0, messages: 0, scores: 0, prompt_experiments: 0, cost_logs: 0 },
+                  total_cost_usd: 0,
+                  recent_scores: [],
+                  experiments: [],
+                  conversations: [],
+                  last_generated_at: new Date().toISOString(),
+                });
+                setStatus(result.existing ? "Existing evaluation run is still active." : "Prompt experiment run started.");
               });
             }}
             className="rounded-full bg-pink-600 hover:bg-pink-500"
@@ -178,8 +188,18 @@ export default function RunEvalButton() {
                   setStatus("Meta evaluator failed.");
                   return;
                 }
-                setStatus("Meta evaluator completed. Refreshing...");
-                window.setTimeout(() => window.location.reload(), 1200);
+                setRunId(result.run_id);
+                const next = await loadAdminEvalProgressAction(result.run_id);
+                setProgress(next ?? {
+                  run: result.run,
+                  counts: { conversations: 0, messages: 0, scores: 0, prompt_experiments: 0, cost_logs: 0 },
+                  total_cost_usd: 0,
+                  recent_scores: [],
+                  experiments: [],
+                  conversations: [],
+                  last_generated_at: new Date().toISOString(),
+                });
+                setStatus(result.existing ? "Existing evaluation run is still active." : "Meta evaluator run started.");
               });
             }}
             className="rounded-full bg-purple-600 hover:bg-purple-500"

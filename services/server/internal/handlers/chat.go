@@ -382,11 +382,30 @@ func AdminRunPromptExperiment(c *fiber.Ctx) error {
 		MaxTurnsPerAgent: req.MaxTurnsPerAgent,
 		Judges:           req.Judges,
 	}
-	exp, err := rivereval.RunImprovementCycle(req.AgentID, cfg)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+
+	if active := activeAdminEvalRun(); active != nil {
+		return c.JSON(fiber.Map{"run_id": active.ID, "existing": true, "run": adminEvalRunToSnapshot(active)})
 	}
-	return c.JSON(fiber.Map{"experiment": exp})
+	run := &adminEvalRun{
+		ID:        utils.GenerateID(),
+		Status:    "running",
+		Config:    rivereval.FullCycleConfig{},
+		StartedAt: time.Now().UTC(),
+	}
+	adminEvalRuns.Lock()
+	adminEvalRuns.runs[run.ID] = run
+	adminEvalRuns.latest = run.ID
+	adminEvalRuns.Unlock()
+
+	go func(runID string, agentID models.AgentID, simCfg rivereval.SimConfig) {
+		if _, err := rivereval.RunImprovementCycle(agentID, simCfg); err != nil {
+			markAdminEvalRunFailed(runID, err)
+			return
+		}
+		markAdminEvalRunCompleted(runID)
+	}(run.ID, req.AgentID, cfg)
+
+	return c.JSON(fiber.Map{"run_id": run.ID, "existing": false, "run": adminEvalRunToSnapshot(run)})
 }
 
 func AdminRerunEvaluations(c *fiber.Ctx) error {
@@ -420,15 +439,32 @@ func AdminRunMetaEvaluation(c *fiber.Ctx) error {
 	if req.AgentID != "" {
 		agents = []models.AgentID{req.AgentID}
 	}
-	out := map[models.AgentID][]models.MetaFlag{}
-	for _, agentID := range agents {
-		flags, err := rivereval.RunMetaEvaluation(agentID)
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
-		}
-		out[agentID] = flags
+
+	if active := activeAdminEvalRun(); active != nil {
+		return c.JSON(fiber.Map{"run_id": active.ID, "existing": true, "run": adminEvalRunToSnapshot(active)})
 	}
-	return c.JSON(fiber.Map{"flags": out})
+	run := &adminEvalRun{
+		ID:        utils.GenerateID(),
+		Status:    "running",
+		Config:    rivereval.FullCycleConfig{},
+		StartedAt: time.Now().UTC(),
+	}
+	adminEvalRuns.Lock()
+	adminEvalRuns.runs[run.ID] = run
+	adminEvalRuns.latest = run.ID
+	adminEvalRuns.Unlock()
+
+	go func(runID string, targetAgents []models.AgentID) {
+		for _, agentID := range targetAgents {
+			if _, err := rivereval.RunMetaEvaluation(agentID); err != nil {
+				markAdminEvalRunFailed(runID, err)
+				return
+			}
+		}
+		markAdminEvalRunCompleted(runID)
+	}(run.ID, agents)
+
+	return c.JSON(fiber.Map{"run_id": run.ID, "existing": false, "run": adminEvalRunToSnapshot(run)})
 }
 
 func AdminEvalMetrics(c *fiber.Ctx) error {

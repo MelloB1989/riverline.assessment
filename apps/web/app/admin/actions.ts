@@ -64,7 +64,7 @@ export async function runAdminFullCycleAction() {
 }
 
 export async function runAdminPromptExperimentAction() {
-  const result = await backendJson<any>("/api/v1/admin/prompt-experiments", {
+  const result = await backendJson<AdminEvalStartResult>("/api/v1/admin/prompt-experiments", {
     method: "POST",
     body: JSON.stringify({
       agent_id: "aria",
@@ -78,7 +78,7 @@ export async function runAdminPromptExperimentAction() {
 }
 
 export async function runAdminMetaEvaluationAction() {
-  const result = await backendJson<any>("/api/v1/admin/meta-evaluations", {
+  const result = await backendJson<AdminEvalStartResult>("/api/v1/admin/meta-evaluations", {
     method: "POST",
     body: JSON.stringify({}),
   });
