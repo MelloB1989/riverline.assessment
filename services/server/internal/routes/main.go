@@ -27,6 +27,9 @@ func SetupMainRoutes(v1 fiber.Router) {
 	admin.Post("/prompt-versions/rollback", handlers.AdminRollbackPrompt)
 	admin.Post("/meta-evaluations", handlers.AdminRunMetaEvaluation)
 	admin.Post("/eval/full-cycle", handlers.AdminRunFullCycle)
+	admin.Post("/eval/full-cycle/start", handlers.AdminStartFullCycle)
+	admin.Get("/eval/runs/:id", handlers.AdminEvalProgress)
+	admin.Post("/eval/reset", handlers.AdminResetAndReseed)
 	admin.Get("/eval/metrics", handlers.AdminEvalMetrics)
 	admin.Get("/eval/meta", handlers.AdminEvalMeta)
 }

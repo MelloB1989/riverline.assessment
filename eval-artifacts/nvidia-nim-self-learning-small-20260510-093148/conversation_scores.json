@@ -1,0 +1,956 @@
+[
+  {
+    "id": "q38p65lpeh",
+    "conversation_id": "md52nizwlf",
+    "workflow_id": "sim-wf-42-cooperative-0-bqd4uzp6qd",
+    "agent_id": "aria",
+    "prompt_version": 1,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "cooperative",
+    "seed": "42-cooperative-0-bqd4uzp6qd",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "md52nizwlf",
+        "slovhj1s6z",
+        "qhk5kembqx"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "aria",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": true
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:32:47.58023Z"
+  },
+  {
+    "id": "f5l_0z_eyp",
+    "conversation_id": "adv8lcpcrd",
+    "workflow_id": "sim-wf-42-evasive-0-cy-pcp245r",
+    "agent_id": "aria",
+    "prompt_version": 1,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "evasive",
+    "seed": "42-evasive-0-cy-pcp245r",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "adv8lcpcrd"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "aria",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": false
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:33:04.1857Z"
+  },
+  {
+    "id": "k52uek5qg5",
+    "conversation_id": "lpezblhcw-",
+    "workflow_id": "sim-wf-42-cooperative-0-y54zhbp6fp",
+    "agent_id": "aria",
+    "prompt_version": 2,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "cooperative",
+    "seed": "42-cooperative-0-y54zhbp6fp",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "lpezblhcw-",
+        "ldnanl75gg",
+        "25lvkiy0o4"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "aria",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": true
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:34:31.181882Z"
+  },
+  {
+    "id": "ooourreiv2",
+    "conversation_id": "78i51jdozd",
+    "workflow_id": "sim-wf-42-evasive-0-x08vndeabm",
+    "agent_id": "aria",
+    "prompt_version": 2,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "evasive",
+    "seed": "42-evasive-0-x08vndeabm",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "78i51jdozd",
+        "paqz989dvz"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "aria",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": false
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:35:04.952004Z"
+  },
+  {
+    "id": "1y0xde2bgy",
+    "conversation_id": "d3osyni_4k",
+    "workflow_id": "sim-wf-42-cooperative-0-_20us_831y",
+    "agent_id": "nova",
+    "prompt_version": 1,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "cooperative",
+    "seed": "42-cooperative-0-_20us_831y",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "ub6j4-42ws",
+        "d3osyni_4k",
+        "9etk_40sul"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "nova",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": true
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:37:25.75409Z"
+  },
+  {
+    "id": "01--w4fb6x",
+    "conversation_id": "cwu36hakq0",
+    "workflow_id": "sim-wf-42-evasive-0-wfrgtc9edd",
+    "agent_id": "nova",
+    "prompt_version": 1,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "evasive",
+    "seed": "42-evasive-0-wfrgtc9edd",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "ao5xm0kdvi",
+        "cwu36hakq0",
+        "ge-dgqsq4s"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "nova",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": true
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:38:20.725887Z"
+  },
+  {
+    "id": "l4x0rkrp5v",
+    "conversation_id": "mkzbjloaqc",
+    "workflow_id": "sim-wf-42-cooperative-0-jx8vouzzkh",
+    "agent_id": "nova",
+    "prompt_version": 2,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "cooperative",
+    "seed": "42-cooperative-0-jx8vouzzkh",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "i96trmazta",
+        "mkzbjloaqc"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "nova",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": true
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:39:25.969956Z"
+  },
+  {
+    "id": "wgf6mzz6zc",
+    "conversation_id": "6fnjgbmxm6",
+    "workflow_id": "sim-wf-42-evasive-0-qki2ukh0bh",
+    "agent_id": "nova",
+    "prompt_version": 2,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "evasive",
+    "seed": "42-evasive-0-qki2ukh0bh",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "xzy36ogn9c",
+        "6fnjgbmxm6",
+        "fyf7g8080_"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "nova",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": true
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:40:14.347908Z"
+  },
+  {
+    "id": "yufraqpkfs",
+    "conversation_id": "9uayf4y9x2",
+    "workflow_id": "sim-wf-42-cooperative-0-nbjwpygteh",
+    "agent_id": "delta",
+    "prompt_version": 1,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "cooperative",
+    "seed": "42-cooperative-0-nbjwpygteh",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "5d733oex5w",
+        "d3xdrn-hqf",
+        "9uayf4y9x2"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "delta",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": true
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:42:42.633848Z"
+  },
+  {
+    "id": "0plrzihbd7",
+    "conversation_id": "z0n3fs675x",
+    "workflow_id": "sim-wf-42-evasive-0-o8k0yrdqqe",
+    "agent_id": "delta",
+    "prompt_version": 1,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "evasive",
+    "seed": "42-evasive-0-o8k0yrdqqe",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "77xn6e3mh4",
+        "yr3ab_b56_",
+        "z0n3fs675x"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "delta",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": true
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:43:28.257896Z"
+  },
+  {
+    "id": "sbns4fdlmd",
+    "conversation_id": "uk0xn6yyvk",
+    "workflow_id": "sim-wf-42-cooperative-0-2vvcaz6ssl",
+    "agent_id": "delta",
+    "prompt_version": 2,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "cooperative",
+    "seed": "42-cooperative-0-2vvcaz6ssl",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "dgag8kc-pn"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "delta",
+      "system_level_evaluation": true,
+      "target_stage_reached": false,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": false
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:44:25.851753Z"
+  },
+  {
+    "id": "ymqhm61i3y",
+    "conversation_id": "u82295q_im",
+    "workflow_id": "sim-wf-42-evasive-0-uxr9650-bn",
+    "agent_id": "delta",
+    "prompt_version": 2,
+    "evaluator_version": 1,
+    "is_simulated": true,
+    "persona_type": "evasive",
+    "seed": "42-evasive-0-uxr9650-bn",
+    "composite_score": 0,
+    "score_identity_verified": 0,
+    "score_info_completeness": 0,
+    "score_no_redundancy": 0,
+    "score_tone_appropriateness": 0,
+    "score_offer_clarity": 0,
+    "score_objection_handling": 0,
+    "score_commitment_attempt": 0,
+    "score_context_continuity": 0,
+    "score_consequence_accuracy": 0,
+    "score_deadline_specificity": 0,
+    "score_no_negotiation_drift": 0,
+    "score_compliance_pass": 0,
+    "compliance_breakdown": {
+      "all_judges_compliance_passed": false,
+      "conversation_ids": [
+        "j1z8rxjiz3",
+        "dw54os17b6",
+        "u82295q_im"
+      ],
+      "judge_results": [
+        {
+          "cost_usd": 0,
+          "input_tokens": 0,
+          "metrics": {
+            "commitment_attempt": 0,
+            "compliance_breakdown": {
+              "judge_invalid_json": true
+            },
+            "compliance_pass": 0,
+            "composite_score": 0,
+            "consequence_accuracy": 0,
+            "context_continuity": 0,
+            "deadline_specificity": 0,
+            "identity_verified": 0,
+            "info_completeness": 0,
+            "judge_b_composite": 0,
+            "judge_disagreement_delta": 0,
+            "no_negotiation_drift": 0,
+            "no_redundancy": 0,
+            "objection_handling": 0,
+            "offer_clarity": 0,
+            "reasoning": "Judge returned invalid JSON after retries. Last error: POST \"https://integrate.api.nvidia.com/v1/chat/completions\": 429 Too Many Requests ",
+            "tone_appropriateness": 0
+          },
+          "model": "kimi-k2.6",
+          "model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+          "name": "judge_kimi_k2_6_primary",
+          "output_tokens": 0,
+          "provider": "nvidia-nim",
+          "tokens": 0,
+          "weight": 1.2
+        }
+      ],
+      "scored_agent": "delta",
+      "system_level_evaluation": true,
+      "target_stage_reached": true,
+      "workflow_complete_sections": {
+        "aria": true,
+        "delta": false,
+        "nova": true
+      }
+    },
+    "compliance_passed": false,
+    "judge_b_composite": 0,
+    "judge_disagreement_delta": 0,
+    "eval_cost_usd": 0,
+    "eval_model_used": "nvidia-nim/moonshotai/kimi-k2.6",
+    "created_at": "2026-05-10T09:45:14.535Z"
+  }
+]

@@ -1,0 +1,13 @@
+id,workflow_id,conversation_id,agent_id,seed,persona_type,prompt_version,evaluator_version,composite_score,compliance_passed,judge_disagreement_delta,eval_cost_usd,eval_model_used,is_simulated,created_at
+q38p65lpeh,sim-wf-42-cooperative-0-bqd4uzp6qd,md52nizwlf,aria,42-cooperative-0-bqd4uzp6qd,cooperative,1,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:32:47Z
+f5l_0z_eyp,sim-wf-42-evasive-0-cy-pcp245r,adv8lcpcrd,aria,42-evasive-0-cy-pcp245r,evasive,1,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:33:04Z
+k52uek5qg5,sim-wf-42-cooperative-0-y54zhbp6fp,lpezblhcw-,aria,42-cooperative-0-y54zhbp6fp,cooperative,2,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:34:31Z
+ooourreiv2,sim-wf-42-evasive-0-x08vndeabm,78i51jdozd,aria,42-evasive-0-x08vndeabm,evasive,2,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:35:04Z
+1y0xde2bgy,sim-wf-42-cooperative-0-_20us_831y,d3osyni_4k,nova,42-cooperative-0-_20us_831y,cooperative,1,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:37:25Z
+01--w4fb6x,sim-wf-42-evasive-0-wfrgtc9edd,cwu36hakq0,nova,42-evasive-0-wfrgtc9edd,evasive,1,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:38:20Z
+l4x0rkrp5v,sim-wf-42-cooperative-0-jx8vouzzkh,mkzbjloaqc,nova,42-cooperative-0-jx8vouzzkh,cooperative,2,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:39:25Z
+wgf6mzz6zc,sim-wf-42-evasive-0-qki2ukh0bh,6fnjgbmxm6,nova,42-evasive-0-qki2ukh0bh,evasive,2,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:40:14Z
+yufraqpkfs,sim-wf-42-cooperative-0-nbjwpygteh,9uayf4y9x2,delta,42-cooperative-0-nbjwpygteh,cooperative,1,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:42:42Z
+0plrzihbd7,sim-wf-42-evasive-0-o8k0yrdqqe,z0n3fs675x,delta,42-evasive-0-o8k0yrdqqe,evasive,1,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:43:28Z
+sbns4fdlmd,sim-wf-42-cooperative-0-2vvcaz6ssl,uk0xn6yyvk,delta,42-cooperative-0-2vvcaz6ssl,cooperative,2,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:44:25Z
+ymqhm61i3y,sim-wf-42-evasive-0-uxr9650-bn,u82295q_im,delta,42-evasive-0-uxr9650-bn,evasive,2,1,0.00,false,0.000000,0.000000,nvidia-nim/moonshotai/kimi-k2.6,true,2026-05-10T09:45:14Z

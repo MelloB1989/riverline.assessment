@@ -1,6 +1,7 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
+import { revalidatePath } from "next/cache";
 
 const apiBase = process.env.API_URL ?? "http://localhost:9000";
 const clerkJwtTemplate =
@@ -44,6 +45,37 @@ export async function loadAdminMetaAction() {
   return backendJson<AdminEvalMeta>("/api/v1/admin/eval/meta");
 }
 
+export async function runAdminFullCycleAction() {
+  const result = await backendJson<AdminEvalStartResult>("/api/v1/admin/eval/full-cycle/start", {
+    method: "POST",
+    body: JSON.stringify({
+      reset: false,
+      seed: 42,
+      batch_size: 1,
+      agents: ["aria", "nova", "delta"],
+      personas: ["cooperative", "combative", "evasive", "distressed", "confused"],
+      max_turns_per_agent: 6,
+      max_cost_usd: 15,
+      max_prompt_iterations: 4,
+      meta_eval_every_judge_runs: 6,
+    }),
+  });
+  return result;
+}
+
+export async function resetAdminEvalDataAction() {
+  const result = await backendJson<{ ok: boolean; message: string }>("/api/v1/admin/eval/reset", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  revalidatePath("/admin");
+  return result;
+}
+
+export async function loadAdminEvalProgressAction(runId?: string | null) {
+  return backendJson<AdminEvalProgress>(`/api/v1/admin/eval/runs/${runId || "latest"}`);
+}
+
 export type AgentId = "aria" | "nova" | "delta";
 
 export type ConversationScore = {
@@ -62,6 +94,33 @@ export type ConversationScore = {
   judge_disagreement_delta?: number | null;
   eval_cost_usd?: number | null;
   eval_model_used?: string | null;
+  created_at: string;
+};
+
+export type AgentConversation = {
+  id: string;
+  workflow_id: string;
+  user_id: string;
+  agent_id: AgentId;
+  is_simulated?: boolean | null;
+  persona_type?: string | null;
+  seed?: string | null;
+  prompt_version: number;
+  outcome?: string | null;
+  total_turns?: number | null;
+  total_tokens_used?: number | null;
+  started_at: string;
+  ended_at?: string | null;
+};
+
+export type AgentMessage = {
+  id: string;
+  conversation_id: string;
+  workflow_id: string;
+  agent_id: AgentId;
+  role: "borrower" | "agent" | "tool" | "system";
+  content: string;
+  token_count?: number | null;
   created_at: string;
 };
 
@@ -162,6 +221,43 @@ export type AdminEvalSummary = {
   evaluator_versions: EvaluatorVersion[];
   canary_results: CanaryResult[];
   total_cost_usd: number;
+};
+
+export type AdminEvalRun = {
+  id: string;
+  status: "running" | "completed" | "failed";
+  config: Record<string, unknown>;
+  started_at: string;
+  completed_at?: string | null;
+  error?: string | null;
+};
+
+export type AdminEvalStartResult = {
+  run_id: string;
+  existing: boolean;
+  run: AdminEvalRun;
+};
+
+export type AdminConversationPreview = {
+  conversation: AgentConversation;
+  messages: AgentMessage[];
+  score?: ConversationScore | null;
+};
+
+export type AdminEvalProgress = {
+  run?: AdminEvalRun | null;
+  counts: {
+    conversations: number;
+    messages: number;
+    scores: number;
+    prompt_experiments: number;
+    cost_logs: number;
+  };
+  total_cost_usd: number;
+  recent_scores: ConversationScore[];
+  experiments: PromptExperiment[];
+  conversations: AdminConversationPreview[];
+  last_generated_at: string;
 };
 
 export type MetricAggregate = {

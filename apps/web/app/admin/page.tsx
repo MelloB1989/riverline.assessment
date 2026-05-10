@@ -18,9 +18,11 @@ import {
   loadAdminMetricsAction,
   type AdminEvalSummary,
   type AgentId,
+  type ConversationScore,
   type MetricAggregate,
   type PromptExperiment,
 } from "./actions";
+import RunEvalButton from "./run-eval-button";
 
 const agents: AgentId[] = ["aria", "nova", "delta"];
 
@@ -54,15 +56,16 @@ export default async function AdminPage() {
     );
   }
 
-  const latestExperiments = [...summary.prompt_experiments].sort(sortNewest).slice(0, 8);
-  const adopted = summary.prompt_experiments.filter((row) => row.adopted).length;
-  const rejected = summary.prompt_experiments.length - adopted;
-  const canariesPassed = summary.canary_results.filter((row) => row.correctly_flagged).length;
-  const promptVersions = [...summary.prompt_versions].sort((a, b) =>
+  const safeSummary = normalizeSummary(summary);
+  const latestExperiments = [...safeSummary.prompt_experiments].sort(sortNewest).slice(0, 8);
+  const adopted = safeSummary.prompt_experiments.filter((row) => row.adopted).length;
+  const rejected = safeSummary.prompt_experiments.length - adopted;
+  const canariesPassed = safeSummary.canary_results.filter((row) => row.correctly_flagged).length;
+  const promptVersions = [...safeSummary.prompt_versions].sort((a, b) =>
     a.agent_id.localeCompare(b.agent_id) || b.version_number - a.version_number,
   );
   const activePrompts = promptVersions.filter((row) => row.is_active);
-  const totalTokens = summary.cost_log.reduce((sum, row) => sum + row.total_tokens, 0);
+  const totalTokens = safeSummary.cost_log.reduce((sum, row) => sum + row.total_tokens, 0);
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-background text-foreground">
@@ -95,29 +98,31 @@ export default async function AdminPage() {
           </div>
         </header>
 
+        <RunEvalButton />
+
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard
             icon={<BarChart3 className="size-4" />}
             label="Scored conversations"
             value={fmtInt(metrics.total_scores)}
-            detail={`${summary.conversation_scores.length} raw score rows`}
+            detail={`${safeSummary.conversation_scores.length} raw score rows`}
           />
           <StatCard
             icon={<FlaskConical className="size-4" />}
             label="Prompt experiments"
-            value={fmtInt(summary.prompt_experiments.length)}
+            value={fmtInt(safeSummary.prompt_experiments.length)}
             detail={`${adopted} adopted / ${rejected} rejected`}
           />
           <StatCard
             icon={<ShieldCheck className="size-4" />}
             label="Canary checks"
-            value={`${canariesPassed}/${summary.canary_results.length}`}
+            value={`${canariesPassed}/${safeSummary.canary_results.length}`}
             detail="Correctly flagged known compliance cases"
           />
           <StatCard
             icon={<DollarSign className="size-4" />}
             label="LLM spend"
-            value={fmtMoney(summary.total_cost_usd)}
+            value={fmtMoney(safeSummary.total_cost_usd)}
             detail={`${fmtInt(totalTokens)} total tokens`}
           />
         </section>
@@ -129,9 +134,27 @@ export default async function AdminPage() {
               agent={agent}
               aggregate={metrics.by_agent?.[agent]}
               promptRows={promptVersions.filter((row) => row.agent_id === agent)}
-              experiments={summary.prompt_experiments.filter((row) => row.agent_id === agent)}
+              experiments={safeSummary.prompt_experiments.filter((row) => row.agent_id === agent)}
             />
           ))}
+        </section>
+
+        <section className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+          <Panel title="Score Trend" subtitle="Conversation scores over time, grouped by agent.">
+            <ScoreTrendChart scores={safeSummary.conversation_scores} />
+          </Panel>
+          <Panel title="Compliance Movement" subtitle="Control and treatment compliance for each prompt experiment.">
+            <ComplianceExperimentChart experiments={safeSummary.prompt_experiments} />
+          </Panel>
+        </section>
+
+        <section className="grid gap-4 xl:grid-cols-2">
+          <Panel title="Judge Disagreement" subtitle="Stored disagreement deltas by agent and prompt version.">
+            <JudgeDisagreementChart scores={safeSummary.conversation_scores} />
+          </Panel>
+          <Panel title="Spend By Model" subtitle="LLM cost grouped by provider/model for the current persisted run.">
+            <ModelSpendChart summary={safeSummary} />
+          </Panel>
         </section>
 
         <section className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
@@ -174,10 +197,10 @@ export default async function AdminPage() {
         <section className="grid gap-4 xl:grid-cols-2">
           <Panel title="Meta Evaluator Health" subtitle="Flags, evaluator revisions, and why judge prompts changed.">
             <div className="space-y-3">
-              {summary.meta_flags.length === 0 ? (
+              {safeSummary.meta_flags.length === 0 ? (
                 <EmptyState text="No meta-evaluator flags found." />
               ) : (
-                [...summary.meta_flags].sort(sortNewest).slice(0, 8).map((flag) => (
+                [...safeSummary.meta_flags].sort(sortNewest).slice(0, 8).map((flag) => (
                   <div
                     key={flag.id}
                     className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
@@ -215,7 +238,7 @@ export default async function AdminPage() {
           </Panel>
 
           <Panel title="Model Cost & Throughput" subtitle="Grouped by call type from persisted LLM cost logs.">
-            <CostBreakdown summary={summary} />
+            <CostBreakdown summary={safeSummary} />
           </Panel>
         </section>
       </div>
@@ -227,6 +250,19 @@ function Background() {
   return (
     <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_14%,rgba(236,72,153,0.24),transparent_30%),radial-gradient(circle_at_86%_8%,rgba(217,70,239,0.18),transparent_28%),radial-gradient(circle_at_50%_100%,rgba(244,63,94,0.12),transparent_34%)]" />
   );
+}
+
+function normalizeSummary(summary: AdminEvalSummary): AdminEvalSummary {
+  return {
+    conversation_scores: summary.conversation_scores ?? [],
+    prompt_experiments: summary.prompt_experiments ?? [],
+    cost_log: summary.cost_log ?? [],
+    prompt_versions: summary.prompt_versions ?? [],
+    meta_flags: summary.meta_flags ?? [],
+    evaluator_versions: summary.evaluator_versions ?? [],
+    canary_results: summary.canary_results ?? [],
+    total_cost_usd: summary.total_cost_usd ?? 0,
+  };
 }
 
 function StatCard({
@@ -380,6 +416,147 @@ function CostBreakdown({ summary }: { summary: AdminEvalSummary }) {
   );
 }
 
+function ScoreTrendChart({ scores }: { scores: ConversationScore[] }) {
+  const rows = [...scores].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  if (rows.length === 0) return <EmptyState text="No score trend data yet." />;
+  const width = 720;
+  const height = 220;
+  const padding = 28;
+  const byAgent = new Map<AgentId, ConversationScore[]>();
+  for (const agent of agents) byAgent.set(agent, []);
+  for (const row of rows) byAgent.get(row.agent_id)?.push(row);
+  const maxIndex = Math.max(1, rows.length - 1);
+  const point = (row: ConversationScore, index: number, agentRows: ConversationScore[]) => {
+    const x = padding + (index / Math.max(1, agentRows.length - 1)) * (width - padding * 2);
+    const y = padding + (1 - Math.max(0, Math.min(100, row.composite_score)) / 100) * (height - padding * 2);
+    return `${x},${y}`;
+  };
+  return (
+    <div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-64 w-full overflow-visible rounded-2xl border border-white/10 bg-black/20 p-2">
+        {[0, 25, 50, 75, 100].map((tick) => {
+          const y = padding + (1 - tick / 100) * (height - padding * 2);
+          return (
+            <g key={tick}>
+              <line x1={padding} x2={width - padding} y1={y} y2={y} stroke="rgba(255,255,255,0.08)" />
+              <text x={4} y={y + 4} fill="rgba(255,255,255,0.35)" fontSize="10">
+                {tick}
+              </text>
+            </g>
+          );
+        })}
+        {agents.map((agent) => {
+          const agentRows = byAgent.get(agent) ?? [];
+          if (agentRows.length === 0) return null;
+          const color = agentColor(agent);
+          const points = agentRows.map((row, index) => point(row, index, agentRows)).join(" ");
+          return (
+            <g key={agent}>
+              <polyline points={points} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+              {agentRows.map((row, index) => {
+                const [x, y] = point(row, index, agentRows).split(",").map(Number);
+                return <circle key={row.id} cx={x} cy={y} r="4" fill={color} />;
+              })}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="mt-3 flex flex-wrap gap-3 text-xs text-zinc-400">
+        {agents.map((agent) => (
+          <span key={agent} className="inline-flex items-center gap-2">
+            <span className="size-2 rounded-full" style={{ backgroundColor: agentColor(agent) }} />
+            {agent.toUpperCase()}
+          </span>
+        ))}
+        <span className="ml-auto text-zinc-600">{fmtInt(maxIndex + 1)} chronological score rows</span>
+      </div>
+    </div>
+  );
+}
+
+function ComplianceExperimentChart({ experiments }: { experiments: PromptExperiment[] }) {
+  const rows = [...experiments].sort(sortNewest).slice(0, 10).reverse();
+  if (rows.length === 0) return <EmptyState text="No compliance experiment data yet." />;
+  return (
+    <div className="space-y-3">
+      {rows.map((row) => (
+        <div key={row.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+          <div className="mb-2 flex items-center justify-between text-xs">
+            <span className="font-semibold uppercase tracking-[0.16em] text-pink-100">
+              {row.agent_id} v{row.control_version} {"->"} v{row.candidate_version}
+            </span>
+            <span className={row.adopted ? "text-emerald-300" : "text-rose-300"}>
+              {row.adopted ? "adopted" : "rejected"}
+            </span>
+          </div>
+          <div className="grid gap-2">
+            <Bar label="Control" value={row.control_compliance_rate} />
+            <Bar label="Treatment" value={row.treatment_compliance_rate} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function JudgeDisagreementChart({ scores }: { scores: ConversationScore[] }) {
+  const rows = [...scores]
+    .filter((row) => typeof row.judge_disagreement_delta === "number")
+    .sort((a, b) => (b.judge_disagreement_delta ?? 0) - (a.judge_disagreement_delta ?? 0))
+    .slice(0, 12);
+  if (rows.length === 0) return <EmptyState text="No judge disagreement rows yet." />;
+  const max = Math.max(...rows.map((row) => row.judge_disagreement_delta ?? 0), 1);
+  return (
+    <div className="space-y-3">
+      {rows.map((row) => (
+        <div key={row.id}>
+          <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
+            <span>
+              {row.agent_id.toUpperCase()} v{row.prompt_version}
+            </span>
+            <span>{fmtScore(row.judge_disagreement_delta ?? 0)}</span>
+          </div>
+          <div className="h-3 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-amber-400 to-rose-400"
+              style={{ width: `${Math.max(3, ((row.judge_disagreement_delta ?? 0) / max) * 100)}%` }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ModelSpendChart({ summary }: { summary: AdminEvalSummary }) {
+  const byModel = new Map<string, { cost: number; tokens: number }>();
+  for (const row of summary.cost_log) {
+    const current = byModel.get(row.model_used) ?? { cost: 0, tokens: 0 };
+    current.cost += row.cost_usd;
+    current.tokens += row.total_tokens;
+    byModel.set(row.model_used, current);
+  }
+  const rows = [...byModel.entries()].sort((a, b) => b[1].cost - a[1].cost).slice(0, 10);
+  if (rows.length === 0) return <EmptyState text="No model spend rows yet." />;
+  const max = Math.max(...rows.map(([, row]) => row.cost), 0.001);
+  return (
+    <div className="space-y-3">
+      {rows.map(([model, row]) => (
+        <div key={model} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+          <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+            <span className="truncate text-pink-100">{model}</span>
+            <span className="text-zinc-400">{fmtMoney(row.cost)}</span>
+          </div>
+          <div className="h-3 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full rounded-full bg-pink-500" style={{ width: `${Math.max(3, (row.cost / max) * 100)}%` }} />
+          </div>
+          <p className="mt-1 text-xs text-zinc-600">{fmtInt(row.tokens)} tokens</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Panel({
   title,
   subtitle,
@@ -460,4 +637,15 @@ function signed(value: number) {
 
 function fmtNullable(value?: number | null) {
   return typeof value === "number" ? value.toFixed(2) : "-";
+}
+
+function agentColor(agent: AgentId) {
+  switch (agent) {
+    case "aria":
+      return "#f472b6";
+    case "nova":
+      return "#a78bfa";
+    case "delta":
+      return "#22d3ee";
+  }
 }

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"riverline_server/constants"
@@ -17,6 +19,7 @@ import (
 	vapiclient "riverline_server/internal/vapi"
 	"riverline_server/internal/workflows"
 
+	"github.com/MelloB1989/karma/utils"
 	"github.com/MelloB1989/karma/v2/orm"
 	"github.com/gofiber/fiber/v2"
 	"go.temporal.io/sdk/client"
@@ -52,6 +55,46 @@ type vapiWebhook struct {
 	Transcript string         `json:"transcript"`
 	Recording  string         `json:"recording_url"`
 }
+
+type adminEvalRun struct {
+	ID          string
+	Status      string
+	Config      rivereval.FullCycleConfig
+	StartedAt   time.Time
+	CompletedAt *time.Time
+	Error       *string
+}
+
+type adminEvalRunSnapshot struct {
+	ID          string                    `json:"id"`
+	Status      string                    `json:"status"`
+	Config      rivereval.FullCycleConfig `json:"config"`
+	StartedAt   time.Time                 `json:"started_at"`
+	CompletedAt *time.Time                `json:"completed_at"`
+	Error       *string                   `json:"error"`
+}
+
+type adminConversationPreview struct {
+	Conversation models.AgentConversation  `json:"conversation"`
+	Messages     []models.AgentMessage     `json:"messages"`
+	Score        *models.ConversationScore `json:"score,omitempty"`
+}
+
+type adminEvalProgress struct {
+	Run             *adminEvalRunSnapshot      `json:"run"`
+	Counts          map[string]int             `json:"counts"`
+	TotalCostUSD    float64                    `json:"total_cost_usd"`
+	RecentScores    []models.ConversationScore `json:"recent_scores"`
+	Experiments     []models.PromptExperiment  `json:"experiments"`
+	Conversations   []adminConversationPreview `json:"conversations"`
+	LastGeneratedAt time.Time                  `json:"last_generated_at"`
+}
+
+var adminEvalRuns = struct {
+	sync.Mutex
+	latest string
+	runs   map[string]*adminEvalRun
+}{runs: map[string]*adminEvalRun{}}
 
 func StartWorkflow(c *fiber.Ctx) error {
 	var req startWorkflowRequest
@@ -250,6 +293,27 @@ func AdminEvalSummary(c *fiber.Ctx) error {
 	for _, row := range costs {
 		totalCost += row.CostUsd
 	}
+	if scores == nil {
+		scores = []models.ConversationScore{}
+	}
+	if experiments == nil {
+		experiments = []models.PromptExperiment{}
+	}
+	if costs == nil {
+		costs = []models.LlmCostLog{}
+	}
+	if promptVersions == nil {
+		promptVersions = []models.PromptVersion{}
+	}
+	if metaFlags == nil {
+		metaFlags = []models.MetaFlag{}
+	}
+	if evaluatorVersions == nil {
+		evaluatorVersions = []models.EvaluatorVersion{}
+	}
+	if canaryResults == nil {
+		canaryResults = []models.CanaryResult{}
+	}
 	return c.JSON(fiber.Map{
 		"conversation_scores": scores,
 		"prompt_experiments":  experiments,
@@ -358,11 +422,81 @@ func AdminEvalMetrics(c *fiber.Ctx) error {
 func AdminRunFullCycle(c *fiber.Ctx) error {
 	var req rivereval.FullCycleConfig
 	_ = c.BodyParser(&req)
+	if req.Reset {
+		if err := collections.ResetApplicationData(); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		}
+	}
 	report, err := rivereval.RunFullCycle(req)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 	return c.JSON(report)
+}
+
+func AdminStartFullCycle(c *fiber.Ctx) error {
+	var req rivereval.FullCycleConfig
+	_ = c.BodyParser(&req)
+	if active := activeAdminEvalRun(); active != nil {
+		return c.JSON(fiber.Map{"run_id": active.ID, "existing": true, "run": adminEvalRunToSnapshot(active)})
+	}
+	run := &adminEvalRun{
+		ID:        utils.GenerateID(),
+		Status:    "running",
+		Config:    req,
+		StartedAt: time.Now().UTC(),
+	}
+	adminEvalRuns.Lock()
+	adminEvalRuns.runs[run.ID] = run
+	adminEvalRuns.latest = run.ID
+	adminEvalRuns.Unlock()
+
+	go func(runID string, cfg rivereval.FullCycleConfig) {
+		if cfg.Reset {
+			if err := collections.ResetApplicationData(); err != nil {
+				markAdminEvalRunFailed(runID, err)
+				return
+			}
+			cfg.Reset = false
+		}
+		if _, err := rivereval.RunFullCycle(cfg); err != nil {
+			markAdminEvalRunFailed(runID, err)
+			return
+		}
+		markAdminEvalRunCompleted(runID)
+	}(run.ID, req)
+
+	return c.JSON(fiber.Map{"run_id": run.ID, "existing": false, "run": adminEvalRunToSnapshot(run)})
+}
+
+func AdminEvalProgress(c *fiber.Ctx) error {
+	runID := c.Params("id")
+	if runID == "" || runID == "latest" {
+		runID = latestAdminEvalRunID()
+	}
+	var run *adminEvalRunSnapshot
+	if runID != "" {
+		stored := getAdminEvalRun(runID)
+		if stored != nil {
+			run = adminEvalRunToSnapshot(stored)
+		}
+	}
+	progress, err := buildAdminEvalProgress(run)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(progress)
+}
+
+func AdminResetAndReseed(c *fiber.Ctx) error {
+	if active := activeAdminEvalRun(); active != nil {
+		return fiber.NewError(fiber.StatusConflict, "cannot reset database while an evaluation run is active")
+	}
+	if err := collections.ResetApplicationData(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	clearAdminEvalRuns()
+	return c.JSON(fiber.Map{"ok": true, "message": "application data reset and initial prompts reseeded"})
 }
 
 func AdminEvalMeta(c *fiber.Ctx) error {
@@ -391,6 +525,18 @@ func AdminEvalMeta(c *fiber.Ctx) error {
 	if err := resultOrm.GetAll().Scan(&canaryResults); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
+	if flags == nil {
+		flags = []models.MetaFlag{}
+	}
+	if evaluatorVersions == nil {
+		evaluatorVersions = []models.EvaluatorVersion{}
+	}
+	if canaries == nil {
+		canaries = []models.ComplianceCanary{}
+	}
+	if canaryResults == nil {
+		canaryResults = []models.CanaryResult{}
+	}
 	return c.JSON(fiber.Map{
 		"meta_flags":          flags,
 		"evaluator_versions":  evaluatorVersions,
@@ -410,6 +556,188 @@ func AdminExperimentDetail(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "prompt experiment not found")
 	}
 	return c.JSON(fiber.Map{"experiment": rows[0]})
+}
+
+func activeAdminEvalRun() *adminEvalRun {
+	adminEvalRuns.Lock()
+	defer adminEvalRuns.Unlock()
+	for _, run := range adminEvalRuns.runs {
+		if run.Status == "running" {
+			clone := *run
+			return &clone
+		}
+	}
+	return nil
+}
+
+func latestAdminEvalRunID() string {
+	adminEvalRuns.Lock()
+	defer adminEvalRuns.Unlock()
+	return adminEvalRuns.latest
+}
+
+func getAdminEvalRun(id string) *adminEvalRun {
+	adminEvalRuns.Lock()
+	defer adminEvalRuns.Unlock()
+	run := adminEvalRuns.runs[id]
+	if run == nil {
+		return nil
+	}
+	clone := *run
+	return &clone
+}
+
+func markAdminEvalRunCompleted(id string) {
+	adminEvalRuns.Lock()
+	defer adminEvalRuns.Unlock()
+	run := adminEvalRuns.runs[id]
+	if run == nil {
+		return
+	}
+	now := time.Now().UTC()
+	run.Status = "completed"
+	run.CompletedAt = &now
+}
+
+func markAdminEvalRunFailed(id string, err error) {
+	adminEvalRuns.Lock()
+	defer adminEvalRuns.Unlock()
+	run := adminEvalRuns.runs[id]
+	if run == nil {
+		return
+	}
+	now := time.Now().UTC()
+	msg := err.Error()
+	run.Status = "failed"
+	run.CompletedAt = &now
+	run.Error = &msg
+}
+
+func clearAdminEvalRuns() {
+	adminEvalRuns.Lock()
+	defer adminEvalRuns.Unlock()
+	adminEvalRuns.latest = ""
+	adminEvalRuns.runs = map[string]*adminEvalRun{}
+}
+
+func adminEvalRunToSnapshot(run *adminEvalRun) *adminEvalRunSnapshot {
+	if run == nil {
+		return nil
+	}
+	return &adminEvalRunSnapshot{
+		ID:          run.ID,
+		Status:      run.Status,
+		Config:      run.Config,
+		StartedAt:   run.StartedAt,
+		CompletedAt: run.CompletedAt,
+		Error:       run.Error,
+	}
+}
+
+func buildAdminEvalProgress(run *adminEvalRunSnapshot) (*adminEvalProgress, error) {
+	scoreOrm := orm.Load(&models.ConversationScore{})
+	defer scoreOrm.Close()
+	expOrm := orm.Load(&models.PromptExperiment{})
+	defer expOrm.Close()
+	costOrm := orm.Load(&models.LlmCostLog{})
+	defer costOrm.Close()
+	convOrm := orm.Load(&models.AgentConversation{})
+	defer convOrm.Close()
+	msgOrm := orm.Load(&models.AgentMessage{})
+	defer msgOrm.Close()
+
+	var scores []models.ConversationScore
+	if err := scoreOrm.GetAll().Scan(&scores); err != nil {
+		return nil, err
+	}
+	var experiments []models.PromptExperiment
+	if err := expOrm.GetAll().Scan(&experiments); err != nil {
+		return nil, err
+	}
+	var costs []models.LlmCostLog
+	if err := costOrm.GetAll().Scan(&costs); err != nil {
+		return nil, err
+	}
+	var conversations []models.AgentConversation
+	if err := convOrm.GetAll().Scan(&conversations); err != nil {
+		return nil, err
+	}
+	var messages []models.AgentMessage
+	if err := msgOrm.GetAll().Scan(&messages); err != nil {
+		return nil, err
+	}
+
+	totalCost := 0.0
+	for _, row := range costs {
+		totalCost += row.CostUsd
+	}
+	sort.Slice(scores, func(i, j int) bool { return scores[i].CreatedAt.After(scores[j].CreatedAt) })
+	sort.Slice(experiments, func(i, j int) bool { return experiments[i].CreatedAt.After(experiments[j].CreatedAt) })
+	sort.Slice(conversations, func(i, j int) bool { return conversations[i].StartedAt.After(conversations[j].StartedAt) })
+	sort.Slice(messages, func(i, j int) bool { return messages[i].CreatedAt.Before(messages[j].CreatedAt) })
+
+	scoreByConversation := map[string]models.ConversationScore{}
+	for _, score := range scores {
+		if _, exists := scoreByConversation[score.ConversationId]; !exists {
+			scoreByConversation[score.ConversationId] = score
+		}
+	}
+	messagesByConversation := map[string][]models.AgentMessage{}
+	for _, msg := range messages {
+		messagesByConversation[msg.ConversationId] = append(messagesByConversation[msg.ConversationId], msg)
+	}
+	previews := make([]adminConversationPreview, 0)
+	for _, conv := range conversations {
+		if len(previews) >= 12 {
+			break
+		}
+		preview := adminConversationPreview{
+			Conversation: conv,
+			Messages:     messagesByConversation[conv.Id],
+		}
+		if score, ok := scoreByConversation[conv.Id]; ok {
+			preview.Score = &score
+		}
+		previews = append(previews, preview)
+	}
+
+	recentScores := scores
+	if len(recentScores) > 24 {
+		recentScores = recentScores[:24]
+	}
+	recentExperiments := experiments
+	if len(recentExperiments) > 12 {
+		recentExperiments = recentExperiments[:12]
+	}
+	return &adminEvalProgress{
+		Run: run,
+		Counts: map[string]int{
+			"conversations":      len(conversations),
+			"messages":           len(messages),
+			"scores":             len(scores),
+			"prompt_experiments": len(experiments),
+			"cost_logs":          len(costs),
+		},
+		TotalCostUSD:    totalCost,
+		RecentScores:    nonNilScores(recentScores),
+		Experiments:     nonNilExperiments(recentExperiments),
+		Conversations:   previews,
+		LastGeneratedAt: time.Now().UTC(),
+	}, nil
+}
+
+func nonNilScores(rows []models.ConversationScore) []models.ConversationScore {
+	if rows == nil {
+		return []models.ConversationScore{}
+	}
+	return rows
+}
+
+func nonNilExperiments(rows []models.PromptExperiment) []models.PromptExperiment {
+	if rows == nil {
+		return []models.PromptExperiment{}
+	}
+	return rows
 }
 
 func startTemporalWorkflow(c *fiber.Ctx, id string, workflow any, args ...any) error {

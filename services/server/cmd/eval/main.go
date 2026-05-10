@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"flag"
@@ -18,7 +17,6 @@ import (
 	"riverline_server/internal/models"
 
 	"github.com/MelloB1989/karma/v2/orm"
-	_ "github.com/lib/pq"
 )
 
 func main() {
@@ -35,11 +33,10 @@ func main() {
 	flag.Parse()
 
 	if *resetDB {
-		if err := resetDatabase(); err != nil {
+		if err := collections.ResetApplicationData(); err != nil {
 			log.Fatal(err)
 		}
-	}
-	if err := collections.EnsureDefaults(); err != nil {
+	} else if err := collections.EnsureDefaults(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -74,31 +71,6 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("\nArtifacts written to: %s\n", *output)
-}
-
-func resetDatabase() error {
-	db, err := sql.Open("postgres", constants.AppCfg.Get().DatabaseURL)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	_, err = db.Exec(`TRUNCATE TABLE
-agent_messages,
-conversation_scores,
-canary_results,
-compliance_canaries,
-meta_flags,
-evaluator_versions,
-prompt_experiments,
-prompt_versions,
-llm_cost_log,
-resolution_offers,
-agent_conversations,
-borrower_workflows,
-loans,
-users
-RESTART IDENTITY CASCADE`)
-	return err
 }
 
 func parsePersonas(value string) []models.Persona {

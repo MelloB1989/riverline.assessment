@@ -9,11 +9,12 @@ import (
 )
 
 type EvaluatorJudgeConfig struct {
-	Name        string  `json:"name"`
-	Provider    string  `json:"provider"`
-	Model       string  `json:"model"`
-	Weight      float64 `json:"weight"`
-	Temperature float32 `json:"temperature"`
+	Name            string  `json:"name"`
+	Provider        string  `json:"provider"`
+	Model           string  `json:"model"`
+	Weight          float64 `json:"weight"`
+	Temperature     float32 `json:"temperature"`
+	ReasoningEffort string  `json:"reasoning_effort,omitempty"`
 }
 
 type SelfLearningConfig struct {
@@ -44,12 +45,12 @@ func DefaultSelfLearningConfig() SelfLearningConfig {
 	cfg := AppCfg.Get()
 	out := SelfLearningConfig{
 		Judges: []EvaluatorJudgeConfig{
-			{Name: "judge_a", Provider: string(ai.Groq), Model: string(ai.Llama31_8B), Weight: 1, Temperature: 1},
-			{Name: "judge_b", Provider: string(ai.Groq), Model: string(ai.GPTOSS_120B), Weight: 1, Temperature: 1},
-			{Name: "judge_c", Provider: string(ai.XAI), Model: string(ai.Grok4ReasoningFast), Weight: 1, Temperature: 1},
-			{Name: "judge_d", Provider: string(ai.Groq), Model: string(ai.Llama33_70B), Weight: 1, Temperature: 1},
+			{Name: "judge_kimi_k2_6_primary", Provider: string(ai.NvidiaNIM), Model: string(ai.KimiK2_6), Weight: 1.2, Temperature: 0.2},
+			{Name: "judge_gpt_oss_120b_groq", Provider: string(ai.Groq), Model: string(ai.GPTOSS_120B), Weight: 1, Temperature: 0.15},
+			{Name: "judge_grok4_xai", Provider: string(ai.XAI), Model: string(ai.Grok4), Weight: 1, Temperature: 0.15},
+			{Name: "judge_grok4_fast_reasoning_xai", Provider: string(ai.XAI), Model: string(ai.Grok4ReasoningFast), Weight: 1.1, Temperature: 0.1, ReasoningEffort: "high"},
 		},
-		PromptGenerator:         EvaluatorJudgeConfig{Name: "prompt_generator", Provider: firstNonEmpty(cfg.PromptGenProvider, string(ai.Groq)), Model: firstNonEmpty(cfg.PromptGenModel, string(ai.GPTOSS_120B)), Weight: 1, Temperature: 0.2},
+		PromptGenerator:         EvaluatorJudgeConfig{Name: "prompt_generator", Provider: string(ai.NvidiaNIM), Model: string(ai.KimiK2_6), Weight: 1, Temperature: 0.15, ReasoningEffort: "high"},
 		PersonaLLMBaseURL:       strings.TrimRight(cfg.PersonaLLMBaseURL, "/"),
 		PersonaLLMAPIKey:        cfg.PersonaLLMApiKey,
 		PersonaLLMModel:         cfg.PersonaLLMModel,
@@ -108,16 +109,24 @@ func EstimateLLMCostUSD(modelUsed string, promptTokens, completionTokens int) fl
 
 func defaultModelPricing() map[string]ModelPricing {
 	return map[string]ModelPricing{
-		"groq/llama-3.3-70b-versatile": {InputPerMillion: 0.59, OutputPerMillion: 0.79},
-		"llama-3.3-70b-versatile":      {InputPerMillion: 0.59, OutputPerMillion: 0.79},
-		"claude-3-5-haiku-20241022":    {InputPerMillion: 0.80, OutputPerMillion: 4.00},
-		"claude-3.5-haiku":             {InputPerMillion: 0.80, OutputPerMillion: 4.00},
-		"openai/gpt-oss-120b":          {InputPerMillion: 0.15, OutputPerMillion: 0.60},
-		"groq/openai/gpt-oss-120b":     {InputPerMillion: 0.15, OutputPerMillion: 0.60},
-		"openai/gpt-oss-20b":           {InputPerMillion: 0.075, OutputPerMillion: 0.30},
-		"groq/openai/gpt-oss-20b":      {InputPerMillion: 0.075, OutputPerMillion: 0.30},
-		"grok-4-fast-reasoning":        {InputPerMillion: 0.20, OutputPerMillion: 0.50},
-		"xai/grok-4-fast-reasoning":    {InputPerMillion: 0.20, OutputPerMillion: 0.50},
+		"groq/llama-3.3-70b-versatile":           {InputPerMillion: 0.59, OutputPerMillion: 0.79},
+		"llama-3.3-70b-versatile":                {InputPerMillion: 0.59, OutputPerMillion: 0.79},
+		"claude-3-5-haiku-20241022":              {InputPerMillion: 0.80, OutputPerMillion: 4.00},
+		"claude-3.5-haiku":                       {InputPerMillion: 0.80, OutputPerMillion: 4.00},
+		"openai/gpt-oss-120b":                    {InputPerMillion: 0.15, OutputPerMillion: 0.60},
+		"groq/openai/gpt-oss-120b":               {InputPerMillion: 0.15, OutputPerMillion: 0.60},
+		"openai/gpt-oss-20b":                     {InputPerMillion: 0.075, OutputPerMillion: 0.30},
+		"groq/openai/gpt-oss-20b":                {InputPerMillion: 0.075, OutputPerMillion: 0.30},
+		"grok-4-fast-reasoning":                  {InputPerMillion: 0.20, OutputPerMillion: 0.50},
+		"xai/grok-4-fast-reasoning":              {InputPerMillion: 0.20, OutputPerMillion: 0.50},
+		"grok-4":                                 {InputPerMillion: 0.20, OutputPerMillion: 0.50},
+		"xai/grok-4":                             {InputPerMillion: 0.20, OutputPerMillion: 0.50},
+		"grok-4-fast-non-reasoning":              {InputPerMillion: 0.20, OutputPerMillion: 0.50},
+		"xai/grok-4-fast-non-reasoning":          {InputPerMillion: 0.20, OutputPerMillion: 0.50},
+		"nvidia-nim/deepseek-ai/deepseek-v4-pro": {InputPerMillion: 0.60, OutputPerMillion: 1.20},
+		"deepseek-ai/deepseek-v4-pro":            {InputPerMillion: 0.60, OutputPerMillion: 1.20},
+		"nvidia-nim/moonshotai/kimi-k2.6":        {InputPerMillion: 0.60, OutputPerMillion: 1.20},
+		"moonshotai/kimi-k2.6":                   {InputPerMillion: 0.60, OutputPerMillion: 1.20},
 	}
 }
 
@@ -125,10 +134,10 @@ func normalizeJudgeConfig(judges []EvaluatorJudgeConfig) []EvaluatorJudgeConfig 
 	out := make([]EvaluatorJudgeConfig, 0, len(judges))
 	for i, judge := range judges {
 		if strings.TrimSpace(judge.Provider) == "" {
-			judge.Provider = "groq"
+			judge.Provider = string(ai.NvidiaNIM)
 		}
 		if strings.TrimSpace(judge.Model) == "" {
-			judge.Model = "llama-3.3-70b"
+			judge.Model = string(ai.KimiK2_6)
 		}
 		if strings.TrimSpace(judge.Name) == "" {
 			judge.Name = "judge_" + string(rune('a'+i))

@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"riverline_server/constants"
@@ -20,6 +21,7 @@ import (
 	karmaModels "github.com/MelloB1989/karma/models"
 	"github.com/MelloB1989/karma/utils"
 	"github.com/MelloB1989/karma/v2/orm"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 type SimConfig struct {
@@ -95,12 +97,31 @@ type JudgeResult struct {
 	Provider     string       `json:"provider"`
 	Model        string       `json:"model"`
 	Weight       float64      `json:"weight"`
+	Valid        bool         `json:"valid"`
+	Error        string       `json:"error,omitempty"`
 	Metrics      MetricScores `json:"metrics"`
 	Tokens       int          `json:"tokens"`
 	InputTokens  int          `json:"input_tokens"`
 	OutputTokens int          `json:"output_tokens"`
 	CostUSD      float64      `json:"cost_usd"`
 	ModelUsed    string       `json:"model_used"`
+}
+
+const (
+	judgeCallTimeout          = 75 * time.Second
+	internalGenerationTimeout = 90 * time.Second
+	aiCallMaxAttempts         = 3
+	nvidiaNIMMinInterval      = 1600 * time.Millisecond
+)
+
+var unavailableJudgeModels sync.Map
+
+var nvidiaNIMCallLimiter = &providerCallLimiter{minInterval: nvidiaNIMMinInterval}
+
+type providerCallLimiter struct {
+	mu          sync.Mutex
+	nextAllowed time.Time
+	minInterval time.Duration
 }
 
 type SimulationScore struct {
@@ -278,6 +299,9 @@ func ScoreSimulationsForAgent(conversations []SimulatedConversation, agentID mod
 		evaluation, err := EvaluateSystemWithJudges(agentID, transcript, judges)
 		if err != nil {
 			log.Printf("[eval] scoring workflow failed agent=%s workflow=%s duration=%s err=%v", agentID, sim.Workflow.Id, time.Since(simStart), err)
+			if isNoUsableJudgeErr(err) {
+				continue
+			}
 			return nil, err
 		}
 		evaluation.Metrics.ComplianceBreakdown["system_level_evaluation"] = true
@@ -348,10 +372,46 @@ func evaluateTranscriptWithEvaluator(evaluator models.EvaluatorVersion, transcri
 	for _, judge := range judges {
 		judgeStart := time.Now()
 		log.Printf("[eval] judge start mode=%s agent=%s judge=%s provider=%s model=%s", mode, agentID, judge.Name, judge.Provider, judge.Model)
+		modelCfg := ai.ModelConfig{BaseModel: ai.BaseModel(judge.Model), Provider: ai.Provider(judge.Provider)}
+		modelUsed := string(judge.Provider) + "/" + modelCfg.GetModelString()
+		cacheKey := judgeModelKey(judge)
+		if reason, unavailable := unavailableJudgeModels.Load(cacheKey); unavailable {
+			log.Printf("[eval] judge skipped unavailable mode=%s agent=%s judge=%s model=%s reason=%v", mode, agentID, judge.Name, modelUsed, reason)
+			results = append(results, JudgeResult{
+				Name:         judge.Name,
+				Provider:     judge.Provider,
+				Model:        judge.Model,
+				Weight:       0,
+				Valid:        false,
+				Error:        fmt.Sprintf("%v", reason),
+				ModelUsed:    modelUsed,
+				InputTokens:  0,
+				OutputTokens: 0,
+				Tokens:       0,
+				CostUSD:      0,
+			})
+			continue
+		}
 		metrics, inputTokens, outputTokens, modelUsed, err := evaluateWithJudge(evaluator, transcript, judge, systemLevel)
 		if err != nil {
 			log.Printf("[eval] judge failed agent=%s judge=%s duration=%s err=%v", agentID, judge.Name, time.Since(judgeStart), err)
-			return nil, err
+			if shouldCacheJudgeUnavailable(judge, err) {
+				unavailableJudgeModels.Store(cacheKey, err.Error())
+			}
+			results = append(results, JudgeResult{
+				Name:         judge.Name,
+				Provider:     judge.Provider,
+				Model:        judge.Model,
+				Weight:       0,
+				Valid:        false,
+				Error:        err.Error(),
+				Tokens:       inputTokens + outputTokens,
+				InputTokens:  inputTokens,
+				OutputTokens: outputTokens,
+				CostUSD:      constants.EstimateLLMCostUSD(modelUsed, inputTokens, outputTokens),
+				ModelUsed:    modelUsed,
+			})
+			continue
 		}
 		tokens := inputTokens + outputTokens
 		cost := constants.EstimateLLMCostUSD(modelUsed, inputTokens, outputTokens)
@@ -361,6 +421,7 @@ func evaluateTranscriptWithEvaluator(evaluator models.EvaluatorVersion, transcri
 			Provider:     judge.Provider,
 			Model:        judge.Model,
 			Weight:       judge.Weight,
+			Valid:        true,
 			Metrics:      metrics,
 			Tokens:       tokens,
 			InputTokens:  inputTokens,
@@ -368,6 +429,9 @@ func evaluateTranscriptWithEvaluator(evaluator models.EvaluatorVersion, transcri
 			CostUSD:      cost,
 			ModelUsed:    modelUsed,
 		})
+	}
+	if validJudgeCount(results) == 0 {
+		return nil, fmt.Errorf("no evaluator judge returned a usable result for %s; failed_judges=%s", agentID, failedJudgeSummary(results))
 	}
 	aggregated := aggregateJudgeResults(results)
 	tokens := 0
@@ -744,6 +808,12 @@ func runOneSimulation(ctx context.Context, persona *personaSimulator, cfg SimCon
 	log.Printf("[eval] stage begin workflow=%s stage=%s", wf.Id, models.AgentAria)
 	ariaConv, ariaComplete, err := simulateAria(ctx, persona, wf, ariaClient, personaType, seed, cfg.MaxTurnsPerAgent, cfg.PersonaGuidance)
 	if err != nil {
+		if ariaConv.Id != "" {
+			result.Conversations = append(result.Conversations, ariaConv)
+			result.Conversation = ariaConv
+			result.AgentTranscripts[models.AgentAria] = conversationTranscript(ariaConv)
+			result.Transcript = fullTranscript(result.AgentTranscripts)
+		}
 		return result, err
 	}
 	log.Printf("[eval] stage end workflow=%s stage=%s complete=%t conversation=%s", wf.Id, models.AgentAria, ariaComplete, ariaConv.Id)
@@ -772,6 +842,11 @@ func runOneSimulation(ctx context.Context, persona *personaSimulator, cfg SimCon
 		log.Printf("[eval] stage begin workflow=%s stage=%s", wf.Id, models.AgentNova)
 		novaConv, err := simulateNovaText(ctx, persona, wf, novaClient, deltaClient, personaType, seed, cfg.MaxTurnsPerAgent, cfg.PersonaGuidance)
 		if err != nil {
+			if novaConv.Id != "" {
+				result.Conversations = append(result.Conversations, novaConv)
+				result.AgentTranscripts[models.AgentNova] = conversationTranscript(novaConv)
+				result.Transcript = fullTranscript(result.AgentTranscripts)
+			}
 			return result, err
 		}
 		log.Printf("[eval] stage end workflow=%s stage=%s conversation=%s", wf.Id, models.AgentNova, novaConv.Id)
@@ -791,6 +866,11 @@ func runOneSimulation(ctx context.Context, persona *personaSimulator, cfg SimCon
 		log.Printf("[eval] stage begin workflow=%s stage=%s", wf.Id, models.AgentDelta)
 		deltaConv, err := simulateDelta(ctx, persona, wf, deltaClient, personaType, seed, cfg.MaxTurnsPerAgent, cfg.PersonaGuidance)
 		if err != nil {
+			if deltaConv.Id != "" {
+				result.Conversations = append(result.Conversations, deltaConv)
+				result.AgentTranscripts[models.AgentDelta] = conversationTranscript(deltaConv)
+				result.Transcript = fullTranscript(result.AgentTranscripts)
+			}
 			return result, err
 		}
 		log.Printf("[eval] stage end workflow=%s stage=%s conversation=%s", wf.Id, models.AgentDelta, deltaConv.Id)
@@ -1011,8 +1091,8 @@ func (p *personaSimulator) Next(ctx context.Context, persona models.Persona, see
 	for attempt := 0; attempt < 3; attempt++ {
 		callStart := time.Now()
 		log.Printf("[eval] persona call start persona=%s stage=%s seed=%s attempt=%d transcript_chars=%d context_chars=%d", persona, stage, seed, attempt+1, len(transcript), len(borrowerContext))
-		callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		resp, err := p.client.ChatWithTokenUsage(callCtx, messages, 0.35, 2048)
+		callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		resp, err := p.client.ChatWithTokenUsage(callCtx, messages, 0.35, 1024)
 		cancel()
 		if err != nil {
 			lastErr = err
@@ -1030,36 +1110,50 @@ func (p *personaSimulator) Next(ctx context.Context, persona models.Persona, see
 		log.Printf("[eval] persona call incomplete persona=%s stage=%s seed=%s attempt=%d model=%s stop_reason=%s tokens_in=%d tokens_out=%d chars=%d duration=%s text=%q", persona, stage, seed, attempt+1, resp.Model, resp.StopReason, resp.InputTokens, resp.OutputTokens, len(content), time.Since(callStart), previewText(content, 120))
 		messages = append(messages, collections.LlmMessage{Role: "user", Content: "Your previous reply was cut off. Return the same borrower intent in one complete sentence under 25 words, with no ISO timestamp."})
 	}
-	return "", lastErr
+	if lastErr == nil {
+		lastErr = errors.New("persona simulator returned no usable borrower message")
+	}
+	return "", fmt.Errorf("persona simulator failed after retries for persona=%s stage=%s seed=%s: %w", persona, stage, seed, lastErr)
 }
 
 func evaluateWithJudge(evaluator models.EvaluatorVersion, transcript string, judge constants.EvaluatorJudgeConfig, systemLevel bool) (MetricScores, int, int, string, error) {
 	modelCfg := ai.ModelConfig{BaseModel: ai.BaseModel(judge.Model), Provider: ai.Provider(judge.Provider)}
+	modelUsed := string(judge.Provider) + "/" + modelCfg.GetModelString()
+	options := []ai.Option{
+		ai.WithMaxTokens(1000),
+		ai.WithTemperature(judge.Temperature),
+	}
+	if effort, ok := reasoningEffort(judge.ReasoningEffort); ok {
+		options = append(options, ai.WithReasoningEffort(effort))
+	}
 	client := ai.NewKarmaAI(
 		ai.BaseModel(judge.Model),
 		ai.Provider(judge.Provider),
-		ai.WithMaxTokens(1000),
-		ai.WithTemperature(judge.Temperature),
+		options...,
 	)
 	var metrics MetricScores
 	prompt := buildEvaluationPrompt(evaluator, transcript, systemLevel)
-	inputTokens, outputTokens, err := parseMetricScores(client, prompt, &metrics)
+	inputTokens, outputTokens, err := parseMetricScores(judge.Provider, client, prompt, &metrics)
 	if err != nil {
-		return MetricScores{}, 0, 0, "", fmt.Errorf("judge %s evaluate %s: %w", judge.Name, evaluator.AgentId, err)
+		return MetricScores{}, inputTokens, outputTokens, modelUsed, fmt.Errorf("judge %s evaluate %s: %w", judge.Name, evaluator.AgentId, err)
 	}
 	normalizeMetrics(&metrics)
-	return metrics, inputTokens, outputTokens, string(judge.Provider) + "/" + modelCfg.GetModelString(), nil
+	return metrics, inputTokens, outputTokens, modelUsed, nil
 }
 
-func parseMetricScores(client *ai.KarmaAI, prompt string, output *MetricScores) (int, int, error) {
+func parseMetricScores(provider string, client *ai.KarmaAI, prompt string, output *MetricScores) (int, int, error) {
 	currentPrompt := prompt
 	var lastErr error
 	totalInput := 0
 	totalOutput := 0
-	for attempt := 0; attempt < 5; attempt++ {
-		resp, err := client.GenerateFromSinglePrompt(currentPrompt)
+	for attempt := 0; attempt < 2; attempt++ {
+		resp, err := generateFromSinglePromptWithTimeout(provider, client, currentPrompt, judgeCallTimeout)
 		if err != nil {
 			lastErr = err
+			if isTimeoutErr(err) {
+				return totalInput, totalOutput, err
+			}
+			continue
 		} else {
 			totalInput += resp.InputTokens
 			totalOutput += resp.OutputTokens
@@ -1070,16 +1164,19 @@ func parseMetricScores(client *ai.KarmaAI, prompt string, output *MetricScores) 
 				currentPrompt = fmt.Sprintf("Fix this JSON so it exactly matches the requested metric schema. Return only JSON.\nError: %v\nBad response:\n%s", lastErr, resp.AIResponse)
 			}
 		}
-		chatResp, chatErr := client.ChatCompletionManaged(&karmaModels.AIChatHistory{
+		chatResp, chatErr := chatCompletionManagedWithTimeout(provider, client, &karmaModels.AIChatHistory{
 			Messages: []karmaModels.AIMessage{{
 				UniqueId:  fmt.Sprintf("judge-json-repair-%d", attempt+1),
 				Role:      karmaModels.User,
 				Message:   currentPrompt,
 				Timestamp: time.Now().UTC(),
 			}},
-		})
+		}, judgeCallTimeout)
 		if chatErr != nil {
 			lastErr = chatErr
+			if isTimeoutErr(chatErr) {
+				return totalInput, totalOutput, chatErr
+			}
 			continue
 		}
 		totalInput += chatResp.InputTokens
@@ -1091,32 +1188,10 @@ func parseMetricScores(client *ai.KarmaAI, prompt string, output *MetricScores) 
 			currentPrompt = fmt.Sprintf("Fix this JSON so it exactly matches the requested metric schema. Return only JSON.\nError: %v\nBad response:\n%s", lastErr, chatResp.AIResponse)
 		}
 	}
-	*output = fallbackInvalidJudgeMetrics(lastErr)
-	return totalInput, totalOutput, nil
-}
-
-func fallbackInvalidJudgeMetrics(err error) MetricScores {
-	reason := "Judge returned invalid JSON after retries."
-	if err != nil {
-		reason += " Last error: " + err.Error()
+	if lastErr != nil {
+		return totalInput, totalOutput, fmt.Errorf("judge returned invalid JSON after retries: %w", lastErr)
 	}
-	return MetricScores{
-		CompositeScore:      0,
-		IdentityVerified:    0,
-		InfoCompleteness:    0,
-		NoRedundancy:        0,
-		ToneAppropriateness: 0,
-		OfferClarity:        0,
-		ObjectionHandling:   0,
-		CommitmentAttempt:   0,
-		ContextContinuity:   0,
-		ConsequenceAccuracy: 0,
-		DeadlineSpecificity: 0,
-		NoNegotiationDrift:  0,
-		CompliancePass:      0,
-		ComplianceBreakdown: map[string]any{"judge_invalid_json": true},
-		Reasoning:           reason,
-	}
+	return totalInput, totalOutput, errors.New("judge returned invalid JSON after retries")
 }
 
 func validMetricScores(scores MetricScores) bool {
@@ -1260,17 +1335,54 @@ func ComputeComposite(scores MetricScores) float64 {
 	return raw
 }
 
+func validJudgeCount(results []JudgeResult) int {
+	count := 0
+	for _, result := range results {
+		if result.Valid && result.Weight > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func failedJudgeSummary(results []JudgeResult) string {
+	parts := make([]string, 0)
+	for _, result := range results {
+		if result.Valid && result.Weight > 0 {
+			continue
+		}
+		reason := strings.TrimSpace(result.Error)
+		if reason == "" {
+			reason = "unusable result"
+		}
+		parts = append(parts, fmt.Sprintf("%s(%s/%s): %s", result.Name, result.Provider, result.Model, reason))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, "; ")
+}
+
 func aggregateJudgeResults(results []JudgeResult) MetricScores {
 	var totalWeight float64
 	out := MetricScores{ComplianceBreakdown: map[string]any{}}
 	minComposite := math.MaxFloat64
 	maxComposite := 0.0
 	allCompliance := true
+	failedJudges := make([]map[string]any, 0)
+	validResults := make([]JudgeResult, 0, len(results))
 	for _, result := range results {
-		w := result.Weight
-		if w <= 0 {
-			w = 1
+		if !result.Valid || result.Weight <= 0 {
+			failedJudges = append(failedJudges, map[string]any{
+				"name":     result.Name,
+				"provider": result.Provider,
+				"model":    result.Model,
+				"error":    result.Error,
+			})
+			continue
 		}
+		validResults = append(validResults, result)
+		w := result.Weight
 		totalWeight += w
 		m := result.Metrics
 		out.CompositeScore += m.CompositeScore * w
@@ -1296,7 +1408,11 @@ func aggregateJudgeResults(results []JudgeResult) MetricScores {
 		out.Reasoning += result.Name + ": " + m.Reasoning
 	}
 	if totalWeight == 0 {
-		totalWeight = 1
+		out.Reasoning = "No evaluator judge returned a usable result."
+		out.ComplianceBreakdown["all_judges_failed"] = true
+		out.ComplianceBreakdown["failed_judges"] = failedJudges
+		normalizeMetrics(&out)
+		return out
 	}
 	out.CompositeScore /= totalWeight
 	out.IdentityVerified /= totalWeight
@@ -1316,8 +1432,8 @@ func aggregateJudgeResults(results []JudgeResult) MetricScores {
 		out.CompliancePass = 0
 		out.CompositeScore = math.Min(out.CompositeScore, 30)
 	}
-	if len(results) > 1 {
-		out.JudgeBComposite = results[1].Metrics.CompositeScore
+	if len(validResults) > 1 {
+		out.JudgeBComposite = validResults[1].Metrics.CompositeScore
 	} else {
 		out.JudgeBComposite = out.CompositeScore
 	}
@@ -1326,6 +1442,10 @@ func aggregateJudgeResults(results []JudgeResult) MetricScores {
 	}
 	out.JudgeDisagreement = maxComposite - minComposite
 	out.ComplianceBreakdown["all_judges_compliance_passed"] = allCompliance
+	out.ComplianceBreakdown["valid_judge_count"] = len(validResults)
+	if len(failedJudges) > 0 {
+		out.ComplianceBreakdown["failed_judges"] = failedJudges
+	}
 	normalizeMetrics(&out)
 	return out
 }
@@ -1928,45 +2048,16 @@ Rewrite instructions:
 - Keep the prompt operationally precise: ordered flow, stop conditions, tool-use criteria, and failure recovery instructions.
 - Make the prompt robust against the exact defects and low metrics listed above.
 
-Return only the complete replacement system prompt.`, agentID, currentPrompt, evidence)
+	Return only the complete replacement system prompt.`, agentID, currentPrompt, evidence)
 	resp, err := generateInternalText(prompt, internalPromptOptimizerSystemPrompt(), 8)
 	if err != nil {
-		log.Printf("[eval] candidate prompt generation fallback agent=%s err=%v", agentID, err)
-		return fallbackCandidatePrompt(agentID, currentPrompt), 0, 0, "deterministic/fallback", nil
+		return "", 0, 0, "", fmt.Errorf("generate candidate prompt for %s: %w", agentID, err)
 	}
 	candidate := strings.TrimSpace(resp.Text)
 	if len(candidate) < int(float64(len(strings.TrimSpace(currentPrompt)))*0.75) {
 		candidate = strings.TrimSpace(currentPrompt) + "\n\n[Self-Learning Revision Based On Control-Run Evidence]\n" + candidate
 	}
 	return candidate, resp.InputTokens, resp.OutputTokens, resp.ModelUsed, nil
-}
-
-func fallbackCandidatePrompt(agentID models.AgentID, currentPrompt string) string {
-	currentPrompt = strings.TrimSpace(currentPrompt)
-	reinforcement := map[models.AgentID]string{
-		models.AgentAria: `Self-learning reinforcement:
-- Use one borrower-facing Riverline identity only; do not expose internal agent names.
-- Do not reveal account partials, borrower name, balances, or overdue facts before the borrower has supplied matching verification details.
-- First verify identity using borrower-provided name and account partial, then collect employment status, income range, monthly obligations, default reason, hardship/stop-contact flags, and preferred NOVA callback time.
-- Never call create_aria_handoff for ready_for_nova until the borrower has provided a specific callback time. If the tool returns a recoverable error, ask only for the missing item and retry after the borrower answers.
-- ARIA must not generate or negotiate repayment offers; it only collects assessment facts and schedules the resolution call.
-- If the borrower requests stop-contact or a terminal hardship path, produce the terminal handoff and do not schedule NOVA.`,
-		models.AgentNova: `Self-learning reinforcement:
-- Use one borrower-facing Riverline identity only; do not expose internal agent names.
-- Start by confirming whether it is a good time to discuss repayment options, then present the exact primary offer and fallback option before asking for commitment.
-- Do not end the call immediately after availability confirmation. The offer must be spoken with exact amounts, discount percent, EMI amount/months, deadlines or start dates, and the acceptance question.
-- Treat acceptance only as acceptance of exact payment terms after they were presented; availability confirmation is not offer acceptance.
-- If rejected, capture objections and outcome for DELTA without inventing new terms.`,
-		models.AgentDelta: `Self-learning reinforcement:
-- Use one borrower-facing Riverline identity only; do not expose internal agent names.
-- Use only NOVA outcome context. If NOVA was accepted, send confirmation details. If NOVA was rejected or unresolved, communicate the final offer with exact amount, deadline, and consequences accurately.
-- Do not reopen ARIA intake or invent new repayment plans. Keep chat aligned to the final notice and accepted/rejected offer state.
-- Mark the workflow resolved only after clear acceptance, rejection, stop-contact, hardship, or escalation outcome.`,
-	}
-	if extra, ok := reinforcement[agentID]; ok {
-		return currentPrompt + "\n\n" + extra
-	}
-	return currentPrompt
 }
 
 func saveCandidatePrompt(agentID models.AgentID, version int, candidatePrompt string, adopted bool, exp *models.PromptExperiment) error {
@@ -2139,7 +2230,7 @@ The revised prompt must:
 - Improve stable rerun behavior for identical transcripts.
 - If evidence includes a previous rejected evaluator benchmark, fix that benchmark failure specifically without losing any improvement it achieved.
 
-Return only the revised judge prompt text.`, agentID, current.JudgePrompt, flag.FlagType, string(evidence), derefString(flag.ProposedAction))
+	Return only the revised judge prompt text.`, agentID, current.JudgePrompt, flag.FlagType, string(evidence), derefString(flag.ProposedAction))
 	resp, err := generateInternalText(prompt, internalPromptOptimizerSystemPrompt(), 8)
 	if err != nil {
 		return "", 0, 0, "", fmt.Errorf("generate evaluator revision for %s: %w", agentID, err)
@@ -2235,8 +2326,7 @@ func evaluatorBenchmarkValuesImproved(beforeScore, afterScore, beforeDisagreemen
 func countInvalidJudgeResults(results []JudgeResult) int {
 	count := 0
 	for _, result := range results {
-		data, _ := json.Marshal(result.Metrics.ComplianceBreakdown)
-		if strings.Contains(string(data), "judge_invalid_json") {
+		if !result.Valid {
 			count++
 		}
 	}
@@ -2290,17 +2380,23 @@ func generateInternalText(prompt string, systemPrompt string, attempts int) (*Ge
 	}
 	cfg := constants.DefaultSelfLearningConfig().PromptGenerator
 	modelCfg := ai.ModelConfig{BaseModel: ai.BaseModel(cfg.Model), Provider: ai.Provider(cfg.Provider)}
-	client := ai.NewKarmaAI(
-		ai.BaseModel(cfg.Model),
-		ai.Provider(cfg.Provider),
+	options := []ai.Option{
 		ai.WithMaxTokens(1500),
 		ai.WithSystemMessage(systemPrompt),
 		ai.WithTemperature(cfg.Temperature),
+	}
+	if effort, ok := reasoningEffort(cfg.ReasoningEffort); ok {
+		options = append(options, ai.WithReasoningEffort(effort))
+	}
+	client := ai.NewKarmaAI(
+		ai.BaseModel(cfg.Model),
+		ai.Provider(cfg.Provider),
+		options...,
 	)
 	modelUsed := string(cfg.Provider) + "/" + modelCfg.GetModelString()
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
-		resp, err := client.GenerateFromSinglePrompt(prompt)
+		resp, err := generateFromSinglePromptWithTimeout(cfg.Provider, client, prompt, internalGenerationTimeout)
 		if err == nil && strings.TrimSpace(resp.AIResponse) != "" {
 			return &GeneratedText{Text: strings.TrimSpace(resp.AIResponse), InputTokens: resp.InputTokens, OutputTokens: resp.OutputTokens, ModelUsed: modelUsed}, nil
 		}
@@ -2309,14 +2405,14 @@ func generateInternalText(prompt string, systemPrompt string, attempts int) (*Ge
 		} else {
 			lastErr = errors.New("empty AI response")
 		}
-		chatResp, chatErr := client.ChatCompletionManaged(&karmaModels.AIChatHistory{
+		chatResp, chatErr := chatCompletionManagedWithTimeout(cfg.Provider, client, &karmaModels.AIChatHistory{
 			Messages: []karmaModels.AIMessage{{
 				UniqueId:  fmt.Sprintf("internal-generation-%d", attempt+1),
 				Role:      karmaModels.User,
 				Message:   prompt,
 				Timestamp: time.Now().UTC(),
 			}},
-		})
+		}, internalGenerationTimeout)
 		if chatErr == nil && strings.TrimSpace(chatResp.AIResponse) != "" {
 			return &GeneratedText{Text: strings.TrimSpace(chatResp.AIResponse), InputTokens: chatResp.InputTokens, OutputTokens: chatResp.OutputTokens, ModelUsed: modelUsed}, nil
 		}
@@ -2326,6 +2422,187 @@ func generateInternalText(prompt string, systemPrompt string, attempts int) (*Ge
 		time.Sleep(time.Duration(attempt+1) * 300 * time.Millisecond)
 	}
 	return nil, lastErr
+}
+
+func generateFromSinglePromptWithTimeout(provider string, client *ai.KarmaAI, prompt string, timeout time.Duration) (*karmaModels.AIChatResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= aiCallMaxAttempts; attempt++ {
+		waitForProviderLimit(provider)
+		resp, err := generateFromSinglePromptOnce(client, prompt, timeout)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !isRetryableAICallErr(err) || attempt == aiCallMaxAttempts {
+			break
+		}
+		sleep := retryDelay(provider, err, attempt)
+		log.Printf("[eval] ai generate retry provider=%s attempt=%d/%d delay=%s err=%v", provider, attempt+1, aiCallMaxAttempts, sleep, err)
+		time.Sleep(sleep)
+	}
+	return nil, lastErr
+}
+
+func generateFromSinglePromptOnce(client *ai.KarmaAI, prompt string, timeout time.Duration) (*karmaModels.AIChatResponse, error) {
+	type result struct {
+		resp *karmaModels.AIChatResponse
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		resp, err := client.GenerateFromSinglePrompt(prompt)
+		ch <- result{resp: resp, err: err}
+	}()
+	select {
+	case res := <-ch:
+		return res.resp, res.err
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("ai call timeout after %s", timeout)
+	}
+}
+
+func chatCompletionManagedWithTimeout(provider string, client *ai.KarmaAI, history *karmaModels.AIChatHistory, timeout time.Duration) (*karmaModels.AIChatResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= aiCallMaxAttempts; attempt++ {
+		waitForProviderLimit(provider)
+		resp, err := chatCompletionManagedOnce(client, history, timeout)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !isRetryableAICallErr(err) || attempt == aiCallMaxAttempts {
+			break
+		}
+		sleep := retryDelay(provider, err, attempt)
+		log.Printf("[eval] ai chat retry provider=%s attempt=%d/%d delay=%s err=%v", provider, attempt+1, aiCallMaxAttempts, sleep, err)
+		time.Sleep(sleep)
+	}
+	return nil, lastErr
+}
+
+func chatCompletionManagedOnce(client *ai.KarmaAI, history *karmaModels.AIChatHistory, timeout time.Duration) (*karmaModels.AIChatResponse, error) {
+	type result struct {
+		resp *karmaModels.AIChatResponse
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		resp, err := client.ChatCompletionManaged(history)
+		ch <- result{resp: resp, err: err}
+	}()
+	select {
+	case res := <-ch:
+		return res.resp, res.err
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("ai call timeout after %s", timeout)
+	}
+}
+
+func waitForProviderLimit(provider string) {
+	if !isNvidiaNIMProvider(provider) {
+		return
+	}
+	nvidiaNIMCallLimiter.wait(provider)
+}
+
+func (l *providerCallLimiter) wait(provider string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	if now.Before(l.nextAllowed) {
+		sleep := l.nextAllowed.Sub(now)
+		log.Printf("[eval] provider rate limit wait provider=%s delay=%s", provider, sleep)
+		time.Sleep(sleep)
+		now = time.Now()
+	}
+	l.nextAllowed = now.Add(l.minInterval)
+}
+
+func isRetryableAICallErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "429") ||
+		strings.Contains(msg, "too many requests") ||
+		strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "temporarily unavailable") ||
+		strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "connection refused")
+}
+
+func retryDelay(provider string, err error, attempt int) time.Duration {
+	if isNvidiaNIMProvider(provider) && isRateLimitErr(err) {
+		return time.Duration(3+attempt*2) * time.Second
+	}
+	delay := time.Duration(attempt*attempt) * 750 * time.Millisecond
+	if delay > 8*time.Second {
+		return 8 * time.Second
+	}
+	return delay
+}
+
+func isRateLimitErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "429") || strings.Contains(msg, "too many requests") || strings.Contains(msg, "rate limit")
+}
+
+func isNvidiaNIMProvider(provider string) bool {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	return strings.Contains(p, "nvidia")
+}
+
+func isTimeoutErr(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "timeout")
+}
+
+func isNoUsableJudgeErr(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no evaluator judge returned a usable result")
+}
+
+func judgeModelKey(judge constants.EvaluatorJudgeConfig) string {
+	return judge.Name + "/" + judge.Provider + "/" + judge.Model
+}
+
+func shouldCacheJudgeUnavailable(judge constants.EvaluatorJudgeConfig, err error) bool {
+	if err == nil {
+		return false
+	}
+	if isRateLimitErr(err) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "invalid json") || strings.Contains(msg, "metric scores") || strings.Contains(msg, "schema") {
+		return false
+	}
+	model := strings.ToLower(judge.Model)
+	if strings.Contains(model, "deepseek") && isTimeoutErr(err) {
+		return true
+	}
+	return !isTimeoutErr(err)
+}
+
+func reasoningEffort(value string) (shared.ReasoningEffort, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "none":
+		return shared.ReasoningEffortNone, true
+	case "minimal":
+		return shared.ReasoningEffortMinimal, true
+	case "low":
+		return shared.ReasoningEffortLow, true
+	case "medium":
+		return shared.ReasoningEffortMedium, true
+	case "high", "":
+		return shared.ReasoningEffortHigh, value != ""
+	case "xhigh":
+		return shared.ReasoningEffortXhigh, true
+	default:
+		return "", false
+	}
 }
 
 func conversationsForRerun(req RerunRequest) ([]models.AgentConversation, error) {
@@ -2539,7 +2816,7 @@ func judgeInvalidJSONStats(scores []models.ConversationScore) (float64, int) {
 		}
 		checked++
 		data, _ := json.Marshal(score.ComplianceBreakdown["judge_results"])
-		if strings.Contains(string(data), "judge_invalid_json") {
+		if strings.Contains(string(data), `"valid":false`) || strings.Contains(string(data), "invalid JSON") {
 			invalid++
 		}
 	}

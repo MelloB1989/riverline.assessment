@@ -23,6 +23,7 @@ type FullCycleConfig struct {
 	MaxCostUSD             float64                          `json:"max_cost_usd"`
 	MaxPromptIterations    int                              `json:"max_prompt_iterations"`
 	MetaEvalEveryJudgeRuns int                              `json:"meta_eval_every_judge_runs"`
+	Reset                  bool                             `json:"reset,omitempty"`
 }
 
 type FullCycleReport struct {
