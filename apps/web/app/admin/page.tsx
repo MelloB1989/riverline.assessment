@@ -342,7 +342,7 @@ function ExperimentRow({ experiment }: { experiment: PromptExperiment }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="font-semibold text-pink-50">
-            {experiment.agent_id.toUpperCase()} v{experiment.control_version} {"->"} v
+            Experiment v{experiment.control_version} {"->"} v
             {experiment.candidate_version}
           </p>
           <p className="mt-1 text-xs text-zinc-500">
@@ -470,7 +470,7 @@ function ComplianceExperimentChart({ experiments }: { experiments: PromptExperim
         <div key={row.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
           <div className="mb-2 flex items-center justify-between text-xs">
             <span className="font-semibold uppercase tracking-[0.16em] text-pink-100">
-              {row.agent_id} v{row.control_version} {"->"} v{row.candidate_version}
+              Experiment v{row.control_version} {"->"} v{row.candidate_version}
             </span>
             <span className={row.adopted ? "text-emerald-300" : "text-rose-300"}>
               {row.adopted ? "adopted" : "rejected"}

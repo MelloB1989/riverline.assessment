@@ -147,7 +147,6 @@ export type AgentMessage = {
 
 export type PromptExperiment = {
   id: string;
-  agent_id: AgentId;
   control_version: number;
   candidate_version: number;
   control_n: number;
