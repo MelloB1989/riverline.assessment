@@ -331,10 +331,6 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 	}
 	controlScores := aggregateSimulationMeans(controlStats)
 	controlCompliance := aggregateComplianceRate(controlStats)
-	judgeRunsSinceMeta := countJudgeRuns(controlStats)
-	if err := maybeRunMetaEvaluationByJudgeBudget(agentID, cfg, &judgeRunsSinceMeta, metaEvery); err != nil {
-		return nil, nil, nil, err
-	}
 
 	rejectedStats := []SimulationScore{}
 	var finalExp *models.PromptExperiment
@@ -363,10 +359,6 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 		treatmentCfg.PersonaGuidance = PersonaGuidanceFromScores(agentID, controlStats, rejectedStats)
 		_, treatmentStats, err := RunSimulationScored(treatmentCfg, cfg.Judges)
 		if err != nil {
-			return nil, nil, nil, err
-		}
-		judgeRunsSinceMeta += countJudgeRuns(treatmentStats)
-		if err := maybeRunMetaEvaluationByJudgeBudget(agentID, cfg, &judgeRunsSinceMeta, metaEvery); err != nil {
 			return nil, nil, nil, err
 		}
 

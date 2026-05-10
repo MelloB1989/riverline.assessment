@@ -101,11 +101,15 @@ func PromptGenerationEvidenceWithHistory(agentID models.AgentID, controlVersion 
 }
 
 func PersonaGuidanceFromScores(agentID models.AgentID, control []SimulationScore, rejected []SimulationScore) string {
+	agentTruth := constants.AgentTruthForPromptGenerator(agentID)
 	lines := []string{
 		fmt.Sprintf("Target prompt under test: %s.", agentID),
 		"Use this guidance to make treatment simulations adversarial against defects previously found by LLM judges.",
 		"Keep borrower facts consistent with the seeded users and loans rows.",
 		"Do not invent contradictory identity, account, hardship, or payment-capacity facts.",
+		"",
+		"Agent capability boundaries (Truth):",
+		agentTruth,
 		"",
 		"Defects to retest:",
 	}
