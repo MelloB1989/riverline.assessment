@@ -131,22 +131,18 @@ func LoadMetrics() (*EvalMetrics, error) {
 	for _, cost := range costs {
 		totalCost += cost.CostUsd
 	}
-	byAgent := map[models.AgentID][]models.ConversationScore{}
+	// Group by agent+prompt version for per-prompt tracking
 	byAgentPrompt := map[string][]models.ConversationScore{}
 	for _, score := range scores {
-		byAgent[score.AgentId] = append(byAgent[score.AgentId], score)
 		key := fmt.Sprintf("%s:v%d", score.AgentId, score.PromptVersion)
 		byAgentPrompt[key] = append(byAgentPrompt[key], score)
 	}
 	out := &EvalMetrics{
 		TotalScores:       len(scores),
 		TotalCostUSD:      totalCost,
-		ByAgent:           map[models.AgentID]MetricAggregate{},
+		SystemAggregate:   aggregateScoreRows(scores),
 		ByAgentPrompt:     map[string]MetricAggregate{},
 		PromptExperiments: experiments,
-	}
-	for agentID, rows := range byAgent {
-		out.ByAgent[agentID] = aggregateScoreRows(rows)
 	}
 	for key, rows := range byAgentPrompt {
 		out.ByAgentPrompt[key] = aggregateScoreRows(rows)

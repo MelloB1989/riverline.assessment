@@ -121,11 +121,11 @@ type RollbackRequest struct {
 }
 
 type EvalMetrics struct {
-	TotalScores       int                                `json:"total_scores"`
-	TotalCostUSD      float64                            `json:"total_cost_usd"`
-	ByAgent           map[models.AgentID]MetricAggregate `json:"by_agent"`
-	ByAgentPrompt     map[string]MetricAggregate         `json:"by_agent_prompt"`
-	PromptExperiments []models.PromptExperiment          `json:"prompt_experiments"`
+	TotalScores       int                        `json:"total_scores"`
+	TotalCostUSD      float64                    `json:"total_cost_usd"`
+	SystemAggregate   MetricAggregate            `json:"system_aggregate"`
+	ByAgentPrompt     map[string]MetricAggregate `json:"by_agent_prompt"`
+	PromptExperiments []models.PromptExperiment  `json:"prompt_experiments"`
 }
 
 type MetricAggregate struct {

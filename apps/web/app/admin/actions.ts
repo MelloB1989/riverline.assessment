@@ -271,7 +271,7 @@ export type MetricAggregate = {
 export type AdminEvalMetrics = {
   total_scores: number;
   total_cost_usd: number;
-  by_agent: Partial<Record<AgentId, MetricAggregate>>;
+  system_aggregate: MetricAggregate;
   by_agent_prompt: Record<string, MetricAggregate>;
   prompt_experiments: PromptExperiment[];
 };

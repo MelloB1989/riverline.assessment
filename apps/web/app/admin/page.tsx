@@ -25,6 +25,7 @@ import {
 import RunEvalButton from "./run-eval-button";
 
 const agents: AgentId[] = ["aria", "nova", "delta"];
+const SYSTEM_COLOR = "#f472b6";
 
 export default async function AdminPage() {
   const [summary, metrics, meta] = await Promise.all([
@@ -127,20 +128,46 @@ export default async function AdminPage() {
           />
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-3">
-          {agents.map((agent) => (
-            <AgentScoreCard
-              key={agent}
-              agent={agent}
-              aggregate={metrics.by_agent?.[agent]}
-              promptRows={promptVersions.filter((row) => row.agent_id === agent)}
-              experiments={safeSummary.prompt_experiments.filter((row) => row.agent_id === agent)}
-            />
-          ))}
+        <section className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+          <SystemScoreCard
+            aggregate={metrics.system_aggregate}
+            promptVersionsByAgent={Object.fromEntries(
+              agents.map((a) => [a, promptVersions.filter((row) => row.agent_id === a)])
+            ) as Record<AgentId, typeof promptVersions>}
+            totalExperiments={safeSummary.prompt_experiments.length}
+            adopted={adopted}
+          />
+          <Panel title="Per-Prompt Scores" subtitle="Breakdown by agent + prompt version.">
+            <div className="space-y-3">
+              {Object.entries(metrics.by_agent_prompt ?? {})
+                .sort(([, a], [, b]) => b.mean - a.mean)
+                .slice(0, 8)
+                .map(([key, agg]) => (
+                  <div key={key} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-semibold uppercase tracking-[0.16em] text-pink-100">
+                        {key}
+                      </p>
+                      <span className="text-xs text-zinc-400">
+                        n={agg.n} · {fmtPct(agg.compliance_rate)} compliant
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                      <MiniMetric label="Mean" value={fmtScore(agg.mean)} />
+                      <MiniMetric label="Median" value={fmtScore(agg.median)} />
+                      <MiniMetric label="Stddev" value={fmtScore(agg.stddev)} />
+                    </div>
+                  </div>
+                ))}
+              {Object.keys(metrics.by_agent_prompt ?? {}).length === 0 && (
+                <EmptyState text="No per-prompt score data yet." />
+              )}
+            </div>
+          </Panel>
         </section>
 
         <section className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
-          <Panel title="Score Trend" subtitle="Conversation scores over time, grouped by agent.">
+          <Panel title="Score Trend" subtitle="System-level composite scores over time.">
             <ScoreTrendChart scores={safeSummary.conversation_scores} />
           </Panel>
           <Panel title="Compliance Movement" subtitle="Control and treatment compliance for each prompt experiment.">
@@ -149,7 +176,7 @@ export default async function AdminPage() {
         </section>
 
         <section className="grid gap-4 xl:grid-cols-2">
-          <Panel title="Judge Disagreement" subtitle="Stored disagreement deltas by agent and prompt version.">
+          <Panel title="Judge Disagreement" subtitle="Stored disagreement deltas by prompt version.">
             <JudgeDisagreementChart scores={safeSummary.conversation_scores} />
           </Panel>
           <Panel title="Spend By Model" subtitle="LLM cost grouped by provider/model for the current persisted run.">
@@ -289,28 +316,29 @@ function StatCard({
   );
 }
 
-function AgentScoreCard({
-  agent,
+function SystemScoreCard({
   aggregate,
-  promptRows,
-  experiments,
+  promptVersionsByAgent,
+  totalExperiments,
+  adopted,
 }: {
-  agent: AgentId;
   aggregate?: MetricAggregate;
-  promptRows: { version_number: number; is_active: boolean }[];
-  experiments: PromptExperiment[];
+  promptVersionsByAgent: Record<AgentId, { version_number: number; is_active: boolean }[]>;
+  totalExperiments: number;
+  adopted: number;
 }) {
-  const latest = [...experiments].sort(sortNewest)[0];
-  const active = promptRows.find((row) => row.is_active);
   const score = aggregate?.mean ?? 0;
   return (
     <div className="rounded-[1.75rem] border border-pink-300/15 bg-zinc-950/70 p-5 shadow-2xl shadow-pink-950/15 backdrop-blur-xl">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-pink-300">
-          {agent}
+          System score (full flow)
         </p>
         <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-zinc-400">
-          active v{active?.version_number ?? "-"}
+          {agents.map((a) => {
+            const active = promptVersionsByAgent[a]?.find((r) => r.is_active);
+            return `${a}:v${active?.version_number ?? "-"}`;
+          }).join(" · ")}
         </span>
       </div>
       <div className="mt-5">
@@ -325,10 +353,11 @@ function AgentScoreCard({
           />
         </div>
       </div>
-      <div className="mt-5 grid grid-cols-3 gap-2 text-xs">
+      <div className="mt-5 grid grid-cols-4 gap-2 text-xs">
         <MiniMetric label="N" value={fmtInt(aggregate?.n ?? 0)} />
         <MiniMetric label="Median" value={fmtScore(aggregate?.median ?? 0)} />
-        <MiniMetric label="Delta" value={latest ? signed(latest.mean_delta) : "-"} />
+        <MiniMetric label="Stddev" value={fmtScore(aggregate?.stddev ?? 0)} />
+        <MiniMetric label="Experiments" value={`${adopted}/${totalExperiments}`} />
       </div>
     </div>
   );
@@ -422,15 +451,12 @@ function ScoreTrendChart({ scores }: { scores: ConversationScore[] }) {
   const width = 720;
   const height = 220;
   const padding = 28;
-  const byAgent = new Map<AgentId, ConversationScore[]>();
-  for (const agent of agents) byAgent.set(agent, []);
-  for (const row of rows) byAgent.get(row.agent_id)?.push(row);
-  const maxIndex = Math.max(1, rows.length - 1);
-  const point = (row: ConversationScore, index: number, agentRows: ConversationScore[]) => {
-    const x = padding + (index / Math.max(1, agentRows.length - 1)) * (width - padding * 2);
+  const point = (row: ConversationScore, index: number) => {
+    const x = padding + (index / Math.max(1, rows.length - 1)) * (width - padding * 2);
     const y = padding + (1 - Math.max(0, Math.min(100, row.composite_score)) / 100) * (height - padding * 2);
     return `${x},${y}`;
   };
+  const points = rows.map((row, index) => point(row, index)).join(" ");
   return (
     <div>
       <svg viewBox={`0 0 ${width} ${height}`} className="h-64 w-full overflow-visible rounded-2xl border border-white/10 bg-black/20 p-2">
@@ -445,30 +471,18 @@ function ScoreTrendChart({ scores }: { scores: ConversationScore[] }) {
             </g>
           );
         })}
-        {agents.map((agent) => {
-          const agentRows = byAgent.get(agent) ?? [];
-          if (agentRows.length === 0) return null;
-          const color = agentColor(agent);
-          const points = agentRows.map((row, index) => point(row, index, agentRows)).join(" ");
-          return (
-            <g key={agent}>
-              <polyline points={points} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-              {agentRows.map((row, index) => {
-                const [x, y] = point(row, index, agentRows).split(",").map(Number);
-                return <circle key={row.id} cx={x} cy={y} r="4" fill={color} />;
-              })}
-            </g>
-          );
+        <polyline points={points} fill="none" stroke={SYSTEM_COLOR} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        {rows.map((row, index) => {
+          const [x, y] = point(row, index).split(",").map(Number);
+          return <circle key={row.id} cx={x} cy={y} r="4" fill={SYSTEM_COLOR} />;
         })}
       </svg>
       <div className="mt-3 flex flex-wrap gap-3 text-xs text-zinc-400">
-        {agents.map((agent) => (
-          <span key={agent} className="inline-flex items-center gap-2">
-            <span className="size-2 rounded-full" style={{ backgroundColor: agentColor(agent) }} />
-            {agent.toUpperCase()}
-          </span>
-        ))}
-        <span className="ml-auto text-zinc-600">{fmtInt(maxIndex + 1)} chronological score rows</span>
+        <span className="inline-flex items-center gap-2">
+          <span className="size-2 rounded-full" style={{ backgroundColor: SYSTEM_COLOR }} />
+          System (full flow)
+        </span>
+        <span className="ml-auto text-zinc-600">{fmtInt(rows.length)} chronological score rows</span>
       </div>
     </div>
   );
@@ -512,7 +526,7 @@ function JudgeDisagreementChart({ scores }: { scores: ConversationScore[] }) {
         <div key={row.id}>
           <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
             <span>
-              {row.agent_id.toUpperCase()} v{row.prompt_version}
+              v{row.prompt_version} · {row.persona_type ?? "unknown"}
             </span>
             <span>{fmtScore(row.judge_disagreement_delta ?? 0)}</span>
           </div>
@@ -647,5 +661,7 @@ function agentColor(agent: AgentId) {
       return "#a78bfa";
     case "delta":
       return "#22d3ee";
+    default:
+      return SYSTEM_COLOR;
   }
 }

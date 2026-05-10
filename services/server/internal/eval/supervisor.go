@@ -40,6 +40,7 @@ type SupervisorStatus struct {
 	LastError               string         `json:"last_error"`
 	StopReason              string         `json:"stop_reason,omitempty"`
 	RejectedCandidatesInRow int            `json:"rejected_candidates_in_row"`
+	ConsecutiveErrors       int            `json:"consecutive_errors"`
 }
 
 type Supervisor struct {
@@ -171,12 +172,28 @@ func (s *Supervisor) run() {
 		agentID := cfg.AgentsRotation[agentIndex%len(cfg.AgentsRotation)]
 		agentIndex++
 		s.setCurrentAgent(agentID)
+
+		// Safety valve: max 100 cycles
+		status := s.Status()
+		if status.Cycles >= 100 {
+			s.setStopReason("max_cycles")
+			return
+		}
+
 		if err := supervisorRunCycle(s, agentID, cfg); err != nil {
 			s.setError(err.Error())
-			log.Printf("[eval] learning supervisor cycle failed agent=%s err=%v", agentID, err)
-			s.sleepOrStop(30 * time.Second)
+			s.incrementConsecutiveErrors()
+			consec := s.consecutiveErrorCount()
+			log.Printf("[eval] learning supervisor cycle failed agent=%s consecutive_errors=%d err=%v", agentID, consec, err)
+			// Backoff: 30s normally, 2min after 5 consecutive failures
+			backoff := 30 * time.Second
+			if consec >= 5 {
+				backoff = 2 * time.Minute
+			}
+			s.sleepOrStop(backoff)
 			continue
 		}
+		s.resetConsecutiveErrors()
 	}
 }
 
@@ -208,18 +225,22 @@ func (s *Supervisor) runCycle(agentID models.AgentID, cfg SupervisorConfig) erro
 	judgeRuns := countJudgeRuns(simScores)
 	s.addCycleResults(len(simScores), judgeRuns)
 
+	// Meta-evaluation — non-fatal
 	status := s.Status()
 	if cfg.MetaEvalEveryNJudges > 0 && status.JudgeRunsSinceMeta >= cfg.MetaEvalEveryNJudges {
 		if _, err := RunMetaEvaluation(agentID); err != nil {
-			return err
+			log.Printf("[eval] learning supervisor meta evaluation failed agent=%s err=%v (non-fatal)", agentID, err)
 		}
 		s.resetJudgeRuns()
 	}
+
+	// Prompt generation — non-fatal
 	status = s.Status()
 	if cfg.PromptGenEveryNScores > 0 && status.ScoresSinceGen >= cfg.PromptGenEveryNScores {
 		exp, err := proposePromptForAgent(agentID, simCfg)
 		if err != nil {
-			return err
+			log.Printf("[eval] learning supervisor prompt gen failed agent=%s err=%v (non-fatal)", agentID, err)
+			return nil
 		}
 		if exp == nil {
 			s.deferPromptGeneration()
@@ -463,4 +484,22 @@ func derefPersona(v *models.Persona) models.Persona {
 		return ""
 	}
 	return *v
+}
+
+func (s *Supervisor) incrementConsecutiveErrors() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status.ConsecutiveErrors++
+}
+
+func (s *Supervisor) resetConsecutiveErrors() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status.ConsecutiveErrors = 0
+}
+
+func (s *Supervisor) consecutiveErrorCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status.ConsecutiveErrors
 }

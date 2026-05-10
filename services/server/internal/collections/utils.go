@@ -434,6 +434,36 @@ func updateWorkflow(wf *models.BorrowerWorkflow) error {
 	return o.Update(wf, wf.Id)
 }
 
+// finalizeWorkflowOutcome updates the loan status to match the workflow outcome.
+// Must be called when the workflow reaches a terminal state (resolved/escalated/etc).
+func finalizeWorkflowOutcome(wf *models.BorrowerWorkflow) error {
+	if wf.Outcome == nil {
+		return nil
+	}
+	var loanStatus models.BorrowerStatus
+	switch *wf.Outcome {
+	case models.OutcomeCommitted:
+		loanStatus = models.BorrowerStatusResolved
+	case models.OutcomeRejected, models.OutcomeEscalated:
+		loanStatus = models.BorrowerStatusEscalated
+	case models.OutcomeStopContact:
+		loanStatus = models.BorrowerStatusStopContact
+	case models.OutcomeHardship:
+		loanStatus = models.BorrowerStatusHardship
+	default:
+		loanStatus = models.BorrowerStatusEscalated
+	}
+	loan, err := GetLoan(wf.LoanId)
+	if err != nil {
+		return err
+	}
+	loan.Status = loanStatus
+	loan.UpdatedAt = time.Now().UTC()
+	o := orm.Load(&models.Loan{})
+	defer o.Close()
+	return o.Update(loan, loan.Id)
+}
+
 func updateConversation(conv *models.AgentConversation) error {
 	o := orm.Load(&models.AgentConversation{})
 	defer o.Close()

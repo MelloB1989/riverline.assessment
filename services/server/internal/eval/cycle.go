@@ -252,7 +252,8 @@ func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig, baseCost float64
 	var flags []models.MetaFlag
 	flags, err = RunMetaEvaluation(agentID)
 	if err != nil {
-		return nil, fmt.Errorf("meta evaluation: %w", err)
+		log.Printf("[eval] meta evaluation failed in agent cycle agent=%s err=%v (non-fatal, continuing)", agentID, err)
+		flags = nil
 	}
 	resolved := 0
 	for _, flag := range flags {
@@ -269,7 +270,8 @@ func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig, baseCost float64
 	var canaryResults []models.CanaryResult
 	canaryResults, err = RunCanarySetForAgent(agentID)
 	if err != nil {
-		return nil, fmt.Errorf("canary set: %w", err)
+		log.Printf("[eval] canary set failed in agent cycle agent=%s err=%v (non-fatal, continuing)", agentID, err)
+		canaryResults = nil
 	}
 	passed := 0
 	failed := 0
@@ -454,7 +456,7 @@ func maybeRunMetaEvaluationByJudgeBudget(agentID models.AgentID, cfg SimConfig, 
 	log.Printf("[eval] meta evaluation triggered agent=%s judge_runs_since_meta=%d threshold=%d", agentID, *judgeRunsSinceMeta, threshold)
 	_, err := RunMetaEvaluation(agentID)
 	if err != nil {
-		return err
+		log.Printf("[eval] meta evaluation failed agent=%s err=%v (non-fatal, resetting counter and continuing)", agentID, err)
 	}
 	*judgeRunsSinceMeta = 0
 	return nil

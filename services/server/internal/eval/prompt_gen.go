@@ -164,7 +164,10 @@ func truncateForPrompt(value string, maxLen int) string {
 }
 
 func generateCandidatePrompt(agentID models.AgentID, currentPrompt string, evidence string) (string, int, int, string, error) {
+	agentTruth := constants.AgentTruthForPromptGenerator(agentID)
 	prompt := fmt.Sprintf(`Generate an improved production system prompt for the %s collections agent.
+
+%s
 
 Current prompt:
 %s
@@ -176,11 +179,13 @@ Rewrite instructions:
 - Return the complete replacement system prompt, not a diff.
 - Keep the replacement around 1500 tokens. It must fit the 2000-token agent budget with room for runtime context.
 - Preserve the same agent role, tools, compliance boundaries, context budgets, borrower-facing single Riverline identity, and handoff responsibilities.
+- CRITICAL: The agent truth above is the authoritative specification. Every capability listed under CAN do must be preserved. Every boundary listed under CANNOT do must be enforced. Do not add capabilities not listed. Do not remove boundaries.
 - Use the evidence to target concrete measurable improvements. Do not add unrelated policy.
 - Keep the prompt operationally precise: ordered flow, stop conditions, tool-use criteria, and failure recovery instructions.
 - Make the prompt robust against the exact defects and low metrics listed above.
+- HARDSHIP: The agent must offer to CONNECT with a hardship program, never create or invent hardship plan terms.
 
-	Return only the complete replacement system prompt.`, agentID, currentPrompt, evidence)
+	Return only the complete replacement system prompt.`, agentID, agentTruth, currentPrompt, evidence)
 	resp, err := generateInternalText(prompt, internalPromptOptimizerSystemPrompt(), 8)
 	if err != nil {
 		return "", 0, 0, "", fmt.Errorf("generate candidate prompt for %s: %w", agentID, err)
@@ -240,7 +245,15 @@ func saveCandidatePrompt(agentID models.AgentID, version int, candidatePrompt st
 }
 
 func internalPromptOptimizerSystemPrompt() string {
-	return `You are Riverline's internal prompt optimization and evaluator-rubric repair service. You write production-ready agent prompts and evaluator prompts from quantitative evidence. Follow the requested output format exactly. Never roleplay as a borrower-facing collections agent. Preserve compliance, tool contracts, and context-budget constraints.`
+	return `You are Riverline's internal prompt optimization and evaluator-rubric repair service. You write production-ready agent prompts and evaluator prompts from quantitative evidence. Follow the requested output format exactly. Never roleplay as a borrower-facing collections agent. Preserve compliance, tool contracts, and context-budget constraints.
+
+CRITICAL RULES:
+- Every generated prompt must respect the agent truth (capabilities and boundaries) provided in the user prompt.
+- No agent may negotiate, offer, or create capabilities not listed in its CAN DO section.
+- No agent may create or invent hardship plan terms. Agents only REFER to the hardship program.
+- NOVA may present a hardship referral as one resolution path (flagging for program enrollment), not a custom hardship plan with specific terms.
+- Settlement offers must stay within policy_max_discount_pct from the loan data.
+- Handoff summaries must fit within 500 tokens. Total agent context window is 2000 tokens.`
 }
 
 func generateInternalText(prompt string, systemPrompt string, attempts int) (*GeneratedText, error) {

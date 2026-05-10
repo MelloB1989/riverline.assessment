@@ -205,6 +205,9 @@ func HandleChat(workflowID, content string) (*ChatResponse, error) {
 			}
 			stageComplete = true
 			workflowChanged = true
+			if err := finalizeWorkflowOutcome(wf); err != nil {
+				return nil, err
+			}
 		}
 		if err := LogCost("summarization", &chatAgent, deltaHandoff.ModelUsed, deltaHandoff.Tokens, 0, &conversation.Id, nil); err != nil {
 			return nil, err

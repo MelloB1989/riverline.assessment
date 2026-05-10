@@ -47,6 +47,11 @@ func CompleteARIA(workflowID string) error {
 	if err := updateWorkflow(wf); err != nil {
 		return err
 	}
+	if wf.ResolvedAt != nil && wf.Outcome != nil {
+		if err := finalizeWorkflowOutcome(wf); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

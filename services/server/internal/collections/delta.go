@@ -45,6 +45,9 @@ func CompleteDeltaConversation(workflowID, conversationID string, client *agents
 	if err := updateWorkflow(wf); err != nil {
 		return "", err
 	}
+	if err := finalizeWorkflowOutcome(wf); err != nil {
+		return "", err
+	}
 	conv, err := getConversationByID(conversationID)
 	if err != nil {
 		return "", err

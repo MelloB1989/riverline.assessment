@@ -28,12 +28,12 @@ func TestSimulationReadyForSystemScoringRequiresAriaAndNova(t *testing.T) {
 	}
 
 	delete(sim.AgentTranscripts, models.AgentNova)
-	if simulationReadyForSystemScoring(sim) {
-		t.Fatal("expected missing NOVA transcript to block scoring")
+	if !simulationReadyForSystemScoring(sim) {
+		t.Fatal("expected ARIA-only flow with content to be scoreable (missing stages penalized by judges)")
 	}
 }
 
-func TestSimulationReadyForSystemScoringBlocksSimulationErrors(t *testing.T) {
+func TestSimulationReadyForSystemScoringAllowsSimulationErrors(t *testing.T) {
 	sim := SimulatedConversation{
 		Transcript: "ARIA TRANSCRIPT\nok\n\nNOVA TRANSCRIPT\nok\n\nDELTA TRANSCRIPT\nok",
 		AgentTranscripts: map[models.AgentID]string{
@@ -43,8 +43,19 @@ func TestSimulationReadyForSystemScoringBlocksSimulationErrors(t *testing.T) {
 		},
 		Metadata: map[string]any{"simulation_error": "empty AI response"},
 	}
-	if simulationReadyForSystemScoring(sim) {
-		t.Fatal("expected preserved partial simulation with error to block scoring")
+	// Sims with errors but content should still be scored — judges penalize missing stages
+	if !simulationReadyForSystemScoring(sim) {
+		t.Fatal("expected simulation with error but content to be scoreable")
+	}
+
+	// But sims with no aria transcript at all should NOT be scoreable
+	simEmpty := SimulatedConversation{
+		Transcript:       "",
+		AgentTranscripts: map[models.AgentID]string{},
+		Metadata:         map[string]any{"simulation_error": "empty AI response"},
+	}
+	if simulationReadyForSystemScoring(simEmpty) {
+		t.Fatal("expected simulation with no transcript to block scoring")
 	}
 }
 

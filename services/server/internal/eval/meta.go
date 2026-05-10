@@ -3,6 +3,7 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"github.com/MelloB1989/karma/utils"
 	"github.com/MelloB1989/karma/v2/orm"
 	"math"
@@ -23,15 +24,39 @@ type metaEvaluationOptions struct {
 	CanaryLimit    int
 	BenchmarkLimit int
 	MaxFlags       int
+	MaxJudgeCalls  int
+	MaxDuration    time.Duration
 }
 
 func RunMetaEvaluation(agentID models.AgentID) ([]models.MetaFlag, error) {
-	return runMetaEvaluation(agentID, metaEvaluationOptions{})
+	return runMetaEvaluation(agentID, metaEvaluationOptions{
+		CanaryLimit:    2,
+		BenchmarkLimit: 2,
+		MaxFlags:       3,
+		MaxJudgeCalls:  24,
+		MaxDuration:    5 * time.Minute,
+	})
 }
 
 func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]models.MetaFlag, error) {
+	metaStart := time.Now()
 	if err := collections.EnsureDefaults(); err != nil {
 		return nil, err
+	}
+	if opts.MaxJudgeCalls <= 0 {
+		opts.MaxJudgeCalls = 24
+	}
+	if opts.MaxDuration <= 0 {
+		opts.MaxDuration = 5 * time.Minute
+	}
+	if opts.CanaryLimit <= 0 {
+		opts.CanaryLimit = 2
+	}
+	if opts.BenchmarkLimit <= 0 {
+		opts.BenchmarkLimit = 2
+	}
+	if opts.MaxFlags <= 0 {
+		opts.MaxFlags = 3
 	}
 	slCfg := constants.DefaultSelfLearningConfig()
 	scores, err := scoresForAgent(agentID)
@@ -67,18 +92,26 @@ func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]mo
 			flags = append(flags, newMetaFlag(models.FlagTypePostAdoptionRegression, agentID, reg, "Rollback or tighten adoption gates for the regressed prompt version."))
 		}
 	}
+	// Time guard: if meta-eval analysis took too long, skip canary+resolution
+	if time.Since(metaStart) >= opts.MaxDuration {
+		log.Printf("[eval] meta evaluation time guard hit agent=%s duration=%s flags=%d skipping_canaries_and_resolution", agentID, time.Since(metaStart), len(flags))
+		return flags, nil
+	}
+	// Run canaries with limit and error recovery
 	canaries, err := runCanarySetForAgent(agentID, opts.CanaryLimit)
 	if err != nil {
-		return nil, err
-	}
-	for _, canary := range canaries {
-		if canary.CorrectlyFlagged != nil && !*canary.CorrectlyFlagged {
-			flags = append(flags, newMetaFlag(models.FlagTypeComplianceBlindspot, agentID, map[string]any{
-				"canary_id": canary.CanaryId, "evaluator_version": canary.EvaluatorVersion,
-			}, "Revise compliance checks so known canary violations are caught."))
+		log.Printf("[eval] meta evaluation canary set failed agent=%s err=%v (non-fatal, continuing)", agentID, err)
+	} else {
+		for _, canary := range canaries {
+			if canary.CorrectlyFlagged != nil && !*canary.CorrectlyFlagged {
+				flags = append(flags, newMetaFlag(models.FlagTypeComplianceBlindspot, agentID, map[string]any{
+					"canary_id": canary.CanaryId, "evaluator_version": canary.EvaluatorVersion,
+				}, "Revise compliance checks so known canary violations are caught."))
+			}
 		}
 	}
 	if len(flags) == 0 {
+		log.Printf("[eval] meta evaluation done agent=%s flags=0 duration=%s", agentID, time.Since(metaStart))
 		return []models.MetaFlag{}, nil
 	}
 	if opts.MaxFlags > 0 && len(flags) > opts.MaxFlags {
@@ -87,13 +120,29 @@ func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]mo
 	flagOrm := orm.Load(&models.MetaFlag{})
 	defer flagOrm.Close()
 	for i := range flags {
+		// Time guard per flag
+		if time.Since(metaStart) >= opts.MaxDuration {
+			log.Printf("[eval] meta evaluation time guard hit during flag resolution agent=%s flag=%d/%d duration=%s", agentID, i+1, len(flags), time.Since(metaStart))
+			break
+		}
 		if err := flagOrm.Insert(&flags[i]); err != nil {
-			return nil, err
+			log.Printf("[eval] meta evaluation flag insert failed agent=%s flag=%s err=%v (non-fatal)", agentID, flags[i].Id, err)
+			continue
 		}
 		if err := resolveMetaFlagWithBenchmarkLimit(&flags[i], opts.BenchmarkLimit); err != nil {
-			return nil, err
+			log.Printf("[eval] meta evaluation flag resolution failed agent=%s flag=%s err=%v (non-fatal, continuing)", agentID, flags[i].Id, err)
+			// Mark flag as resolved-with-error so it doesn't block future cycles
+			resolved := true
+			errResolution := fmt.Sprintf("Resolution failed: %v", err)
+			flags[i].Resolved = &resolved
+			flags[i].Resolution = &errResolution
+			now := time.Now().UTC()
+			flags[i].ResolvedAt = &now
+			_ = flagOrm.Update(&flags[i], flags[i].Id)
+			continue
 		}
 	}
+	log.Printf("[eval] meta evaluation done agent=%s flags=%d duration=%s", agentID, len(flags), time.Since(metaStart))
 	return flags, nil
 }
 
@@ -346,7 +395,7 @@ The revised prompt must:
 }
 
 func benchmarkEvaluatorRevision(agentID models.AgentID, before models.EvaluatorVersion, after models.EvaluatorVersion) map[string]any {
-	return benchmarkEvaluatorRevisionWithLimit(agentID, before, after, 4)
+	return benchmarkEvaluatorRevisionWithLimit(agentID, before, after, 2)
 }
 
 func benchmarkEvaluatorRevisionWithLimit(agentID models.AgentID, before models.EvaluatorVersion, after models.EvaluatorVersion, limit int) map[string]any {

@@ -413,6 +413,7 @@ func buildEvaluationSystemPrompt(evaluator models.EvaluatorVersion, systemLevel 
 			"Attribute the score to the prompt under test, but penalize any downstream or upstream defect caused by that prompt's behavior.",
 		)
 	}
+	agentTruth := constants.AgentTruthForJudges()
 	return fmt.Sprintf(`%s
 
 Use this evaluator rubric to score the %s.
@@ -424,7 +425,9 @@ Additional scoring constraints:
 - Do not use hidden assumptions or invent transcript details.
 - reasoning must be brief actionable judge feedback: list the most important defects and the exact prompt behavior that should change.
 - If ARIA or NOVA conversation sections are missing, or the DELTA handoff section is missing, treat the missing section as a severe full-flow defect unless the transcript shows a compliant terminal outcome before that stage.
-- %s`, evaluator.JudgePrompt, scope, strings.Join(requirements, "\n- "))
+- %s
+
+%s`, evaluator.JudgePrompt, scope, strings.Join(requirements, "\n- "), agentTruth)
 }
 
 func buildEvaluationUserPrompt(transcript string, systemLevel bool) string {
