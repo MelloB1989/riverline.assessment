@@ -81,11 +81,11 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 	handoffRecoverableFailures := 0
 	createHandoffTool := ai.NewGoFunctionTool(
 		agents.ToolCreateAriaHandoff,
-		"Create and persist the ARIA assessment handoff after all required intake information and preferred callback timing are collected, or after stop-contact/hardship terminal handling.",
+		"Create and persist the ARIA assessment handoff after all required intake information and preferred callback timing are collected, or after stop-contact/hardship terminal handling. In simulation runs Riverline still escalates the borrower to NOVA so judges can evaluate offer handling.",
 		ai.NewFuncParams().
 			SetString("reason", "Brief reason ARIA is ready to hand off.").
 			SetStringEnum("outcome", "Handoff outcome.", []string{"ready_for_nova", "stop_contact", "hardship"}).
-			SetString("preferred_nova_call_at", "Borrower-confirmed preferred resolution-call time as an ISO-8601 timestamp with timezone. Required when outcome is ready_for_nova. Use not_applicable only for stop_contact or hardship terminal outcomes.").
+			SetString("preferred_nova_call_at", "Borrower-confirmed preferred resolution-call time as an ISO-8601 timestamp with timezone. Required when outcome is ready_for_nova. Use not_applicable only for stop_contact or hardship terminal outcomes, except simulation workflows still require a real borrower-confirmed time so NOVA can be evaluated.").
 			SetBool("identity_verified", "Whether ARIA verified the borrower identity using borrower-provided details. Required when outcome is ready_for_nova. For terminal hardship/stop_contact before verification, pass false.").
 			SetString("employment_status", "Borrower's stated employment status. Required when outcome is ready_for_nova. Use not_applicable only for terminal hardship/stop_contact before this was collected.").
 			SetString("monthly_income_range", "Borrower's stated monthly income or income range. Required when outcome is ready_for_nova. Use not_applicable only for terminal hardship/stop_contact before this was collected.").
@@ -125,12 +125,20 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 				log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
 				return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Ask for a specific callback time if outcome is ready_for_nova, then call this tool again with preferred_nova_call_at as an ISO-8601 timestamp with timezone. Use not_applicable only for hardship or stop_contact."}`, errText), nil
 			}
-			if outcome == "ready_for_nova" {
-				if _, err := parseBorrowerCallTime(preferredCallAt, time.Now().UTC()); err != nil {
+			if outcome == "ready_for_nova" || workflowIsSimulated(&wf) {
+				now := time.Now().UTC()
+				scheduledAt, err := parseBorrowerCallTime(preferredCallAt, now)
+				if err != nil {
 					errText := fmt.Sprintf("preferred_nova_call_at is required before handoff: %v", err)
 					handoffRecoverableFailures++
 					log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
-					return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Ask the borrower for a specific preferred NOVA callback time, then call this tool again with an ISO-8601 timestamp including timezone."}`, errText), nil
+					return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Ask the borrower for a specific preferred NOVA callback time, then call this tool again with an ISO-8601 timestamp including timezone. Simulation workflows still continue to NOVA for evaluation, so do not use not_applicable."}`, errText), nil
+				}
+				if scheduledAt.Before(now.Add(-1 * time.Minute)) {
+					errText := fmt.Sprintf("preferred_nova_call_at must be in the future: got %s", scheduledAt.Format(time.RFC3339))
+					handoffRecoverableFailures++
+					log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
+					return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"The callback time is in the past. Ask the borrower for a future callback time, then call this tool again with an ISO-8601 timestamp including timezone."}`, errText), nil
 				}
 			}
 			results.AriaHandoff = &HandoffCall[AriaHandoffResult]{
@@ -139,8 +147,10 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 			}
 			applyAriaToolParams(&results.AriaHandoff.Result, params)
 			applyExplicitAriaToolOutcome(&results.AriaHandoff.Result, outcome)
-			if outcome == "ready_for_nova" {
+			if strings.TrimSpace(preferredCallAt) != "" && !strings.EqualFold(preferredCallAt, "not_applicable") {
 				results.AriaHandoff.Result.PreferredNovaCallAt = &preferredCallAt
+			}
+			if outcome == "ready_for_nova" {
 				if missing := missingAriaReadyFields(results.AriaHandoff.Result); len(missing) > 0 {
 					results.AriaHandoff = nil
 					errText := fmt.Sprintf("ARIA handoff is missing required ready_for_nova fields: %v", missing)
@@ -220,13 +230,11 @@ func applyExplicitAriaToolOutcome(result *AriaHandoffResult, outcome string) {
 		resolved := models.OutcomeStopContact
 		result.StopContactFlagged = &stop
 		result.Outcome = &resolved
-		result.PreferredNovaCallAt = nil
 	case "hardship":
 		hardship := true
 		resolved := models.OutcomeHardship
 		result.HardshipMentioned = &hardship
 		result.Outcome = &resolved
-		result.PreferredNovaCallAt = nil
 	}
 }
 

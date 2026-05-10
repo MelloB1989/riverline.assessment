@@ -8,7 +8,7 @@ import (
 	"riverline_server/internal/models"
 )
 
-func TestSimulationReadyForSystemScoringRequiresCompleteFlow(t *testing.T) {
+func TestSimulationReadyForSystemScoringRequiresAriaAndNova(t *testing.T) {
 	sim := SimulatedConversation{
 		Transcript: "ARIA TRANSCRIPT\nok\n\nNOVA TRANSCRIPT\nok\n\nDELTA TRANSCRIPT\nok",
 		AgentTranscripts: map[models.AgentID]string{
@@ -23,8 +23,13 @@ func TestSimulationReadyForSystemScoringRequiresCompleteFlow(t *testing.T) {
 	}
 
 	delete(sim.AgentTranscripts, models.AgentDelta)
+	if !simulationReadyForSystemScoring(sim) {
+		t.Fatal("expected ARIA/NOVA flow without DELTA chat to be scoreable")
+	}
+
+	delete(sim.AgentTranscripts, models.AgentNova)
 	if simulationReadyForSystemScoring(sim) {
-		t.Fatal("expected missing DELTA handoff to block scoring")
+		t.Fatal("expected missing NOVA transcript to block scoring")
 	}
 }
 

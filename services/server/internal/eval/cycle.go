@@ -3,6 +3,7 @@ package eval
 import (
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"riverline_server/constants"
@@ -111,6 +112,12 @@ type CostBreakdown struct {
 	TotalPromptTokens     int                `json:"total_prompt_tokens"`
 	TotalCompletionTokens int                `json:"total_completion_tokens"`
 }
+
+var currentCostCache = struct {
+	sync.Mutex
+	loadedAt time.Time
+	value    float64
+}{}
 
 func RunFullCycle(cfg FullCycleConfig) (*FullCycleReport, error) {
 	start := time.Now()
@@ -563,11 +570,35 @@ func loadCostBreakdown() (*CostBreakdown, error) {
 }
 
 func currentTotalCostUSD() (float64, error) {
+	currentCostCache.Lock()
+	if time.Since(currentCostCache.loadedAt) < 5*time.Second {
+		value := currentCostCache.value
+		currentCostCache.Unlock()
+		return value, nil
+	}
+	currentCostCache.Unlock()
+
 	breakdown, err := loadCostBreakdown()
 	if err != nil {
 		return 0, err
 	}
+	currentCostCache.Lock()
+	currentCostCache.value = breakdown.TotalUSD
+	currentCostCache.loadedAt = time.Now()
+	currentCostCache.Unlock()
 	return breakdown.TotalUSD, nil
+}
+
+func IncrementalSpentUSD(baseline float64) (float64, error) {
+	total, err := currentTotalCostUSD()
+	if err != nil {
+		return 0, err
+	}
+	spent := total - baseline
+	if spent < 0 {
+		return 0, nil
+	}
+	return spent, nil
 }
 
 func loadAllPromptVersions() ([]models.PromptVersion, error) {

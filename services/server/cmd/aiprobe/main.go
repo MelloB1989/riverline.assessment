@@ -13,6 +13,7 @@ import (
 
 	"github.com/MelloB1989/karma/ai"
 	karmaModels "github.com/MelloB1989/karma/models"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 func main() {
@@ -73,15 +74,25 @@ func probeGroq() {
 }
 
 func probeKarmaLargePromptGen() {
+	cfg := constants.DefaultSelfLearningConfig()
+	maxTokens := cfg.PromptGeneratorMaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 2200
+	}
 	system := "You are Riverline's internal prompt optimization service. Output only the replacement system prompt, around 1500 tokens, no markdown."
 	prompt := "Generate an improved production system prompt for the aria collections agent.\n\nCurrent prompt:\n" + strings.Repeat("You are Aria, the assessment agent. Verify identity, gather facts. ", 50) + "\n\nQuantitative evidence:\n" + strings.Repeat("- workflow=A persona=cooperative score=42.0 compliance=0.0 disagreement=20.0\n", 30) + "\nReturn only the complete replacement system prompt."
-	client := ai.NewKarmaAI(
-		ai.GPTOSS_120B,
-		ai.Groq,
+	options := []ai.Option{
 		ai.WithSystemMessage(system),
-		ai.WithMaxTokens(1500),
+		ai.WithMaxTokens(maxTokens),
 		ai.WithTemperature(0.15),
-		ai.WithReasoningEffort("high"),
+	}
+	if strings.TrimSpace(cfg.PromptGenerator.ReasoningEffort) != "" && maxTokens >= 4000 {
+		options = append(options, ai.WithReasoningEffort(shared.ReasoningEffort(cfg.PromptGenerator.ReasoningEffort)))
+	}
+	client := ai.NewKarmaAI(
+		ai.BaseModel(cfg.PromptGenerator.Model),
+		ai.Provider(cfg.PromptGenerator.Provider),
+		options...,
 	)
 	for attempt := 1; attempt <= 3; attempt++ {
 		start := time.Now()

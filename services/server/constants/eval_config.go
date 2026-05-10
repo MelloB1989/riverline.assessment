@@ -18,22 +18,23 @@ type EvaluatorJudgeConfig struct {
 }
 
 type SelfLearningConfig struct {
-	Judges                  []EvaluatorJudgeConfig `json:"judges"`
-	PromptGenerator         EvaluatorJudgeConfig   `json:"prompt_generator"`
-	PersonaLLMBaseURL       string                 `json:"persona_llm_base_url"`
-	PersonaLLMAPIKey        string                 `json:"-"`
-	PersonaLLMModel         string                 `json:"persona_llm_model"`
-	DefaultBatchSize        int                    `json:"default_batch_size"`          //default number of simulations per persona when running evals.
-	DefaultMaxTurnsPerAgent int                    `json:"default_max_turns_per_agent"` //hard cap on how many turns each agent gets in simulation.
-	AdoptionPValue          float64                `json:"adoption_p_value"`            //statistical significance threshold for prompt adoption.
-	AdoptionMinMeanDelta    float64                `json:"adoption_min_mean_delta"`     //minimum mean improvement required before a prompt can be adopted.
-	AdoptionMinCohensD      float64                `json:"adoption_min_cohens_d"`       // minimum effect size required before adoption.
-	AdoptionMaxStddev       float64                `json:"adoption_max_stddev"`         //upper bound on treatment score spread, to avoid adopting noisy prompts.
-	MinComplianceRate       float64                `json:"min_compliance_rate"`         //minimum compliance rate required for adoption.
-	MaxJudgeDisagreement    float64                `json:"max_judge_disagreement"`      //threshold used to flag excessive judge disagreement.
-	MetaEvaluationMinSample int                    `json:"meta_evaluation_min_sample"`  //minimum sample size before the meta-evaluator starts flagging issues.
-	MaxPromptIterations     int                    `json:"max_prompt_iterations"`       //maximum prompt generate/evaluate attempts per learning cycle.
-	MetaEvalEveryJudgeRuns  int                    `json:"meta_eval_every_judge_runs"`  //run meta-evaluator after this many LLM judge calls.
+	Judges                   []EvaluatorJudgeConfig `json:"judges"`
+	PromptGenerator          EvaluatorJudgeConfig   `json:"prompt_generator"`
+	PromptGeneratorMaxTokens int                    `json:"prompt_generator_max_tokens"`
+	PersonaLLMBaseURL        string                 `json:"persona_llm_base_url"`
+	PersonaLLMAPIKey         string                 `json:"-"`
+	PersonaLLMModel          string                 `json:"persona_llm_model"`
+	DefaultBatchSize         int                    `json:"default_batch_size"`          //default number of simulations per persona when running evals.
+	DefaultMaxTurnsPerAgent  int                    `json:"default_max_turns_per_agent"` //hard cap on how many turns each agent gets in simulation.
+	AdoptionPValue           float64                `json:"adoption_p_value"`            //statistical significance threshold for prompt adoption.
+	AdoptionMinMeanDelta     float64                `json:"adoption_min_mean_delta"`     //minimum mean improvement required before a prompt can be adopted.
+	AdoptionMinCohensD       float64                `json:"adoption_min_cohens_d"`       // minimum effect size required before adoption.
+	AdoptionMaxStddev        float64                `json:"adoption_max_stddev"`         //upper bound on treatment score spread, to avoid adopting noisy prompts.
+	MinComplianceRate        float64                `json:"min_compliance_rate"`         //minimum compliance rate required for adoption.
+	MaxJudgeDisagreement     float64                `json:"max_judge_disagreement"`      //threshold used to flag excessive judge disagreement.
+	MetaEvaluationMinSample  int                    `json:"meta_evaluation_min_sample"`  //minimum sample size before the meta-evaluator starts flagging issues.
+	MaxPromptIterations      int                    `json:"max_prompt_iterations"`       //maximum prompt generate/evaluate attempts per learning cycle.
+	MetaEvalEveryJudgeRuns   int                    `json:"meta_eval_every_judge_runs"`  //run meta-evaluator after this many LLM judge calls.
 }
 
 type ModelPricing struct {
@@ -50,21 +51,25 @@ func DefaultSelfLearningConfig() SelfLearningConfig {
 			{Name: "judge_grok4_xai", Provider: string(ai.XAI), Model: string(ai.Grok4), Weight: 1, Temperature: 0.15},
 			{Name: "judge_grok4_fast_reasoning_xai", Provider: string(ai.XAI), Model: string(ai.Grok4ReasoningFast), Weight: 1.1, Temperature: 0.1, ReasoningEffort: "high"},
 		},
-		PromptGenerator:         EvaluatorJudgeConfig{Name: "prompt_generator", Provider: cfg.PromptGenProvider, Model: cfg.PromptGenModel, Weight: 1, Temperature: 0.15, ReasoningEffort: "high"},
-		PersonaLLMBaseURL:       strings.TrimRight(cfg.PersonaLLMBaseURL, "/"),
-		PersonaLLMAPIKey:        cfg.PersonaLLMApiKey,
-		PersonaLLMModel:         cfg.PersonaLLMModel,
-		DefaultBatchSize:        2,
-		DefaultMaxTurnsPerAgent: 6,
-		AdoptionPValue:          0.05,
-		AdoptionMinMeanDelta:    5,
-		AdoptionMinCohensD:      0.35,
-		AdoptionMaxStddev:       25,
-		MinComplianceRate:       1,
-		MaxJudgeDisagreement:    20,
-		MetaEvaluationMinSample: 5,
-		MaxPromptIterations:     3,
-		MetaEvalEveryJudgeRuns:  6,
+		PromptGenerator:          EvaluatorJudgeConfig{Name: "prompt_generator", Provider: cfg.PromptGenProvider, Model: cfg.PromptGenModel, Weight: 1, Temperature: 0.15, ReasoningEffort: strings.TrimSpace(cfg.PromptGenReasoningEffort)},
+		PromptGeneratorMaxTokens: cfg.PromptGenMaxTokens,
+		PersonaLLMBaseURL:        strings.TrimRight(cfg.PersonaLLMBaseURL, "/"),
+		PersonaLLMAPIKey:         cfg.PersonaLLMApiKey,
+		PersonaLLMModel:          cfg.PersonaLLMModel,
+		DefaultBatchSize:         2,
+		DefaultMaxTurnsPerAgent:  6,
+		AdoptionPValue:           0.05,
+		AdoptionMinMeanDelta:     5,
+		AdoptionMinCohensD:       0.35,
+		AdoptionMaxStddev:        25,
+		MinComplianceRate:        1,
+		MaxJudgeDisagreement:     20,
+		MetaEvaluationMinSample:  5,
+		MaxPromptIterations:      3,
+		MetaEvalEveryJudgeRuns:   6,
+	}
+	if out.PromptGeneratorMaxTokens <= 0 {
+		out.PromptGeneratorMaxTokens = 2200
 	}
 	raw := strings.TrimSpace(firstNonEmpty(cfg.EvaluatorJudges, os.Getenv("EVALUATOR_JUDGES_JSON")))
 	if raw != "" {

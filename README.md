@@ -141,6 +141,27 @@ Every prompt version is stored in the `prompt_versions` table with:
 
 Every experiment is stored in `prompt_experiments` with raw score arrays, statistical results, and the full decision record.
 
+### Continuous Supervisor
+
+The backend also exposes an in-process learning supervisor for always-on simulation and prompt improvement. It rotates through ARIA, NOVA, and DELTA, runs scored simulations, triggers meta-evaluation by judge-call count, and only attempts prompt generation when accumulated scores show a low-scoring pattern worth testing.
+
+Control endpoints:
+- `POST /api/v1/admin/learning/start` — start the supervisor
+- `POST /api/v1/admin/learning/stop` — stop the supervisor
+- `GET /api/v1/admin/learning/status` — inspect cycles, score counters, spend, current agent, and stop reason
+
+Single-flow inspection endpoint:
+- `POST /api/v1/admin/simulations/single` — run one synchronous ARIA to NOVA to DELTA-handoff simulation and return transcripts, scores, and cost
+
+Smoke test:
+
+```sh
+curl -X POST "$URL/api/v1/admin/simulations/single" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"persona":"cooperative"}'
+```
+
 ## Meta-Evaluation (Darwin Godel Machine)
 
 The meta-evaluation layer evaluates and improves the evaluation methodology itself. It runs after each improvement cycle and checks for:
@@ -221,8 +242,12 @@ The backend auto-seeds baseline prompts, evaluator versions, demo borrower data,
 - `GET /api/v1/admin/eval/meta` — meta-evaluation flags, evaluator versions, canaries
 - `GET /api/v1/admin/eval/experiments/:id` — experiment detail
 - `POST /api/v1/admin/simulations` — run simulations with scoring
+- `POST /api/v1/admin/simulations/single` — run one synchronous full-flow simulation for inspection
 - `POST /api/v1/admin/prompt-experiments` — run a prompt improvement experiment
 - `POST /api/v1/admin/eval/full-cycle` — run the complete self-learning cycle
+- `POST /api/v1/admin/learning/start` — start the continuous learning supervisor
+- `POST /api/v1/admin/learning/stop` — stop the continuous learning supervisor
+- `GET /api/v1/admin/learning/status` — continuous learning supervisor status
 - `POST /api/v1/admin/evaluations/rerun` — re-score existing conversations
 - `POST /api/v1/admin/prompt-versions/rollback` — rollback to a previous prompt version
 - `POST /api/v1/admin/meta-evaluations` — run meta-evaluation
@@ -338,6 +363,11 @@ Cost estimates use configurable per-model pricing (overridable via `LLM_PRICING_
 | `PERSONA_LLM_API_KEY` | For eval | API key for persona simulation LLM |
 | `PERSONA_LLM_MODEL` | For eval | Model name for persona simulation |
 | `EVALUATOR_JUDGES_JSON` | Optional | JSON override for judge configuration |
+| `PROMPT_GENERATOR_PROVIDER` | Optional | Provider used for prompt and evaluator-revision generation |
+| `PROMPT_GENERATOR_MODEL` | Optional | Model used for prompt and evaluator-revision generation |
+| `PROMPT_GENERATOR_MAX_TOKENS` | Optional | Output token cap for prompt generation; default `2200` |
+| `PROMPT_GENERATOR_REASONING_EFFORT` | Optional | Reasoning effort override; only attached when max tokens is at least `4000` |
+| `LEARNING_LOOP_BUDGET_USD` | Optional | Default incremental supervisor spend cap; default `15` |
 | `LLM_PRICING_JSON` | Optional | JSON override for per-model pricing |
 
 ## Limitations

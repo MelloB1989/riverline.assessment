@@ -98,21 +98,62 @@ func (c *Client) Converse(handoff string, history []models.AgentMessage) (*karma
 	defer restoreSystemPrompt()
 	chatHistory := toKarmaHistory(history)
 	var lastErr error
+	emptyManagedResponses := 0
+	singlePromptAttempts := 0
 	for attempt := 0; attempt < 5; attempt++ {
-		resp, err := c.aiClient.ChatCompletionManaged(chatHistory)
-		if err == nil && (strings.TrimSpace(resp.AIResponse) != "" || len(resp.ToolCalls) > 0) {
+		var resp *karmaModels.AIChatResponse
+		var err error
+		if emptyManagedResponses >= 2 && singlePromptAttempts < 2 {
+			singlePromptAttempts++
+			resp, err = c.aiClient.GenerateFromSinglePrompt(flattenConversationForSinglePromptRetry(handoff, history))
+		} else {
+			resp, err = c.aiClient.ChatCompletionManaged(chatHistory)
+		}
+		if err == nil && resp != nil && (strings.TrimSpace(resp.AIResponse) != "" || len(resp.ToolCalls) > 0) {
 			return resp, nil
 		}
 		if err != nil {
 			lastErr = err
+		} else if resp == nil {
+			lastErr = errors.New("empty AI response")
+			emptyManagedResponses++
 		} else {
 			lastErr = errors.New("empty AI response")
+			if len(resp.ToolCalls) == 0 {
+				emptyManagedResponses++
+			}
 		}
 		if attempt < 4 {
 			time.Sleep(time.Duration(attempt+1) * 300 * time.Millisecond)
 		}
 	}
 	return nil, lastErr
+}
+
+func flattenConversationForSinglePromptRetry(handoff string, history []models.AgentMessage) string {
+	var b strings.Builder
+	if strings.TrimSpace(handoff) != "" {
+		b.WriteString("Runtime context:\n")
+		b.WriteString(strings.TrimSpace(handoff))
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Conversation so far:\n")
+	for _, msg := range history {
+		label := "Borrower"
+		if msg.Role == models.MessageRoleAgent {
+			label = "Agent"
+		}
+		content := strings.TrimSpace(messageForCompletion(msg))
+		if content == "" {
+			continue
+		}
+		b.WriteString(label)
+		b.WriteString(": ")
+		b.WriteString(content)
+		b.WriteByte('\n')
+	}
+	b.WriteString("\nReturn only the next Agent reply. Do not include labels.")
+	return b.String()
 }
 
 func (c *Client) useRuntimeSystemPrompt(handoff string) func() {

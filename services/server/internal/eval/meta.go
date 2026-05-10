@@ -1,0 +1,643 @@
+package eval
+
+import (
+	"encoding/json"
+	"fmt"
+	"github.com/MelloB1989/karma/utils"
+	"github.com/MelloB1989/karma/v2/orm"
+	"math"
+	"riverline_server/constants"
+	"riverline_server/internal/collections"
+	"riverline_server/internal/models"
+	"sort"
+	"strings"
+	"time"
+)
+
+func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptExperiment, error) {
+	exp, _, _, err := runImprovementCycleDetailed(agentID, cfg)
+	return exp, err
+}
+
+type metaEvaluationOptions struct {
+	CanaryLimit    int
+	BenchmarkLimit int
+	MaxFlags       int
+}
+
+func RunMetaEvaluation(agentID models.AgentID) ([]models.MetaFlag, error) {
+	return runMetaEvaluation(agentID, metaEvaluationOptions{})
+}
+
+func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]models.MetaFlag, error) {
+	if err := collections.EnsureDefaults(); err != nil {
+		return nil, err
+	}
+	slCfg := constants.DefaultSelfLearningConfig()
+	scores, err := scoresForAgent(agentID)
+	if err != nil {
+		return nil, err
+	}
+	flags := make([]models.MetaFlag, 0)
+	values := scoreValues(scores)
+	if len(values) >= slCfg.MetaEvaluationMinSample && Mean(values) > 78 && Stddev(values) < 10 {
+		flags = append(flags, newMetaFlag(models.FlagTypeScoreInflation, agentID, map[string]any{
+			"mean": Mean(values), "stddev": Stddev(values), "sample_n": len(values),
+		}, "Tighten the evaluator rubric and add sharper mid/low score anchors."))
+	}
+	if len(values) >= slCfg.MetaEvaluationMinSample {
+		if metric, stddev := lowestMetricStddev(scores); metric != "" && stddev < 0.5 {
+			flags = append(flags, newMetaFlag(models.FlagTypeMetricUselessness, agentID, map[string]any{
+				"metric": metric, "stddev": stddev, "sample_n": len(values),
+			}, "Revise the evaluator prompt so this metric has discriminative anchors and is not always scored the same."))
+		}
+		pctDiverged, avgDelta := judgeDisagreementStats(scores, slCfg.MaxJudgeDisagreement)
+		if pctDiverged >= 0.25 {
+			flags = append(flags, newMetaFlag(models.FlagTypeJudgeDisagreement, agentID, map[string]any{
+				"pct_diverged": pctDiverged, "avg_delta": avgDelta, "threshold": slCfg.MaxJudgeDisagreement, "examples": judgeDisagreementExamples(scores, slCfg.MaxJudgeDisagreement, 4),
+			}, "Clarify ambiguous rubric boundaries that cause judge disagreement."))
+		}
+		invalidRate, invalidCount := judgeInvalidJSONStats(scores)
+		if invalidCount > 0 {
+			flags = append(flags, newMetaFlag(models.FlagTypeJudgeDisagreement, agentID, map[string]any{
+				"invalid_json_rate": invalidRate, "invalid_json_count": invalidCount, "sample_n": len(values),
+			}, "Revise the evaluator prompt to enforce strict JSON-only scoring and avoid schema-invalid judge outputs."))
+		}
+		if reg := postAdoptionRegression(scores); reg != nil {
+			flags = append(flags, newMetaFlag(models.FlagTypePostAdoptionRegression, agentID, reg, "Rollback or tighten adoption gates for the regressed prompt version."))
+		}
+	}
+	canaries, err := runCanarySetForAgent(agentID, opts.CanaryLimit)
+	if err != nil {
+		return nil, err
+	}
+	for _, canary := range canaries {
+		if canary.CorrectlyFlagged != nil && !*canary.CorrectlyFlagged {
+			flags = append(flags, newMetaFlag(models.FlagTypeComplianceBlindspot, agentID, map[string]any{
+				"canary_id": canary.CanaryId, "evaluator_version": canary.EvaluatorVersion,
+			}, "Revise compliance checks so known canary violations are caught."))
+		}
+	}
+	if len(flags) == 0 {
+		return []models.MetaFlag{}, nil
+	}
+	if opts.MaxFlags > 0 && len(flags) > opts.MaxFlags {
+		flags = flags[:opts.MaxFlags]
+	}
+	flagOrm := orm.Load(&models.MetaFlag{})
+	defer flagOrm.Close()
+	for i := range flags {
+		if err := flagOrm.Insert(&flags[i]); err != nil {
+			return nil, err
+		}
+		if err := resolveMetaFlagWithBenchmarkLimit(&flags[i], opts.BenchmarkLimit); err != nil {
+			return nil, err
+		}
+	}
+	return flags, nil
+}
+
+func RunCanarySet(evaluatorVersion int) ([]models.CanaryResult, error) {
+	_ = evaluatorVersion
+	results := make([]models.CanaryResult, 0)
+	for _, agentID := range []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta} {
+		agentResults, err := RunCanarySetForAgent(agentID)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, agentResults...)
+	}
+	return results, nil
+}
+
+func RunCanarySetForAgent(agentID models.AgentID) ([]models.CanaryResult, error) {
+	return runCanarySetForAgent(agentID, 0)
+}
+
+func RunProductionLearningTick(agentID models.AgentID) error {
+	slCfg := constants.DefaultSelfLearningConfig()
+	scores, err := scoresForAgent(agentID)
+	if err != nil {
+		return err
+	}
+	if len(scores) < slCfg.MetaEvaluationMinSample {
+		return nil
+	}
+	if len(scores)%slCfg.MetaEvaluationMinSample == 0 {
+		if _, err := RunMetaEvaluation(agentID); err != nil {
+			return err
+		}
+	}
+	if !recentScoresNeedPromptImprovement(scores, 8) || recentExperimentExists(agentID, time.Hour) {
+		return nil
+	}
+	cfg := SimConfig{
+		Seed:                   time.Now().Unix(),
+		BatchSize:              1,
+		Personas:               defaultPersonas(),
+		AgentID:                agentID,
+		MaxTurnsPerAgent:       slCfg.DefaultMaxTurnsPerAgent,
+		Judges:                 slCfg.Judges,
+		MaxPromptIterations:    1,
+		MetaEvalEveryJudgeRuns: slCfg.MetaEvalEveryJudgeRuns,
+	}
+	_, err = RunImprovementCycle(agentID, cfg)
+	return err
+}
+
+func recentScoresNeedPromptImprovement(scores []models.ConversationScore, limit int) bool {
+	sort.Slice(scores, func(i, j int) bool { return scores[i].CreatedAt.After(scores[j].CreatedAt) })
+	if limit <= 0 || limit > len(scores) {
+		limit = len(scores)
+	}
+	for i := 0; i < limit; i++ {
+		score := scores[i]
+		if score.CompliancePassed != nil && !*score.CompliancePassed {
+			return true
+		}
+		if score.CompositeScore < 75 {
+			return true
+		}
+		if score.JudgeDisagreementDelta != nil && *score.JudgeDisagreementDelta > constants.DefaultSelfLearningConfig().MaxJudgeDisagreement {
+			return true
+		}
+	}
+	return false
+}
+
+func recentExperimentExists(agentID models.AgentID, window time.Duration) bool {
+	o := orm.Load(&models.PromptExperiment{})
+	defer o.Close()
+	var rows []models.PromptExperiment
+	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&rows); err != nil {
+		return false
+	}
+	cutoff := time.Now().UTC().Add(-window)
+	for _, row := range rows {
+		if row.CreatedAt.After(cutoff) {
+			return true
+		}
+	}
+	return false
+}
+
+func runCanarySetForAgent(agentID models.AgentID, limit int) ([]models.CanaryResult, error) {
+	evaluator, err := activeEvaluatorVersion(agentID)
+	if err != nil {
+		return nil, err
+	}
+	o := orm.Load(&models.ComplianceCanary{})
+	defer o.Close()
+	var canaries []models.ComplianceCanary
+	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&canaries); err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(canaries) > limit {
+		canaries = canaries[:limit]
+	}
+	resultOrm := orm.Load(&models.CanaryResult{})
+	defer resultOrm.Close()
+	results := make([]models.CanaryResult, 0, len(canaries))
+	for _, canary := range canaries {
+		evaluation, err := Evaluate(canary.AgentId, canary.Transcript)
+		if err != nil {
+			return nil, err
+		}
+		checkerPassed := evaluation.Metrics.CompliancePass > 0
+		correct := checkerPassed != derefBool(canary.ShouldFail)
+		row := models.CanaryResult{Id: utils.GenerateID(), CanaryId: canary.Id, EvaluatorVersion: evaluator.VersionNumber, CheckerResult: &checkerPassed, CorrectlyFlagged: &correct, CreatedAt: time.Now().UTC()}
+		if err := resultOrm.Insert(&row); err != nil {
+			return nil, err
+		}
+		results = append(results, row)
+	}
+	return results, nil
+}
+
+func resolveMetaFlag(flag *models.MetaFlag) error {
+	return resolveMetaFlagWithBenchmarkLimit(flag, 0)
+}
+
+func resolveMetaFlagWithBenchmarkLimit(flag *models.MetaFlag, benchmarkLimit int) error {
+	agentID := derefAgent(flag.AgentId)
+	before, err := activeEvaluatorVersion(agentID)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	evaluatorOrm := orm.Load(&models.EvaluatorVersion{})
+	defer evaluatorOrm.Close()
+	if flag.Evidence == nil {
+		flag.Evidence = map[string]any{}
+	}
+	var finalBenchmark map[string]any
+	var finalVersion int
+	improved := false
+	for attempt := 1; attempt <= 3; attempt++ {
+		if finalBenchmark != nil {
+			flag.Evidence["previous_rejected_evaluator_benchmark"] = finalBenchmark
+		}
+		judgePrompt, inputTokens, outputTokens, modelUsed, err := generateEvaluatorRevision(agentID, *before, *flag)
+		if err != nil {
+			return err
+		}
+		if err := collections.LogCost("evaluator_prompt_generation", flag.AgentId, modelUsed, inputTokens, outputTokens, nil, nil); err != nil {
+			return err
+		}
+		nextVersion, err := nextEvaluatorVersion(agentID)
+		if err != nil {
+			return err
+		}
+		active := false
+		changeReason := fmt.Sprintf("Generated from meta-evaluation flag %s attempt %d", flag.Id, attempt)
+		evaluator := models.EvaluatorVersion{
+			Id:                utils.GenerateID(),
+			VersionNumber:     nextVersion,
+			AgentId:           agentID,
+			JudgePrompt:       judgePrompt,
+			IsActive:          &active,
+			ChangeReason:      &changeReason,
+			TriggeredByFlagId: &flag.Id,
+			CreatedAt:         now,
+		}
+		if err := evaluatorOrm.Insert(&evaluator); err != nil {
+			return err
+		}
+		benchmark := benchmarkEvaluatorRevisionWithLimit(agentID, *before, evaluator, benchmarkLimit)
+		improved = evaluatorBenchmarkImprovedForFlag(*flag, benchmark)
+		benchmark["accepted_by_flag_target_gate"] = improved
+		if improved {
+			benchmark["improved"] = true
+		}
+		finalBenchmark = benchmark
+		finalVersion = nextVersion
+		if !improved {
+			continue
+		}
+		inactive := false
+		var existing []models.EvaluatorVersion
+		if err := evaluatorOrm.GetByFieldEquals("AgentId", agentID).Scan(&existing); err != nil {
+			return err
+		}
+		for i := range existing {
+			if existing[i].IsActive != nil && *existing[i].IsActive {
+				existing[i].IsActive = &inactive
+				if err := evaluatorOrm.Update(&existing[i], existing[i].Id); err != nil {
+					return err
+				}
+			}
+		}
+		active = true
+		evaluator.IsActive = &active
+		if err := evaluatorOrm.Update(&evaluator, evaluator.Id); err != nil {
+			return err
+		}
+		break
+	}
+	if finalBenchmark == nil {
+		finalBenchmark = map[string]any{"error": "no evaluator revision generated"}
+	}
+	flag.Evidence["revision_benchmark"] = finalBenchmark
+	resolved := true
+	resolution := fmt.Sprintf("Created evaluator version %d but kept it inactive because benchmark did not improve.", finalVersion)
+	if improved {
+		resolution = fmt.Sprintf("Created and activated evaluator version %d after benchmark improvement.", finalVersion)
+	}
+	flag.Resolved = &resolved
+	flag.Resolution = &resolution
+	flag.EvaluatorVersionBefore = &before.VersionNumber
+	if improved {
+		flag.EvaluatorVersionAfter = &finalVersion
+	}
+	flag.ResolvedAt = &now
+	flagOrm := orm.Load(&models.MetaFlag{})
+	defer flagOrm.Close()
+	if err := flagOrm.Update(flag, flag.Id); err != nil {
+		return err
+	}
+	return nil
+}
+
+func generateEvaluatorRevision(agentID models.AgentID, current models.EvaluatorVersion, flag models.MetaFlag) (string, int, int, string, error) {
+	evidence, _ := json.Marshal(flag.Evidence)
+	prompt := fmt.Sprintf(`Generate a revised evaluator judge prompt for the %s collections agent.
+
+Current evaluator prompt:
+%s
+
+Meta-evaluation flag: %s
+Evidence: %s
+Proposed action: %s
+
+The revised prompt must:
+- Return only JSON score outputs when used by an evaluator.
+- Preserve the existing schema exactly.
+- Add concrete low, medium, and high scoring anchors.
+- Penalize vague compliance, repeated questions, missing disclosures, false threats, privacy leaks, harassment, ignored hardship, negotiation drift, and poor handoff continuity.
+- Improve stable rerun behavior for identical transcripts.
+- If evidence includes a previous rejected evaluator benchmark, fix that benchmark failure specifically without losing any improvement it achieved.
+
+	Return only the revised judge prompt text.`, agentID, current.JudgePrompt, flag.FlagType, string(evidence), derefString(flag.ProposedAction))
+	resp, err := generateInternalText(prompt, internalPromptOptimizerSystemPrompt(), 8)
+	if err != nil {
+		return "", 0, 0, "", fmt.Errorf("generate evaluator revision for %s: %w", agentID, err)
+	}
+	return strings.TrimSpace(resp.Text), resp.InputTokens, resp.OutputTokens, resp.ModelUsed, nil
+}
+
+func benchmarkEvaluatorRevision(agentID models.AgentID, before models.EvaluatorVersion, after models.EvaluatorVersion) map[string]any {
+	return benchmarkEvaluatorRevisionWithLimit(agentID, before, after, 4)
+}
+
+func benchmarkEvaluatorRevisionWithLimit(agentID models.AgentID, before models.EvaluatorVersion, after models.EvaluatorVersion, limit int) map[string]any {
+	if limit <= 0 {
+		limit = 4
+	}
+	transcripts, err := recentSystemTranscriptsForAgent(agentID, limit)
+	if err != nil || len(transcripts) == 0 {
+		return map[string]any{"error": fmt.Sprint(err), "sample_n": len(transcripts)}
+	}
+	judges := constants.DefaultSelfLearningConfig().Judges
+	beforeScores := make([]float64, 0, len(transcripts))
+	afterScores := make([]float64, 0, len(transcripts))
+	beforeDisagreements := make([]float64, 0, len(transcripts))
+	afterDisagreements := make([]float64, 0, len(transcripts))
+	beforeInvalid := 0
+	afterInvalid := 0
+	for _, transcript := range transcripts {
+		beforeEval, beforeErr := evaluateTranscriptWithEvaluator(before, transcript, judges, true)
+		afterEval, afterErr := evaluateTranscriptWithEvaluator(after, transcript, judges, true)
+		if beforeErr == nil {
+			beforeScores = append(beforeScores, beforeEval.Metrics.CompositeScore)
+			beforeDisagreements = append(beforeDisagreements, beforeEval.Metrics.JudgeDisagreement)
+			beforeInvalid += countInvalidJudgeResults(beforeEval.JudgeResults)
+		}
+		if afterErr == nil {
+			afterScores = append(afterScores, afterEval.Metrics.CompositeScore)
+			afterDisagreements = append(afterDisagreements, afterEval.Metrics.JudgeDisagreement)
+			afterInvalid += countInvalidJudgeResults(afterEval.JudgeResults)
+		}
+	}
+	return map[string]any{
+		"sample_n":                  len(transcripts),
+		"before_evaluator_version":  before.VersionNumber,
+		"after_evaluator_version":   after.VersionNumber,
+		"before_mean_score":         Mean(beforeScores),
+		"after_mean_score":          Mean(afterScores),
+		"score_delta":               Mean(afterScores) - Mean(beforeScores),
+		"before_mean_disagreement":  Mean(beforeDisagreements),
+		"after_mean_disagreement":   Mean(afterDisagreements),
+		"disagreement_delta":        Mean(afterDisagreements) - Mean(beforeDisagreements),
+		"before_invalid_json_count": beforeInvalid,
+		"after_invalid_json_count":  afterInvalid,
+		"invalid_json_delta":        afterInvalid - beforeInvalid,
+		"improved":                  evaluatorBenchmarkValuesImproved(Mean(beforeScores), Mean(afterScores), Mean(beforeDisagreements), Mean(afterDisagreements), beforeInvalid, afterInvalid),
+	}
+}
+
+func evaluatorBenchmarkImproved(benchmark map[string]any) bool {
+	return evaluatorBenchmarkImprovedForFlag(models.MetaFlag{}, benchmark)
+}
+
+func evaluatorBenchmarkImprovedForFlag(flag models.MetaFlag, benchmark map[string]any) bool {
+	beforeScore, ok1 := benchmark["before_mean_score"].(float64)
+	afterScore, ok2 := benchmark["after_mean_score"].(float64)
+	beforeDisagreement, ok3 := benchmark["before_mean_disagreement"].(float64)
+	afterDisagreement, ok4 := benchmark["after_mean_disagreement"].(float64)
+	beforeInvalid, ok5 := benchmark["before_invalid_json_count"].(int)
+	afterInvalid, ok6 := benchmark["after_invalid_json_count"].(int)
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 {
+		return false
+	}
+	scoreDrop := beforeScore - afterScore
+	disagreementDrop := beforeDisagreement - afterDisagreement
+	invalidIncrease := afterInvalid - beforeInvalid
+	if flag.FlagType == models.FlagTypeJudgeDisagreement && disagreementDrop >= 10 && scoreDrop <= 2 && invalidIncrease <= 1 {
+		return true
+	}
+	return evaluatorBenchmarkValuesImproved(beforeScore, afterScore, beforeDisagreement, afterDisagreement, beforeInvalid, afterInvalid)
+}
+
+func evaluatorBenchmarkValuesImproved(beforeScore, afterScore, beforeDisagreement, afterDisagreement float64, beforeInvalid, afterInvalid int) bool {
+	if afterInvalid < beforeInvalid {
+		return true
+	}
+	scoreDrop := beforeScore - afterScore
+	disagreementDrop := beforeDisagreement - afterDisagreement
+	if afterInvalid <= beforeInvalid && disagreementDrop >= 5 && scoreDrop <= 2 {
+		return true
+	}
+	return afterInvalid <= beforeInvalid && afterScore > beforeScore+2 && afterDisagreement <= beforeDisagreement+2
+}
+
+func countInvalidJudgeResults(results []JudgeResult) int {
+	count := 0
+	for _, result := range results {
+		if !result.Valid {
+			count++
+		}
+	}
+	return count
+}
+
+func recentSystemTranscriptsForAgent(agentID models.AgentID, limit int) ([]string, error) {
+	o := orm.Load(&models.ConversationScore{})
+	defer o.Close()
+	var scores []models.ConversationScore
+	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&scores); err != nil {
+		return nil, err
+	}
+	sort.Slice(scores, func(i, j int) bool { return scores[i].CreatedAt.After(scores[j].CreatedAt) })
+	out := make([]string, 0, limit)
+	seen := map[string]bool{}
+	for _, score := range scores {
+		if score.WorkflowId == nil || *score.WorkflowId == "" || seen[*score.WorkflowId] {
+			continue
+		}
+		convOrm := orm.Load(&models.AgentConversation{})
+		var convs []models.AgentConversation
+		err := convOrm.GetByFieldEquals("WorkflowId", *score.WorkflowId).Scan(&convs)
+		convOrm.Close()
+		if err != nil {
+			return nil, err
+		}
+		transcript, err := workflowTranscriptFromConversations(convs)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(transcript) == "" {
+			continue
+		}
+		seen[*score.WorkflowId] = true
+		out = append(out, transcript)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func newMetaFlag(flagType models.FlagType, agentID models.AgentID, evidence map[string]any, action string) models.MetaFlag {
+	resolved := false
+	return models.MetaFlag{Id: utils.GenerateID(), FlagType: flagType, AgentId: &agentID, Evidence: evidence, ProposedAction: &action, Resolved: &resolved, CreatedAt: time.Now().UTC()}
+}
+
+func scoreValues(scores []models.ConversationScore) []float64 {
+	values := make([]float64, 0, len(scores))
+	for _, score := range scores {
+		values = append(values, score.CompositeScore)
+	}
+	return values
+}
+
+func lowestMetricStddev(scores []models.ConversationScore) (string, float64) {
+	metrics := map[string][]float64{}
+	for _, score := range scores {
+		appendPtrMetric(metrics, "identity_verified", score.ScoreIdentityVerified)
+		appendPtrMetric(metrics, "info_completeness", score.ScoreInfoCompleteness)
+		appendPtrMetric(metrics, "no_redundancy", score.ScoreNoRedundancy)
+		appendPtrMetric(metrics, "tone_appropriateness", score.ScoreToneAppropriateness)
+		appendPtrMetric(metrics, "offer_clarity", score.ScoreOfferClarity)
+		appendPtrMetric(metrics, "objection_handling", score.ScoreObjectionHandling)
+		appendPtrMetric(metrics, "commitment_attempt", score.ScoreCommitmentAttempt)
+		appendPtrMetric(metrics, "context_continuity", score.ScoreContextContinuity)
+		appendPtrMetric(metrics, "consequence_accuracy", score.ScoreConsequenceAccuracy)
+		appendPtrMetric(metrics, "deadline_specificity", score.ScoreDeadlineSpecificity)
+		appendPtrMetric(metrics, "no_negotiation_drift", score.ScoreNoNegotiationDrift)
+	}
+	bestMetric := ""
+	bestStddev := math.MaxFloat64
+	for metric, values := range metrics {
+		if len(values) < 3 {
+			continue
+		}
+		stddev := Stddev(values)
+		if stddev < bestStddev {
+			bestMetric = metric
+			bestStddev = stddev
+		}
+	}
+	if bestStddev == math.MaxFloat64 {
+		return "", 0
+	}
+	return bestMetric, bestStddev
+}
+
+func appendPtrMetric(metrics map[string][]float64, key string, value *float64) {
+	if value != nil {
+		metrics[key] = append(metrics[key], *value)
+	}
+}
+
+func judgeDisagreementStats(scores []models.ConversationScore, threshold float64) (float64, float64) {
+	if len(scores) == 0 {
+		return 0, 0
+	}
+	diverged := 0
+	values := make([]float64, 0, len(scores))
+	for _, score := range scores {
+		if score.JudgeDisagreementDelta == nil {
+			continue
+		}
+		values = append(values, *score.JudgeDisagreementDelta)
+		if *score.JudgeDisagreementDelta > threshold {
+			diverged++
+		}
+	}
+	if len(values) == 0 {
+		return 0, 0
+	}
+	return float64(diverged) / float64(len(values)), Mean(values)
+}
+
+func judgeDisagreementExamples(scores []models.ConversationScore, threshold float64, limit int) []map[string]any {
+	if limit <= 0 {
+		return nil
+	}
+	sort.Slice(scores, func(i, j int) bool {
+		return derefFloat(scores[i].JudgeDisagreementDelta) > derefFloat(scores[j].JudgeDisagreementDelta)
+	})
+	examples := make([]map[string]any, 0, limit)
+	for _, score := range scores {
+		if score.JudgeDisagreementDelta == nil || *score.JudgeDisagreementDelta <= threshold || score.ComplianceBreakdown == nil {
+			continue
+		}
+		var judges []JudgeResult
+		data, _ := json.Marshal(score.ComplianceBreakdown["judge_results"])
+		if err := json.Unmarshal(data, &judges); err != nil || len(judges) == 0 {
+			continue
+		}
+		judgeSummaries := make([]map[string]any, 0, len(judges))
+		for _, judge := range judges {
+			judgeSummaries = append(judgeSummaries, map[string]any{
+				"name":                 judge.Name,
+				"score":                judge.Metrics.CompositeScore,
+				"compliance_pass":      judge.Metrics.CompliancePass,
+				"compliance_breakdown": judge.Metrics.ComplianceBreakdown,
+				"reasoning":            truncateForPrompt(judge.Metrics.Reasoning, 320),
+			})
+		}
+		examples = append(examples, map[string]any{
+			"workflow_id":         score.WorkflowId,
+			"conversation_id":     score.ConversationId,
+			"prompt_version":      score.PromptVersion,
+			"persona":             score.PersonaType,
+			"aggregate_score":     score.CompositeScore,
+			"disagreement_delta":  derefFloat(score.JudgeDisagreementDelta),
+			"aggregate_breakdown": score.ComplianceBreakdown,
+			"judges":              judgeSummaries,
+		})
+		if len(examples) >= limit {
+			break
+		}
+	}
+	return examples
+}
+
+func judgeInvalidJSONStats(scores []models.ConversationScore) (float64, int) {
+	if len(scores) == 0 {
+		return 0, 0
+	}
+	invalid := 0
+	checked := 0
+	for _, score := range scores {
+		if score.ComplianceBreakdown == nil {
+			continue
+		}
+		checked++
+		data, _ := json.Marshal(score.ComplianceBreakdown["judge_results"])
+		if strings.Contains(string(data), `"valid":false`) || strings.Contains(string(data), "invalid JSON") {
+			invalid++
+		}
+	}
+	if checked == 0 {
+		return 0, 0
+	}
+	return float64(invalid) / float64(checked), invalid
+}
+
+func postAdoptionRegression(scores []models.ConversationScore) map[string]any {
+	byVersion := map[int][]float64{}
+	for _, score := range scores {
+		byVersion[score.PromptVersion] = append(byVersion[score.PromptVersion], score.CompositeScore)
+	}
+	if len(byVersion) < 2 {
+		return nil
+	}
+	versions := make([]int, 0, len(byVersion))
+	for version := range byVersion {
+		versions = append(versions, version)
+	}
+	sort.Ints(versions)
+	latest := versions[len(versions)-1]
+	previous := versions[len(versions)-2]
+	if len(byVersion[latest]) < 3 || len(byVersion[previous]) < 3 {
+		return nil
+	}
+	oldMean := Mean(byVersion[previous])
+	newMean := Mean(byVersion[latest])
+	if newMean <= oldMean-5 {
+		return map[string]any{"previous_version": previous, "latest_version": latest, "old_mean": oldMean, "new_mean": newMean, "delta": newMean - oldMean}
+	}
+	return nil
+}

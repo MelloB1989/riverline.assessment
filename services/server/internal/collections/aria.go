@@ -2,6 +2,7 @@ package collections
 
 import (
 	"riverline_server/internal/models"
+	"strings"
 	"time"
 )
 
@@ -18,7 +19,8 @@ func CompleteARIA(workflowID string) error {
 	wf.AriaAttempts += 1
 	wf.UpdatedAt = now
 	wf.HardshipFlagged = boolPtr(derefBool(wf.HardshipMentioned))
-	if ariaTerminalOutcome(wf) {
+	simulated := workflowIsSimulated(wf)
+	if !simulated && ariaTerminalOutcome(wf) {
 		if wf.Outcome == nil {
 			if derefBool(wf.StopContactFlagged) {
 				wf.Outcome = outcomePtr(models.OutcomeStopContact)
@@ -29,6 +31,9 @@ func CompleteARIA(workflowID string) error {
 		wf.ResolvedAt = &now
 	} else {
 		wf.CurrentStage = models.AgentNova
+		if simulated {
+			wf.ResolvedAt = nil
+		}
 	}
 	if wf.Outcome != nil {
 		conv.Outcome = wf.Outcome
@@ -47,13 +52,34 @@ func CompleteARIA(workflowID string) error {
 
 func ApplyAriaHandoffForSimulation(wf *models.BorrowerWorkflow, result AriaHandoffResult) error {
 	applyAriaHandoff(wf, result)
-	if !ariaTerminalOutcome(wf) && result.PreferredNovaCallAt != nil && *result.PreferredNovaCallAt != "" {
+	if (!ariaTerminalOutcome(wf) || workflowIsSimulated(wf)) && result.PreferredNovaCallAt != nil && strings.TrimSpace(*result.PreferredNovaCallAt) != "" {
 		if err := setInitialNovaSchedule(wf, result); err != nil {
 			return err
 		}
 	}
 	wf.UpdatedAt = time.Now().UTC()
 	return updateWorkflow(wf)
+}
+
+func ForceAdvanceToNova(workflowID string) error {
+	wf, err := GetWorkflow(workflowID)
+	if err != nil {
+		return err
+	}
+	if !workflowIsSimulated(wf) {
+		return nil
+	}
+	wf.CurrentStage = models.AgentNova
+	wf.ResolvedAt = nil
+	wf.UpdatedAt = time.Now().UTC()
+	return updateWorkflow(wf)
+}
+
+func workflowIsSimulated(wf *models.BorrowerWorkflow) bool {
+	if wf == nil {
+		return false
+	}
+	return strings.HasPrefix(wf.Id, "sim-wf-") || strings.HasPrefix(wf.UserId, "sim-user-")
 }
 
 func ariaTerminalOutcome(wf *models.BorrowerWorkflow) bool {
