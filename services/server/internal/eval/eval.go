@@ -109,6 +109,7 @@ type JudgeResult struct {
 
 const (
 	judgeCallTimeout          = 75 * time.Second
+	judgeCallTimeoutSlow      = 300 * time.Second
 	internalGenerationTimeout = 90 * time.Second
 	aiCallMaxAttempts         = 3
 	judgeJSONParseMaxAttempts = 4
@@ -726,17 +727,20 @@ func RerunEvaluations(req RerunRequest) (*RerunResult, error) {
 		if strings.TrimSpace(transcript) == "" {
 			continue
 		}
+		primaryAgent := systemEvaluationAgent(group)
+		log.Printf("[eval] rerun system evaluation workflow=%s primary_agent=%s conversations=%d transcript_chars=%d", workflowID, primaryAgent, len(group), len(transcript))
+		evaluation, err := EvaluateSystemWithJudges(primaryAgent, transcript, req.Judges)
+		if err != nil {
+			return nil, err
+		}
+		evaluation.Metrics.ComplianceBreakdown["system_level_evaluation"] = true
+		evaluation.Metrics.ComplianceBreakdown["rerun"] = true
+		evaluation.Metrics.ComplianceBreakdown["evaluated_as_complete_flow"] = true
+		evaluation.Metrics.ComplianceBreakdown["conversation_ids"] = conversationIDs(group)
 		for _, conv := range group {
 			if req.AgentID != nil && conv.AgentId != *req.AgentID {
 				continue
 			}
-			log.Printf("[eval] rerun system evaluation workflow=%s conversation=%s agent=%s transcript_chars=%d", workflowID, conv.Id, conv.AgentId, len(transcript))
-			evaluation, err := EvaluateSystemWithJudges(conv.AgentId, transcript, req.Judges)
-			if err != nil {
-				return nil, err
-			}
-			evaluation.Metrics.ComplianceBreakdown["system_level_evaluation"] = true
-			evaluation.Metrics.ComplianceBreakdown["rerun"] = true
 			if err := SaveScore(conv, evaluation); err != nil {
 				return nil, err
 			}
@@ -1189,7 +1193,8 @@ func evaluateWithJudge(evaluator models.EvaluatorVersion, transcript string, jud
 	)
 	var metrics MetricScores
 	prompt := buildEvaluationPrompt(evaluator, transcript, systemLevel)
-	inputTokens, outputTokens, err := parseMetricScores(judge.Provider, client, prompt, &metrics)
+	timeout := judgeTimeoutForProvider(judge.Provider, judge.ReasoningEffort)
+	inputTokens, outputTokens, err := parseMetricScores(judge.Provider, client, prompt, &metrics, timeout)
 	if err != nil {
 		return MetricScores{}, inputTokens, outputTokens, modelUsed, fmt.Errorf("judge %s evaluate %s: %w", judge.Name, evaluator.AgentId, err)
 	}
@@ -1197,13 +1202,13 @@ func evaluateWithJudge(evaluator models.EvaluatorVersion, transcript string, jud
 	return metrics, inputTokens, outputTokens, modelUsed, nil
 }
 
-func parseMetricScores(provider string, client *ai.KarmaAI, prompt string, output *MetricScores) (int, int, error) {
+func parseMetricScores(provider string, client *ai.KarmaAI, prompt string, output *MetricScores, timeout time.Duration) (int, int, error) {
 	currentPrompt := prompt
 	var lastErr error
 	totalInput := 0
 	totalOutput := 0
 	for attempt := 0; attempt < judgeJSONParseMaxAttempts; attempt++ {
-		resp, err := generateFromSinglePromptWithTimeout(provider, client, currentPrompt, judgeCallTimeout)
+		resp, err := generateFromSinglePromptWithTimeout(provider, client, currentPrompt, timeout)
 		if err != nil {
 			lastErr = err
 			if isTimeoutErr(err) {
@@ -1227,7 +1232,7 @@ func parseMetricScores(provider string, client *ai.KarmaAI, prompt string, outpu
 				Message:   currentPrompt,
 				Timestamp: time.Now().UTC(),
 			}},
-		}, judgeCallTimeout)
+		}, timeout)
 		if chatErr != nil {
 			lastErr = chatErr
 			if isTimeoutErr(chatErr) {
@@ -1732,6 +1737,20 @@ func conversationForAgent(sim SimulatedConversation, agentID models.AgentID) (mo
 		}
 	}
 	return models.AgentConversation{}, false
+}
+
+func systemEvaluationAgent(group []models.AgentConversation) models.AgentID {
+	for _, preferred := range []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta} {
+		for _, conv := range group {
+			if conv.AgentId == preferred {
+				return preferred
+			}
+		}
+	}
+	if len(group) > 0 {
+		return group[0].AgentId
+	}
+	return models.AgentAria
 }
 
 func createEvaluationAnchorConversation(sim SimulatedConversation, agentID models.AgentID) (models.AgentConversation, error) {
@@ -2642,6 +2661,14 @@ func isRateLimitErr(err error) bool {
 func isNvidiaNIMProvider(provider string) bool {
 	p := strings.ToLower(strings.TrimSpace(provider))
 	return strings.Contains(p, "nvidia")
+}
+
+func judgeTimeoutForProvider(provider string, reasoningEffort string) time.Duration {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	if strings.Contains(p, "xai") || strings.TrimSpace(reasoningEffort) != "" {
+		return judgeCallTimeoutSlow
+	}
+	return judgeCallTimeout
 }
 
 func isTimeoutErr(err error) bool {

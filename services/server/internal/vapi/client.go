@@ -252,7 +252,7 @@ func firstPayloadInt(payload map[string]any, keys ...string) *int {
 }
 
 func (c *Client) getCall(ctx context.Context, callID string) (map[string]any, error) {
-	if c.APIKey == "" {
+	if c.APIKey == "" || c.DryRun || strings.HasPrefix(callID, "mock-vapi-") {
 		return map[string]any{}, nil
 	}
 	resp, err := c.do(ctx, http.MethodGet, "/call/"+callID, nil)
