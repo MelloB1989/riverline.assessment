@@ -94,5 +94,5 @@ func ariaTerminalOutcome(wf *models.BorrowerWorkflow) bool {
 	if wf.Outcome == nil {
 		return false
 	}
-	return *wf.Outcome == models.OutcomeStopContact || *wf.Outcome == models.OutcomeHardship
+	return *wf.Outcome == models.OutcomeStopContact || *wf.Outcome == models.OutcomeHardship || *wf.Outcome == models.OutcomeNeedHardshipReferral
 }

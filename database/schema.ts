@@ -33,6 +33,7 @@ export const outcomeEnum = pgEnum("outcome", [
   "rejected", // borrower explicitly declined
   "no_response", // borrower never replied / call unanswered
   "hardship", // routed to hardship program
+  "need_hardship_referral", // Aria escalated without full info
   "stop_contact", // borrower invoked stop-contact right
   "escalated", // sent to legal / write-off
 ]);
@@ -317,7 +318,6 @@ export const conversation_scores = pgTable("conversation_scores", {
 // One row per A/B prompt experiment (control vs candidate over a batch of simulated convos).
 export const prompt_experiments = pgTable("prompt_experiments", {
   id: varchar("id").primaryKey().notNull(),
-  agent_id: agentIdEnum("agent_id").notNull(),
   control_version: integer("control_version").notNull(),
   candidate_version: integer("candidate_version").notNull(),
 

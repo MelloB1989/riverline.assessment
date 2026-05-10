@@ -180,16 +180,17 @@ Quantitative control-run evidence and judge defects:
 %s
 
 Rewrite instructions:
-- Return the complete replacement system prompt, not a diff.
-- Keep the replacement around 1500 tokens. It must fit the 2000-token agent budget with room for runtime context.
+- Return ONLY the complete replacement system prompt. Do not output anything else.
+- VERY IMPORTANT: The new prompt MUST be strictly under 1500 tokens. This is a HARD limit. Be concise. Remove fluff. Use bullet points.
 - Preserve the same agent role, tools, compliance boundaries, context budgets, borrower-facing single Riverline identity, and handoff responsibilities.
 - CRITICAL: The agent truth above is the authoritative specification. Every capability listed under CAN do must be preserved. Every boundary listed under CANNOT do must be enforced. Do not add capabilities not listed. Do not remove boundaries.
-- Use the evidence to target concrete measurable improvements. Do not add unrelated policy.
+- Analyze the "Quantitative control-run evidence and judge defects" provided. You MUST explicitly address and fix the specific reasons the previous prompt lost points.
+- Do not remove instructions that are currently working well. Only adjust the prompt to eliminate the identified defects and improve the compliance score.
 - Keep the prompt operationally precise: ordered flow, stop conditions, tool-use criteria, and failure recovery instructions.
-- Make the prompt robust against the exact defects and low metrics listed above.
+- Make the prompt robust against the exact defects and low metrics listed above to guarantee a HIGHER evaluation score.
 - HARDSHIP: The agent must offer to CONNECT with a hardship program, never create or invent hardship plan terms.
 
-	Return only the complete replacement system prompt.`, agentID, agentTruth, currentPrompt, evidence)
+	Return ONLY the complete replacement system prompt.`, agentID, agentTruth, currentPrompt, evidence)
 	resp, err := generateInternalText(prompt, internalPromptOptimizerSystemPrompt(), 8)
 	if err != nil {
 		return "", 0, 0, "", fmt.Errorf("generate candidate prompt for %s: %w", agentID, err)

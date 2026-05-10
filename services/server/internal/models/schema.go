@@ -165,7 +165,6 @@ type ConversationScore struct {
 type PromptExperiment struct {
 	TableName               string    `karma_table:"prompt_experiments" json:"-"`
 	Id                      string    `json:"id" karma:"primary"`
-	AgentId                 AgentID   `json:"agent_id"`
 	ControlVersion          int       `json:"control_version"`
 	CandidateVersion        int       `json:"candidate_version"`
 	ControlN                int       `json:"control_n"`

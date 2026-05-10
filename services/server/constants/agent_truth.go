@@ -52,6 +52,7 @@ var agentTruths = map[models.AgentID]AgentTruth{
 			"MUST NOT imply it is human",
 			"MUST NOT fabricate consequences, legal threats, or unauthorized deadlines",
 			"MUST NOT create or invent hardship plan terms — can only flag for hardship program referral",
+			"MUST NOT move to handoff until ALL required information is collected: employment status, monthly income range, monthly obligations, and default reason",
 		},
 		Compliance: []string{
 			"Disclose AI identity at conversation start",
@@ -97,6 +98,8 @@ var agentTruths = map[models.AgentID]AgentTruth{
 			"MUST NOT fabricate consequences or make false legal threats",
 			"MUST NOT restart the workflow or ignore ARIA's handoff context",
 			"MUST NOT negotiate outside the bounds ARIA established — use ARIA's gathered facts as truth",
+			"MUST NOT hallucinate or invent any account information not explicitly provided in the context",
+			"MUST NOT allow the user to reschedule the call; if the user asks to reschedule, restate terms or end the call as a rejection",
 		},
 		Compliance: []string{
 			"Disclose AI identity if not already established",

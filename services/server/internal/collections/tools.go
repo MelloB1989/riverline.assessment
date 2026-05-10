@@ -84,13 +84,13 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 		"Create and persist the ARIA assessment handoff after all required intake information and preferred callback timing are collected, or after stop-contact/hardship terminal handling. In simulation runs Riverline still escalates the borrower to NOVA so judges can evaluate offer handling.",
 		ai.NewFuncParams().
 			SetString("reason", "Brief reason ARIA is ready to hand off.").
-			SetStringEnum("outcome", "Handoff outcome.", []string{"ready_for_nova", "stop_contact", "hardship"}).
-			SetString("preferred_nova_call_at", "Borrower-confirmed preferred resolution-call time as an ISO-8601 timestamp with timezone. Required when outcome is ready_for_nova. Use not_applicable only for stop_contact or hardship terminal outcomes, except simulation workflows still require a real borrower-confirmed time so NOVA can be evaluated.").
-			SetBool("identity_verified", "Whether ARIA verified the borrower identity using borrower-provided details. Required when outcome is ready_for_nova. For terminal hardship/stop_contact before verification, pass false.").
-			SetString("employment_status", "Borrower's stated employment status. Required when outcome is ready_for_nova. Use not_applicable only for terminal hardship/stop_contact before this was collected.").
-			SetString("monthly_income_range", "Borrower's stated monthly income or income range. Required when outcome is ready_for_nova. Use not_applicable only for terminal hardship/stop_contact before this was collected.").
-			SetNumber("monthly_obligations", "Borrower's stated total monthly obligations. Required when outcome is ready_for_nova. Use 0 only for terminal hardship/stop_contact before this was collected.").
-			SetString("default_reason", "Borrower's stated reason for missed/defaulted payment. Required when outcome is ready_for_nova. Use not_applicable only for terminal hardship/stop_contact before this was collected.").
+			SetStringEnum("outcome", "Handoff outcome.", []string{"ready_for_nova", "stop_contact"}).
+			SetString("preferred_nova_call_at", "Borrower-confirmed preferred resolution-call time as an ISO-8601 timestamp with timezone. Required when outcome is ready_for_nova. Use not_applicable only for stop_contact terminal outcomes, except simulation workflows still require a real borrower-confirmed time so NOVA can be evaluated.").
+			SetBool("identity_verified", "Whether ARIA verified the borrower identity using borrower-provided details. Required when outcome is ready_for_nova. For terminal stop_contact before verification, pass false.").
+			SetString("employment_status", "Borrower's stated employment status. Required when outcome is ready_for_nova. Use not_applicable only for terminal stop_contact before this was collected.").
+			SetString("monthly_income_range", "Borrower's stated monthly income or income range. Required when outcome is ready_for_nova. Use not_applicable only for terminal stop_contact before this was collected.").
+			SetNumber("monthly_obligations", "Borrower's stated total monthly obligations. Required when outcome is ready_for_nova. Use 0 only for terminal stop_contact before this was collected.").
+			SetString("default_reason", "Borrower's stated reason for missed/defaulted payment. Required when outcome is ready_for_nova. Use not_applicable only for terminal stop_contact before this was collected.").
 			SetStringEnum("borrower_emotional_state", "Observed borrower persona/emotional state.", []string{"cooperative", "combative", "evasive", "distressed", "confused"}).
 			SetBool("hardship_mentioned", "Whether the borrower mentioned hardship or crisis.").
 			SetBool("stop_contact_flagged", "Whether the borrower requested no further contact.").
@@ -123,7 +123,7 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 				handoffRecoverableFailures++
 				errText := err.Error()
 				log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
-				return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Ask for a specific callback time if outcome is ready_for_nova, then call this tool again with preferred_nova_call_at as an ISO-8601 timestamp with timezone. Use not_applicable only for hardship or stop_contact."}`, errText), nil
+				return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Ask for a specific callback time if outcome is ready_for_nova, then call this tool again with preferred_nova_call_at as an ISO-8601 timestamp with timezone. Use not_applicable only for stop_contact."}`, errText), nil
 			}
 			if outcome == "ready_for_nova" || workflowIsSimulated(&wf) {
 				now := time.Now().UTC()
@@ -207,7 +207,35 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 			return `{"nova_call_rescheduled":true}`, nil
 		},
 	)
-	tools := []ai.GoFunctionTool{createHandoffTool, rescheduleTool}
+	escalateToHardshipTool := ai.NewGoFunctionTool(
+		agents.ToolEscalateToHardship,
+		"Use this tool immediately when the borrower mentions financial hardship, medical emergency, or severe distress. It stops the conversation and marks the loan for hardship referral. You must call this tool WITHOUT collecting complete information.",
+		ai.NewFuncParams().
+			SetString("reason", "Brief reason for hardship referral."),
+		func(_ context.Context, params ai.FuncParams) (string, error) {
+			start := time.Now()
+			log.Printf("[collections] aria tool start workflow=%s tool=%s param_keys=%v", wf.Id, agents.ToolEscalateToHardship, funcParamKeys(params))
+			reason, err := funcParamString(params, "reason")
+			if err != nil {
+				toolErr = err
+				log.Printf("[collections] aria tool failed workflow=%s tool=%s duration=%s err=%v", wf.Id, agents.ToolEscalateToHardship, time.Since(start), toolErr)
+				return "", err
+			}
+			hardship := true
+			resolved := models.OutcomeNeedHardshipReferral
+			results.AriaHandoff = &HandoffCall[AriaHandoffResult]{
+				Result: AriaHandoffResult{
+					HardshipMentioned: &hardship,
+					Outcome:           &resolved,
+					AriaSummary:       "Escalated to hardship: " + reason,
+				},
+				ModelUsed: client.ModelUsed(),
+			}
+			log.Printf("[collections] aria tool done workflow=%s tool=%s duration=%s", wf.Id, agents.ToolEscalateToHardship, time.Since(start))
+			return `{"escalated_to_hardship":true}`, nil
+		},
+	)
+	tools := []ai.GoFunctionTool{createHandoffTool, rescheduleTool, escalateToHardshipTool}
 	start := time.Now()
 	log.Printf("[collections] converse start workflow=%s agent=%s messages=%d handoff_chars=%d tools=%d", wf.Id, chatAgent, len(messages), len(handoff), len(tools))
 	resp, err := client.ConverseWithTools(handoff, messages, tools...)
@@ -229,11 +257,6 @@ func applyExplicitAriaToolOutcome(result *AriaHandoffResult, outcome string) {
 		stop := true
 		resolved := models.OutcomeStopContact
 		result.StopContactFlagged = &stop
-		result.Outcome = &resolved
-	case "hardship":
-		hardship := true
-		resolved := models.OutcomeHardship
-		result.HardshipMentioned = &hardship
 		result.Outcome = &resolved
 	}
 }

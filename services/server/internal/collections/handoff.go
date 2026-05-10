@@ -444,6 +444,23 @@ func applyAriaHandoff(wf *models.BorrowerWorkflow, result AriaHandoffResult) {
 func applyNovaOffer(offer *models.ResolutionOffer, result NovaOfferResult) {
 	if len(result.CandidateOffer) > 0 {
 		offer.CandidateOffer = result.CandidateOffer
+	} else {
+		offer.CandidateOffer = map[string]any{}
+	}
+	if result.LumpSumOffered != nil {
+		offer.CandidateOffer["lump_sum_offered"] = *result.LumpSumOffered
+	}
+	if result.LumpSumDiscountPct != nil {
+		offer.CandidateOffer["lump_sum_discount_pct"] = *result.LumpSumDiscountPct
+	}
+	if result.EmiAmount != nil {
+		offer.CandidateOffer["emi_amount"] = *result.EmiAmount
+	}
+	if result.EmiMonths != nil {
+		offer.CandidateOffer["emi_months"] = *result.EmiMonths
+	}
+	if result.HardshipOffered != nil {
+		offer.CandidateOffer["hardship_offered"] = *result.HardshipOffered
 	}
 	offer.LumpSumOffered = result.LumpSumOffered
 	offer.LumpSumDiscountPct = result.LumpSumDiscountPct

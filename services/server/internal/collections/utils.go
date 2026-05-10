@@ -450,6 +450,8 @@ func finalizeWorkflowOutcome(wf *models.BorrowerWorkflow) error {
 		loanStatus = models.BorrowerStatusStopContact
 	case models.OutcomeHardship:
 		loanStatus = models.BorrowerStatusHardship
+	case models.OutcomeNeedHardshipReferral:
+		loanStatus = models.BorrowerStatusEscalated
 	default:
 		loanStatus = models.BorrowerStatusEscalated
 	}

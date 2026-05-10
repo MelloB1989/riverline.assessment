@@ -34,12 +34,13 @@ const (
 )
 
 const (
-	OutcomeCommitted   Outcome = "committed"
-	OutcomeRejected    Outcome = "rejected"
-	OutcomeNoResponse  Outcome = "no_response"
-	OutcomeHardship    Outcome = "hardship"
-	OutcomeStopContact Outcome = "stop_contact"
-	OutcomeEscalated   Outcome = "escalated"
+	OutcomeCommitted            Outcome = "committed"
+	OutcomeRejected             Outcome = "rejected"
+	OutcomeNoResponse           Outcome = "no_response"
+	OutcomeHardship             Outcome = "hardship"
+	OutcomeNeedHardshipReferral Outcome = "need_hardship_referral"
+	OutcomeStopContact          Outcome = "stop_contact"
+	OutcomeEscalated            Outcome = "escalated"
 )
 
 const (

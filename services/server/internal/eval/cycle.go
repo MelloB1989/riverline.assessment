@@ -401,7 +401,6 @@ func buildAndSavePromptExperiment(agentID models.AgentID, controlVersion int, ca
 	rejection := rejectionReason(adopt, pValue, delta, effectSize, controlCompliance, treatmentCompliance, issueGatePassed, issueGateReason)
 	exp := &models.PromptExperiment{
 		Id:                      utils.GenerateID(),
-		AgentId:                 agentID,
 		ControlVersion:          controlVersion,
 		CandidateVersion:        candidateVersion,
 		ControlN:                len(controlScores),

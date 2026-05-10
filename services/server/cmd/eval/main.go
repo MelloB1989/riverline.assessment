@@ -641,9 +641,9 @@ func writePromptExperimentsCSV(path string) error {
 		return err
 	}
 	defer closeFn()
-	_ = w.Write([]string{"id", "agent_id", "control_version", "candidate_version", "control_n", "control_mean", "control_stddev", "control_compliance_rate", "treatment_n", "treatment_mean", "treatment_stddev", "treatment_compliance_rate", "mean_delta", "p_value", "cohens_d", "is_significant", "adopted", "rejection_reason", "experiment_cost_usd", "created_at"})
+	_ = w.Write([]string{"id", "control_version", "candidate_version", "control_n", "control_mean", "control_stddev", "control_compliance_rate", "treatment_n", "treatment_mean", "treatment_stddev", "treatment_compliance_rate", "mean_delta", "p_value", "cohens_d", "is_significant", "adopted", "rejection_reason", "experiment_cost_usd", "created_at"})
 	for _, row := range rows {
-		_ = w.Write([]string{row.Id, string(row.AgentId), fmt.Sprint(row.ControlVersion), fmt.Sprint(row.CandidateVersion), fmt.Sprint(row.ControlN), fmt.Sprintf("%.2f", row.ControlMean), fmt.Sprintf("%.2f", row.ControlStddev), fmt.Sprintf("%.4f", row.ControlComplianceRate), fmt.Sprint(row.TreatmentN), fmt.Sprintf("%.2f", row.TreatmentMean), fmt.Sprintf("%.2f", row.TreatmentStddev), fmt.Sprintf("%.4f", row.TreatmentComplianceRate), fmt.Sprintf("%.2f", row.MeanDelta), fmt.Sprintf("%.6f", row.PValue), fmtFloat(row.CohensD), fmtBool(row.IsSignificant), fmt.Sprint(row.Adopted), derefString(row.RejectionReason), fmtFloat(row.ExperimentCostUsd), row.CreatedAt.Format(time.RFC3339)})
+		_ = w.Write([]string{row.Id, fmt.Sprint(row.ControlVersion), fmt.Sprint(row.CandidateVersion), fmt.Sprint(row.ControlN), fmt.Sprintf("%.2f", row.ControlMean), fmt.Sprintf("%.2f", row.ControlStddev), fmt.Sprintf("%.4f", row.ControlComplianceRate), fmt.Sprint(row.TreatmentN), fmt.Sprintf("%.2f", row.TreatmentMean), fmt.Sprintf("%.2f", row.TreatmentStddev), fmt.Sprintf("%.4f", row.TreatmentComplianceRate), fmt.Sprintf("%.2f", row.MeanDelta), fmt.Sprintf("%.6f", row.PValue), fmtFloat(row.CohensD), fmtBool(row.IsSignificant), fmt.Sprint(row.Adopted), derefString(row.RejectionReason), fmtFloat(row.ExperimentCostUsd), row.CreatedAt.Format(time.RFC3339)})
 	}
 	return w.Error()
 }

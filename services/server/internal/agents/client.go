@@ -330,6 +330,7 @@ func MessagesForCompletion(messages []models.AgentMessage) []models.AgentMessage
 
 const (
 	ToolCreateAriaHandoff  = "create_aria_handoff"
+	ToolEscalateToHardship = "escalate_to_hardship"
 	ToolRescheduleNovaCall = "reschedule_nova_call"
 	toolCallMaxTokens      = 1200
 )
