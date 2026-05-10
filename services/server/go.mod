@@ -3,7 +3,7 @@ module riverline_server
 go 1.24.4
 
 require (
-	github.com/MelloB1989/karma v1.17.75
+	github.com/MelloB1989/karma v1.17.76
 	github.com/gofiber/fiber/v2 v2.52.13
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/openai/openai-go/v3 v3.15.0
