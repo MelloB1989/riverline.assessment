@@ -131,21 +131,11 @@ func LoadMetrics() (*EvalMetrics, error) {
 	for _, cost := range costs {
 		totalCost += cost.CostUsd
 	}
-	// Group by agent+prompt version for per-prompt tracking
-	byAgentPrompt := map[string][]models.ConversationScore{}
-	for _, score := range scores {
-		key := fmt.Sprintf("%s:v%d", score.AgentId, score.PromptVersion)
-		byAgentPrompt[key] = append(byAgentPrompt[key], score)
-	}
 	out := &EvalMetrics{
 		TotalScores:       len(scores),
 		TotalCostUSD:      totalCost,
 		SystemAggregate:   aggregateScoreRows(scores),
-		ByAgentPrompt:     map[string]MetricAggregate{},
 		PromptExperiments: experiments,
-	}
-	for key, rows := range byAgentPrompt {
-		out.ByAgentPrompt[key] = aggregateScoreRows(rows)
 	}
 	return out, nil
 }
@@ -190,11 +180,11 @@ func conversationsForRerun(req RerunRequest) ([]models.AgentConversation, error)
 	return out, nil
 }
 
-func scoresForAgent(agentID models.AgentID) ([]models.ConversationScore, error) {
+func recentSystemScores() ([]models.ConversationScore, error) {
 	o := orm.Load(&models.ConversationScore{})
 	defer o.Close()
 	var scores []models.ConversationScore
-	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&scores); err != nil {
+	if err := o.GetAll().Scan(&scores); err != nil {
 		return nil, err
 	}
 	return scores, nil

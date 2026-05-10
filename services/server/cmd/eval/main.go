@@ -563,9 +563,9 @@ func writeConversationScoresCSV(path string) error {
 		return err
 	}
 	defer closeFn()
-	_ = w.Write([]string{"id", "workflow_id", "conversation_id", "agent_id", "seed", "persona_type", "prompt_version", "evaluator_version", "composite_score", "compliance_passed", "judge_disagreement_delta", "eval_cost_usd", "eval_model_used", "is_simulated", "created_at"})
+	_ = w.Write([]string{"id", "workflow_id", "conversation_id", "seed", "persona_type", "prompt_version", "evaluator_version", "composite_score", "compliance_passed", "judge_disagreement_delta", "eval_cost_usd", "eval_model_used", "is_simulated", "created_at"})
 	for _, row := range rows {
-		_ = w.Write([]string{row.Id, derefString(row.WorkflowId), row.ConversationId, string(row.AgentId), derefString(row.Seed), derefPersona(row.PersonaType), fmt.Sprint(row.PromptVersion), fmt.Sprint(row.EvaluatorVersion), fmt.Sprintf("%.2f", row.CompositeScore), fmtBool(row.CompliancePassed), fmtFloat(row.JudgeDisagreementDelta), fmtFloat(row.EvalCostUsd), derefString(row.EvalModelUsed), fmtBool(row.IsSimulated), row.CreatedAt.Format(time.RFC3339)})
+		_ = w.Write([]string{row.Id, derefString(row.WorkflowId), row.ConversationId, derefString(row.Seed), derefPersona(row.PersonaType), fmt.Sprint(row.PromptVersion), fmt.Sprint(row.EvaluatorVersion), fmt.Sprintf("%.2f", row.CompositeScore), fmtBool(row.CompliancePassed), fmtFloat(row.JudgeDisagreementDelta), fmtFloat(row.EvalCostUsd), derefString(row.EvalModelUsed), fmtBool(row.IsSimulated), row.CreatedAt.Format(time.RFC3339)})
 	}
 	return w.Error()
 }
@@ -582,14 +582,13 @@ func writeJudgeScoresCSV(path string) error {
 		return err
 	}
 	defer closeFn()
-	_ = w.Write([]string{"score_id", "workflow_id", "conversation_id", "agent_id", "seed", "persona_type", "prompt_version", "evaluator_version", "judge_name", "judge_model", "judge_provider", "judge_weight", "composite_score", "compliance_pass", "input_tokens", "output_tokens", "cost_usd", "reasoning", "created_at"})
+	_ = w.Write([]string{"score_id", "workflow_id", "conversation_id", "seed", "persona_type", "prompt_version", "evaluator_version", "judge_name", "judge_model", "judge_provider", "judge_weight", "composite_score", "compliance_pass", "input_tokens", "output_tokens", "cost_usd", "reasoning", "created_at"})
 	for _, row := range rows {
 		for _, judge := range judgeRows(row) {
 			_ = w.Write([]string{
 				row.Id,
 				derefString(row.WorkflowId),
 				row.ConversationId,
-				string(row.AgentId),
 				derefString(row.Seed),
 				derefPersona(row.PersonaType),
 				fmt.Sprint(row.PromptVersion),

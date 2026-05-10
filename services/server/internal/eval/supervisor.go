@@ -306,7 +306,7 @@ func lowScoringSimulationScores(agentID models.AgentID, limit int) ([]Simulation
 	if limit <= 0 {
 		limit = 5
 	}
-	rows, err := scoresForAgent(agentID)
+	rows, err := recentSystemScores()
 	if err != nil {
 		return nil, err
 	}

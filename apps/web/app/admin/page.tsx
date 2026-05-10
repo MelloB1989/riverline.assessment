@@ -128,7 +128,7 @@ export default async function AdminPage() {
           />
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+        <section className="grid gap-4">
           <SystemScoreCard
             aggregate={metrics.system_aggregate}
             promptVersionsByAgent={Object.fromEntries(
@@ -137,33 +137,6 @@ export default async function AdminPage() {
             totalExperiments={safeSummary.prompt_experiments.length}
             adopted={adopted}
           />
-          <Panel title="Per-Prompt Scores" subtitle="Breakdown by agent + prompt version.">
-            <div className="space-y-3">
-              {Object.entries(metrics.by_agent_prompt ?? {})
-                .sort(([, a], [, b]) => b.mean - a.mean)
-                .slice(0, 8)
-                .map(([key, agg]) => (
-                  <div key={key} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-semibold uppercase tracking-[0.16em] text-pink-100">
-                        {key}
-                      </p>
-                      <span className="text-xs text-zinc-400">
-                        n={agg.n} · {fmtPct(agg.compliance_rate)} compliant
-                      </span>
-                    </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                      <MiniMetric label="Mean" value={fmtScore(agg.mean)} />
-                      <MiniMetric label="Median" value={fmtScore(agg.median)} />
-                      <MiniMetric label="Stddev" value={fmtScore(agg.stddev)} />
-                    </div>
-                  </div>
-                ))}
-              {Object.keys(metrics.by_agent_prompt ?? {}).length === 0 && (
-                <EmptyState text="No per-prompt score data yet." />
-              )}
-            </div>
-          </Panel>
         </section>
 
         <section className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">

@@ -272,7 +272,6 @@ export const conversation_scores = pgTable("conversation_scores", {
     .notNull()
     .references(() => agent_conversations.id),
   workflow_id: varchar("workflow_id"), // null for simulated
-  agent_id: agentIdEnum("agent_id").notNull(),
   prompt_version: integer("prompt_version").notNull(),
   evaluator_version: integer("evaluator_version").notNull(),
   is_simulated: boolean("is_simulated").default(true),

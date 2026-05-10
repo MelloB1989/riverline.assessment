@@ -135,7 +135,6 @@ type ConversationScore struct {
 	Id                       string         `json:"id" karma:"primary"`
 	ConversationId           string         `json:"conversation_id"`
 	WorkflowId               *string        `json:"workflow_id"`
-	AgentId                  AgentID        `json:"agent_id"`
 	PromptVersion            int            `json:"prompt_version"`
 	EvaluatorVersion         int            `json:"evaluator_version"`
 	IsSimulated              *bool          `json:"is_simulated"`

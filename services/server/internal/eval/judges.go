@@ -224,7 +224,6 @@ func SaveScore(conv models.AgentConversation, evaluation *EvaluationResult) erro
 		Id:                       utils.GenerateID(),
 		ConversationId:           conv.Id,
 		WorkflowId:               &conv.WorkflowId,
-		AgentId:                  conv.AgentId,
 		PromptVersion:            conv.PromptVersion,
 		EvaluatorVersion:         evaluation.EvaluatorVersion.VersionNumber,
 		IsSimulated:              conv.IsSimulated,

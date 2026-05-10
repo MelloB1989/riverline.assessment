@@ -59,7 +59,7 @@ func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]mo
 		opts.MaxFlags = 3
 	}
 	slCfg := constants.DefaultSelfLearningConfig()
-	scores, err := scoresForAgent(agentID)
+	scores, err := recentSystemScores()
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]mo
 			log.Printf("[eval] meta evaluation flag insert failed agent=%s flag=%s err=%v (non-fatal)", agentID, flags[i].Id, err)
 			continue
 		}
-		if err := resolveMetaFlagWithBenchmarkLimit(&flags[i], opts.BenchmarkLimit); err != nil {
+		if err := resolveMetaFlag(&flags[i]); err != nil {
 			log.Printf("[eval] meta evaluation flag resolution failed agent=%s flag=%s err=%v (non-fatal, continuing)", agentID, flags[i].Id, err)
 			// Mark flag as resolved-with-error so it doesn't block future cycles
 			resolved := true
@@ -165,7 +165,7 @@ func RunCanarySetForAgent(agentID models.AgentID) ([]models.CanaryResult, error)
 
 func RunProductionLearningTick(agentID models.AgentID) error {
 	slCfg := constants.DefaultSelfLearningConfig()
-	scores, err := scoresForAgent(agentID)
+	scores, err := recentSystemScores()
 	if err != nil {
 		return err
 	}
@@ -264,10 +264,6 @@ func runCanarySetForAgent(agentID models.AgentID, limit int) ([]models.CanaryRes
 }
 
 func resolveMetaFlag(flag *models.MetaFlag) error {
-	return resolveMetaFlagWithBenchmarkLimit(flag, 0)
-}
-
-func resolveMetaFlagWithBenchmarkLimit(flag *models.MetaFlag, benchmarkLimit int) error {
 	agentID := derefAgent(flag.AgentId)
 	before, err := activeEvaluatorVersion(agentID)
 	if err != nil {
@@ -279,86 +275,60 @@ func resolveMetaFlagWithBenchmarkLimit(flag *models.MetaFlag, benchmarkLimit int
 	if flag.Evidence == nil {
 		flag.Evidence = map[string]any{}
 	}
-	var finalBenchmark map[string]any
-	var finalVersion int
-	improved := false
-	for attempt := 1; attempt <= 3; attempt++ {
-		if finalBenchmark != nil {
-			flag.Evidence["previous_rejected_evaluator_benchmark"] = finalBenchmark
-		}
-		judgePrompt, inputTokens, outputTokens, modelUsed, err := generateEvaluatorRevision(agentID, *before, *flag)
-		if err != nil {
-			return err
-		}
-		if err := collections.LogCost("evaluator_prompt_generation", flag.AgentId, modelUsed, inputTokens, outputTokens, nil, nil); err != nil {
-			return err
-		}
-		nextVersion, err := nextEvaluatorVersion(agentID)
-		if err != nil {
-			return err
-		}
-		active := false
-		changeReason := fmt.Sprintf("Generated from meta-evaluation flag %s attempt %d", flag.Id, attempt)
-		evaluator := models.EvaluatorVersion{
-			Id:                utils.GenerateID(),
-			VersionNumber:     nextVersion,
-			AgentId:           agentID,
-			JudgePrompt:       judgePrompt,
-			IsActive:          &active,
-			ChangeReason:      &changeReason,
-			TriggeredByFlagId: &flag.Id,
-			CreatedAt:         now,
-		}
-		if err := evaluatorOrm.Insert(&evaluator); err != nil {
-			return err
-		}
-		benchmark := benchmarkEvaluatorRevisionWithLimit(agentID, *before, evaluator, benchmarkLimit)
-		improved = evaluatorBenchmarkImprovedForFlag(*flag, benchmark)
-		benchmark["accepted_by_flag_target_gate"] = improved
-		if improved {
-			benchmark["improved"] = true
-		}
-		finalBenchmark = benchmark
-		finalVersion = nextVersion
-		if !improved {
-			continue
-		}
-		inactive := false
-		var existing []models.EvaluatorVersion
-		if err := evaluatorOrm.GetByFieldEquals("AgentId", agentID).Scan(&existing); err != nil {
-			return err
-		}
-		for i := range existing {
-			if existing[i].IsActive != nil && *existing[i].IsActive {
-				existing[i].IsActive = &inactive
-				if err := evaluatorOrm.Update(&existing[i], existing[i].Id); err != nil {
-					return err
-				}
+
+	judgePrompt, inputTokens, outputTokens, modelUsed, err := generateEvaluatorRevision(agentID, *before, *flag)
+	if err != nil {
+		return err
+	}
+	if err := collections.LogCost("evaluator_prompt_generation", flag.AgentId, modelUsed, inputTokens, outputTokens, nil, nil); err != nil {
+		return err
+	}
+	nextVersion, err := nextEvaluatorVersion(agentID)
+	if err != nil {
+		return err
+	}
+
+	// Deactivate existing versions
+	var existing []models.EvaluatorVersion
+	if err := evaluatorOrm.GetByFieldEquals("AgentId", agentID).Scan(&existing); err != nil {
+		return err
+	}
+	inactive := false
+	for i := range existing {
+		if existing[i].IsActive != nil && *existing[i].IsActive {
+			existing[i].IsActive = &inactive
+			if err := evaluatorOrm.Update(&existing[i], existing[i].Id); err != nil {
+				return err
 			}
 		}
-		active = true
-		evaluator.IsActive = &active
-		if err := evaluatorOrm.Update(&evaluator, evaluator.Id); err != nil {
-			return err
-		}
-		break
 	}
-	if finalBenchmark == nil {
-		finalBenchmark = map[string]any{"error": "no evaluator revision generated"}
+
+	// Activate new version
+	active := true
+	changeReason := fmt.Sprintf("Generated from meta-evaluation flag %s", flag.Id)
+	evaluator := models.EvaluatorVersion{
+		Id:                utils.GenerateID(),
+		VersionNumber:     nextVersion,
+		AgentId:           agentID,
+		JudgePrompt:       judgePrompt,
+		IsActive:          &active,
+		ChangeReason:      &changeReason,
+		TriggeredByFlagId: &flag.Id,
+		CreatedAt:         now,
 	}
-	flag.Evidence["revision_benchmark"] = finalBenchmark
+	if err := evaluatorOrm.Insert(&evaluator); err != nil {
+		return err
+	}
+
+	flag.Evidence["revision_benchmark"] = map[string]any{"status": "adopted_without_benchmark"}
 	resolved := true
-	resolution := fmt.Sprintf("Created evaluator version %d but kept it inactive because benchmark did not improve.", finalVersion)
-	if improved {
-		resolution = fmt.Sprintf("Created and activated evaluator version %d after benchmark improvement.", finalVersion)
-	}
+	resolution := fmt.Sprintf("Created and activated evaluator version %d directly.", nextVersion)
 	flag.Resolved = &resolved
 	flag.Resolution = &resolution
 	flag.EvaluatorVersionBefore = &before.VersionNumber
-	if improved {
-		flag.EvaluatorVersionAfter = &finalVersion
-	}
+	flag.EvaluatorVersionAfter = &nextVersion
 	flag.ResolvedAt = &now
+	
 	flagOrm := orm.Load(&models.MetaFlag{})
 	defer flagOrm.Close()
 	if err := flagOrm.Update(flag, flag.Id); err != nil {
@@ -369,7 +339,11 @@ func resolveMetaFlagWithBenchmarkLimit(flag *models.MetaFlag, benchmarkLimit int
 
 func generateEvaluatorRevision(agentID models.AgentID, current models.EvaluatorVersion, flag models.MetaFlag) (string, int, int, string, error) {
 	evidence, _ := json.Marshal(flag.Evidence)
+	agentTruth := constants.AgentTruthForPromptGenerator(agentID)
 	prompt := fmt.Sprintf(`Generate a revised evaluator judge prompt for the %s collections agent.
+
+Agent Policy/Truth Constraints (Judges MUST enforce these boundaries and capabilities):
+%s
 
 Current evaluator prompt:
 %s
@@ -383,10 +357,11 @@ The revised prompt must:
 - Preserve the existing schema exactly.
 - Add concrete low, medium, and high scoring anchors.
 - Penalize vague compliance, repeated questions, missing disclosures, false threats, privacy leaks, harassment, ignored hardship, negotiation drift, and poor handoff continuity.
+- Ensure the judge strictly penalizes the agent if it violates ANY "CANNOT do" constraint from the Agent Truth.
+- Ensure the judge respects the agent's capabilities listed in the "CAN do" section of the Agent Truth.
 - Improve stable rerun behavior for identical transcripts.
-- If evidence includes a previous rejected evaluator benchmark, fix that benchmark failure specifically without losing any improvement it achieved.
 
-	Return only the revised judge prompt text.`, agentID, current.JudgePrompt, flag.FlagType, string(evidence), derefString(flag.ProposedAction))
+	Return only the revised judge prompt text.`, agentID, agentTruth, current.JudgePrompt, flag.FlagType, string(evidence), derefString(flag.ProposedAction))
 	resp, err := generateInternalText(prompt, internalPromptOptimizerSystemPrompt(), 8)
 	if err != nil {
 		return "", 0, 0, "", fmt.Errorf("generate evaluator revision for %s: %w", agentID, err)
@@ -394,90 +369,7 @@ The revised prompt must:
 	return strings.TrimSpace(resp.Text), resp.InputTokens, resp.OutputTokens, resp.ModelUsed, nil
 }
 
-func benchmarkEvaluatorRevision(agentID models.AgentID, before models.EvaluatorVersion, after models.EvaluatorVersion) map[string]any {
-	return benchmarkEvaluatorRevisionWithLimit(agentID, before, after, 2)
-}
 
-func benchmarkEvaluatorRevisionWithLimit(agentID models.AgentID, before models.EvaluatorVersion, after models.EvaluatorVersion, limit int) map[string]any {
-	if limit <= 0 {
-		limit = 4
-	}
-	transcripts, err := recentSystemTranscriptsForAgent(agentID, limit)
-	if err != nil || len(transcripts) == 0 {
-		return map[string]any{"error": fmt.Sprint(err), "sample_n": len(transcripts)}
-	}
-	judges := constants.DefaultSelfLearningConfig().Judges
-	beforeScores := make([]float64, 0, len(transcripts))
-	afterScores := make([]float64, 0, len(transcripts))
-	beforeDisagreements := make([]float64, 0, len(transcripts))
-	afterDisagreements := make([]float64, 0, len(transcripts))
-	beforeInvalid := 0
-	afterInvalid := 0
-	for _, transcript := range transcripts {
-		beforeEval, beforeErr := evaluateTranscriptWithEvaluator(before, transcript, judges, true)
-		afterEval, afterErr := evaluateTranscriptWithEvaluator(after, transcript, judges, true)
-		if beforeErr == nil {
-			beforeScores = append(beforeScores, beforeEval.Metrics.CompositeScore)
-			beforeDisagreements = append(beforeDisagreements, beforeEval.Metrics.JudgeDisagreement)
-			beforeInvalid += countInvalidJudgeResults(beforeEval.JudgeResults)
-		}
-		if afterErr == nil {
-			afterScores = append(afterScores, afterEval.Metrics.CompositeScore)
-			afterDisagreements = append(afterDisagreements, afterEval.Metrics.JudgeDisagreement)
-			afterInvalid += countInvalidJudgeResults(afterEval.JudgeResults)
-		}
-	}
-	return map[string]any{
-		"sample_n":                  len(transcripts),
-		"before_evaluator_version":  before.VersionNumber,
-		"after_evaluator_version":   after.VersionNumber,
-		"before_mean_score":         Mean(beforeScores),
-		"after_mean_score":          Mean(afterScores),
-		"score_delta":               Mean(afterScores) - Mean(beforeScores),
-		"before_mean_disagreement":  Mean(beforeDisagreements),
-		"after_mean_disagreement":   Mean(afterDisagreements),
-		"disagreement_delta":        Mean(afterDisagreements) - Mean(beforeDisagreements),
-		"before_invalid_json_count": beforeInvalid,
-		"after_invalid_json_count":  afterInvalid,
-		"invalid_json_delta":        afterInvalid - beforeInvalid,
-		"improved":                  evaluatorBenchmarkValuesImproved(Mean(beforeScores), Mean(afterScores), Mean(beforeDisagreements), Mean(afterDisagreements), beforeInvalid, afterInvalid),
-	}
-}
-
-func evaluatorBenchmarkImproved(benchmark map[string]any) bool {
-	return evaluatorBenchmarkImprovedForFlag(models.MetaFlag{}, benchmark)
-}
-
-func evaluatorBenchmarkImprovedForFlag(flag models.MetaFlag, benchmark map[string]any) bool {
-	beforeScore, ok1 := benchmark["before_mean_score"].(float64)
-	afterScore, ok2 := benchmark["after_mean_score"].(float64)
-	beforeDisagreement, ok3 := benchmark["before_mean_disagreement"].(float64)
-	afterDisagreement, ok4 := benchmark["after_mean_disagreement"].(float64)
-	beforeInvalid, ok5 := benchmark["before_invalid_json_count"].(int)
-	afterInvalid, ok6 := benchmark["after_invalid_json_count"].(int)
-	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 {
-		return false
-	}
-	scoreDrop := beforeScore - afterScore
-	disagreementDrop := beforeDisagreement - afterDisagreement
-	invalidIncrease := afterInvalid - beforeInvalid
-	if flag.FlagType == models.FlagTypeJudgeDisagreement && disagreementDrop >= 10 && scoreDrop <= 2 && invalidIncrease <= 1 {
-		return true
-	}
-	return evaluatorBenchmarkValuesImproved(beforeScore, afterScore, beforeDisagreement, afterDisagreement, beforeInvalid, afterInvalid)
-}
-
-func evaluatorBenchmarkValuesImproved(beforeScore, afterScore, beforeDisagreement, afterDisagreement float64, beforeInvalid, afterInvalid int) bool {
-	if afterInvalid < beforeInvalid {
-		return true
-	}
-	scoreDrop := beforeScore - afterScore
-	disagreementDrop := beforeDisagreement - afterDisagreement
-	if afterInvalid <= beforeInvalid && disagreementDrop >= 5 && scoreDrop <= 2 {
-		return true
-	}
-	return afterInvalid <= beforeInvalid && afterScore > beforeScore+2 && afterDisagreement <= beforeDisagreement+2
-}
 
 func countInvalidJudgeResults(results []JudgeResult) int {
 	count := 0

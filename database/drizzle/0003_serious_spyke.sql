@@ -1,0 +1,1 @@
+ALTER TABLE "conversation_scores" DROP COLUMN IF EXISTS "agent_id";
