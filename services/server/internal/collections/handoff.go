@@ -140,7 +140,7 @@ func GenerateNovaOfferWithClient(client *agents.Client, wf models.BorrowerWorkfl
   "emi_amount": number|null,
   "emi_months": number|null,
   "hardship_offered": boolean|null
-}`, `Generate only the exact offer NOVA should present from ARIA context, loan facts, and policy. The candidate_offer must include a primary lump-sum option when policy allows it and a fallback EMI option when feasible. Populate exact amounts, discount percent, EMI amount, months, and hardship eligibility from the provided loan facts and policy. Do not generate runtime context and do not mark a call outcome.`)
+}`, `Generate only the exact offer NOVA should present from ARIA context, loan facts, and policy. The candidate_offer must include a primary lump-sum option when policy allows it and a secondary EMI option when feasible. Populate exact amounts, discount percent, EMI amount, months, and hardship eligibility from the provided loan facts and policy. Do not generate runtime context and do not mark a call outcome.`)
 	var result NovaOfferResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
@@ -167,12 +167,11 @@ func GenerateNovaRuntimeContextWithClient(client *agents.Client, wf models.Borro
 		"aria_summary":     derefString(wf.AriaSummary),
 		"resolution_offer": conciseOfferState(offer),
 	}
-	prompt := buildRuntimeSummaryPrompt("NOVA runtime context", payload, "Generate only the <= 500 token voice-call context NOVA needs from ARIA's handoff and NOVA's generated offer. Include borrower/account identifiers only as partial identifiers, ARIA assessment facts, scheduled callback timing if relevant, and exact offer terms. Write the offer terms as call-ready instructions with a primary offer and fallback option where available, including exact amounts, deadlines or start dates, and the commitment question. Do not include raw JSON or unrelated workflow fields.")
+	prompt := buildRuntimeSummaryPrompt("NOVA runtime context", payload, "Generate only the <= 500 token voice-call context NOVA needs from ARIA's handoff and NOVA's generated offer. Include borrower/account identifiers only as partial identifiers, ARIA assessment facts, scheduled callback timing if relevant, and exact offer terms. Write the offer terms as call-ready instructions with a primary offer and secondary option where available, including exact amounts, deadlines or start dates, and the commitment question. Do not include raw JSON or unrelated workflow fields.")
 	resp, err := client.GenerateTextWithTemporarySystem("You are NOVA's internal runtime-context summarizer. Generate concise call context for the voice assistant from provided JSON. Do not speak to the borrower. Return only plain text.", prompt, 6)
 	if err != nil {
-		contextForNova := fallbackNovaRuntimeContext(wf, offer)
-		log.Printf("[collections] handoff generation fallback workflow=%s agent=%s type=runtime_context duration=%s err=%v", wf.Id, models.AgentNova, time.Since(start), err)
-		return &HandoffCall[string]{Result: contextForNova, Tokens: 0, ModelUsed: "deterministic/fallback"}, nil
+		log.Printf("[collections] handoff generation failed workflow=%s agent=%s type=runtime_context duration=%s err=%v", wf.Id, models.AgentNova, time.Since(start), err)
+		return nil, fmt.Errorf("generate nova runtime context: %w", err)
 	}
 	contextForNova := sanitizeRuntimeSummary(resp.AIResponse)
 	if contextForNova == "" {
@@ -296,9 +295,8 @@ func GenerateDeltaRuntimeContextWithClient(client *agents.Client, handoff NovaCa
 	prompt := buildRuntimeSummaryPrompt("DELTA runtime context", payload, "Generate only the <= 500 token chat context DELTA needs from NOVA's handoff/outcome. Include what NOVA offered, whether the borrower accepted or rejected, objections, final offer amount/deadline, and any hardship or stop-contact flags. Do not include raw JSON or unrelated account data.")
 	resp, err := client.GenerateTextWithTemporarySystem("You are DELTA's internal runtime-context summarizer. Generate concise chat context for the final notice assistant from provided JSON. Do not speak to the borrower. Return only plain text.", prompt, 6)
 	if err != nil {
-		contextForDelta := fallbackDeltaRuntimeContext(handoff, offer, wf)
-		log.Printf("[collections] handoff generation fallback workflow=%s agent=%s type=runtime_context duration=%s err=%v", wf.Id, models.AgentDelta, time.Since(start), err)
-		return &HandoffCall[DeltaRuntimeContextResult]{Result: DeltaRuntimeContextResult{ContextForDelta: contextForDelta}, Tokens: 0, ModelUsed: "deterministic/fallback"}, nil
+		log.Printf("[collections] handoff generation failed workflow=%s agent=%s type=runtime_context duration=%s err=%v", wf.Id, models.AgentDelta, time.Since(start), err)
+		return nil, fmt.Errorf("generate delta runtime context: %w", err)
 	}
 	contextForDelta := sanitizeRuntimeSummary(resp.AIResponse)
 	if contextForDelta == "" {
@@ -365,47 +363,6 @@ func sanitizeRuntimeSummary(value string) string {
 	value = strings.TrimPrefix(value, "```")
 	value = strings.TrimSuffix(value, "```")
 	return strings.TrimSpace(value)
-}
-
-func fallbackNovaRuntimeContext(wf models.BorrowerWorkflow, offer *models.ResolutionOffer) string {
-	lines := []string{
-		"Use one Riverline identity and disclose that this is an AI-assisted recorded call.",
-		"ARIA handoff summary: " + emptyAsNotRecorded(derefString(wf.AriaSummary)),
-		"NOVA context: " + emptyAsNotRecorded(derefString(wf.ContextForNova)),
-		"Present the available payment options before asking for commitment.",
-	}
-	if offer != nil {
-		lines = append(lines, offerOptionLines(wf, *offer)...)
-		if offer.ScheduledCallAt != nil {
-			lines = append(lines, "Scheduled callback time: "+offer.ScheduledCallAt.Format(time.RFC3339)+".")
-		}
-	}
-	lines = append(lines, "Ask whether the borrower accepts one of the exact options. Availability to talk is not acceptance.")
-	return strings.Join(lines, "\n")
-}
-
-func fallbackDeltaRuntimeContext(handoff NovaCallHandoffResult, offer *models.ResolutionOffer, wf models.BorrowerWorkflow) string {
-	lines := []string{
-		"Use one Riverline identity in chat.",
-		"NOVA outcome summary: " + emptyAsNotRecorded(handoff.AriaSummary),
-		fmt.Sprintf("Offer accepted: %v.", handoff.OfferAccepted),
-	}
-	if handoff.AcceptedOfferType != nil {
-		lines = append(lines, "Accepted option: "+*handoff.AcceptedOfferType+".")
-	}
-	if len(handoff.ObjectionsRaised) > 0 {
-		lines = append(lines, "Objections: "+strings.Join(handoff.ObjectionsRaised, "; ")+".")
-	}
-	if offer != nil {
-		lines = append(lines, offerOptionLines(wf, *offer)...)
-	}
-	if wf.FinalOfferAmount != nil {
-		lines = append(lines, "Final offer amount: "+moneyText(*wf.FinalOfferAmount)+".")
-	}
-	if wf.FinalOfferDeadline != nil {
-		lines = append(lines, "Final offer deadline: "+wf.FinalOfferDeadline.Format(time.RFC3339)+".")
-	}
-	return strings.Join(lines, "\n")
 }
 
 func conciseAssessmentState(wf models.BorrowerWorkflow) map[string]any {

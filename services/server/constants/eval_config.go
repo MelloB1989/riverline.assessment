@@ -50,7 +50,7 @@ func DefaultSelfLearningConfig() SelfLearningConfig {
 			{Name: "judge_grok4_xai", Provider: string(ai.XAI), Model: string(ai.Grok4), Weight: 1, Temperature: 0.15},
 			{Name: "judge_grok4_fast_reasoning_xai", Provider: string(ai.XAI), Model: string(ai.Grok4ReasoningFast), Weight: 1.1, Temperature: 0.1, ReasoningEffort: "high"},
 		},
-		PromptGenerator:         EvaluatorJudgeConfig{Name: "prompt_generator", Provider: string(ai.NvidiaNIM), Model: string(ai.KimiK2_6), Weight: 1, Temperature: 0.15, ReasoningEffort: "high"},
+		PromptGenerator:         EvaluatorJudgeConfig{Name: "prompt_generator", Provider: cfg.PromptGenProvider, Model: cfg.PromptGenModel, Weight: 1, Temperature: 0.15, ReasoningEffort: "high"},
 		PersonaLLMBaseURL:       strings.TrimRight(cfg.PersonaLLMBaseURL, "/"),
 		PersonaLLMAPIKey:        cfg.PersonaLLMApiKey,
 		PersonaLLMModel:         cfg.PersonaLLMModel,

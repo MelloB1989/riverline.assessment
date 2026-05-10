@@ -108,17 +108,21 @@ type JudgeResult struct {
 }
 
 const (
-	judgeCallTimeout           = 75 * time.Second
-	internalGenerationTimeout  = 90 * time.Second
-	aiCallMaxAttempts          = 3
-	judgeJSONParseMaxAttempts  = 4
-	nvidiaNIMRequestsPerMinute = 20
+	judgeCallTimeout          = 75 * time.Second
+	internalGenerationTimeout = 90 * time.Second
+	aiCallMaxAttempts         = 3
+	judgeJSONParseMaxAttempts = 4
 )
 
-var unavailableJudgeModels sync.Map
+var (
+	nvidiaNIMRequestsPerMinute = constants.AppCfg.Get().NvidiaNIMRPM
+	unavailableJudgeModels     sync.Map
+)
 
 func init() {
-	ai.SetGlobalRateLimit(ai.NvidiaNIM, nvidiaNIMRequestsPerMinute, ai.RateLimitBehaviorWait)
+	if nvidiaNIMRequestsPerMinute > 0 {
+		ai.SetGlobalRateLimit(ai.NvidiaNIM, nvidiaNIMRequestsPerMinute, ai.RateLimitBehaviorWait)
+	}
 }
 
 type SimulationScore struct {
@@ -2607,13 +2611,24 @@ func isRetryableAICallErr(err error) bool {
 
 func retryDelay(provider string, err error, attempt int) time.Duration {
 	if isNvidiaNIMProvider(provider) && isRateLimitErr(err) {
-		return time.Duration(3+attempt*2) * time.Second
+		if delay, ok := providerRetryDelay(err); ok {
+			return delay
+		}
+		return time.Minute + time.Duration(attempt*5)*time.Second
 	}
 	delay := time.Duration(attempt*attempt) * 750 * time.Millisecond
 	if delay > 8*time.Second {
 		return 8 * time.Second
 	}
 	return delay
+}
+
+func providerRetryDelay(err error) (time.Duration, bool) {
+	var rateLimitErr *ai.RateLimitError
+	if errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
+		return rateLimitErr.RetryAfter + time.Second, true
+	}
+	return 0, false
 }
 
 func isRateLimitErr(err error) bool {
@@ -3168,18 +3183,18 @@ func totalTokens(messages []models.AgentMessage) int {
 	return total
 }
 
-func mustCurrentWorkflow(id string, fallback models.BorrowerWorkflow) models.BorrowerWorkflow {
+func mustCurrentWorkflow(id string, previous models.BorrowerWorkflow) models.BorrowerWorkflow {
 	wf, err := collections.GetWorkflow(id)
 	if err != nil {
-		return fallback
+		return previous
 	}
 	return *wf
 }
 
-func mustConversation(id string, fallback models.AgentConversation) models.AgentConversation {
+func mustConversation(id string, previous models.AgentConversation) models.AgentConversation {
 	view, err := collections.ConversationByIDOrWorkflow(id)
 	if err != nil {
-		return fallback
+		return previous
 	}
 	return view.Conversation
 }

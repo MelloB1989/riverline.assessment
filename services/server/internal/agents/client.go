@@ -134,12 +134,17 @@ func (c *Client) systemPrompt(handoff string) string {
 func (c *Client) ConverseWithTools(handoff string, history []models.AgentMessage, tools ...ai.GoFunctionTool) (*karmaModels.AIChatResponse, error) {
 	previousToolsEnabled := c.aiClient.ToolsEnabled
 	previousUseMCPExecution := c.aiClient.UseMCPExecution
+	previousMaxTokens := c.aiClient.MaxTokens
 	c.aiClient.ClearGoFunctionTools()
 	defer func() {
 		c.aiClient.ClearGoFunctionTools()
 		c.aiClient.ToolsEnabled = previousToolsEnabled
 		c.aiClient.UseMCPExecution = previousUseMCPExecution
+		c.aiClient.MaxTokens = previousMaxTokens
 	}()
+	if c.aiClient.MaxTokens < toolCallMaxTokens {
+		c.aiClient.MaxTokens = toolCallMaxTokens
+	}
 	c.aiClient.EnableTools()
 	c.aiClient.UseMCPExecution = true
 	for _, tool := range tools {
@@ -229,11 +234,11 @@ func (c *Client) ParseStructured(prompt string, output any) (int, error) {
 	if err == nil {
 		return tokens, nil
 	}
-	fallbackTokens, fallbackErr := c.parseStructuredViaChat(prompt, output)
-	if fallbackErr == nil {
-		return fallbackTokens, nil
+	repairTokens, repairErr := c.parseStructuredViaChat(prompt, output)
+	if repairErr == nil {
+		return repairTokens, nil
 	}
-	return tokens + fallbackTokens, fmt.Errorf("%w; fallback parse failed: %v", err, fallbackErr)
+	return tokens + repairTokens, fmt.Errorf("%w; JSON repair parse failed: %v", err, repairErr)
 }
 
 func (c *Client) ParseHandoff(prompt string, output any) (int, error) {
@@ -285,6 +290,7 @@ func MessagesForCompletion(messages []models.AgentMessage) []models.AgentMessage
 const (
 	ToolCreateAriaHandoff  = "create_aria_handoff"
 	ToolRescheduleNovaCall = "reschedule_nova_call"
+	toolCallMaxTokens      = 1200
 )
 
 func activePrompt(agentID models.AgentID) (*models.PromptVersion, error) {

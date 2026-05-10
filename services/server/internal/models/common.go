@@ -43,6 +43,7 @@ type AppConfig struct {
 	EvaluatorJudges    string `env:"EVALUATOR_JUDGES_JSON" optional:"true" default:""`
 	PromptGenProvider  string `env:"PROMPT_GENERATOR_PROVIDER" optional:"true" default:"groq"`
 	PromptGenModel     string `env:"PROMPT_GENERATOR_MODEL" optional:"true" default:"gpt-oss-120b"`
+	NvidiaNIMRPM       int    `env:"NVIDIA_NIM_REQUESTS_PER_MINUTE" optional:"true" default:"45"`
 	LlmPricing         string `env:"LLM_PRICING_JSON" optional:"true" default:""`
 	Port               string `env:"PORT" optional:"true" default:"8080"`
 }
