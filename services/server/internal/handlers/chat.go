@@ -129,6 +129,20 @@ func GetConversation(c *fiber.Ctx) error {
 	return c.JSON(view)
 }
 
+func GetDeltaHandoff(c *fiber.Ctx) error {
+	export, err := collections.DeltaHandoffForWorkflow(c.Params("workflowId"))
+	if err != nil {
+		if errors.Is(err, collections.ErrDeltaHandoffUnavailable) {
+			return fiber.NewError(fiber.StatusNotFound, err.Error())
+		}
+		return fiber.NewError(fiber.StatusNotFound, err.Error())
+	}
+	if export.UserID != middleware.GetUserID(c) {
+		return fiber.NewError(fiber.StatusForbidden, "workflow does not belong to authenticated user")
+	}
+	return c.JSON(fiber.Map{"handoff": export})
+}
+
 func StreamChat(c *fiber.Ctx) error {
 	workflowID := c.Params("workflowId")
 	wf, err := collections.GetWorkflow(workflowID)

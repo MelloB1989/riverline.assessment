@@ -14,14 +14,15 @@ import (
 )
 
 type FullCycleConfig struct {
-	Seed             int64                            `json:"seed"`
-	BatchSize        int                              `json:"batch_size"`
-	Agents           []models.AgentID                 `json:"agents"`
-	Personas         []models.Persona                 `json:"personas"`
-	MaxTurnsPerAgent int                              `json:"max_turns_per_agent"`
-	Judges           []constants.EvaluatorJudgeConfig `json:"judges"`
-	MaxCostUSD       float64                          `json:"max_cost_usd"`
-	ProofMode        bool                             `json:"proof_mode"`
+	Seed                   int64                            `json:"seed"`
+	BatchSize              int                              `json:"batch_size"`
+	Agents                 []models.AgentID                 `json:"agents"`
+	Personas               []models.Persona                 `json:"personas"`
+	MaxTurnsPerAgent       int                              `json:"max_turns_per_agent"`
+	Judges                 []constants.EvaluatorJudgeConfig `json:"judges"`
+	MaxCostUSD             float64                          `json:"max_cost_usd"`
+	MaxPromptIterations    int                              `json:"max_prompt_iterations"`
+	MetaEvalEveryJudgeRuns int                              `json:"meta_eval_every_judge_runs"`
 }
 
 type FullCycleReport struct {
@@ -197,15 +198,16 @@ func RunFullCycle(cfg FullCycleConfig) (*FullCycleReport, error) {
 
 func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig, baseCost float64) (*AgentCycleReport, error) {
 	simCfg := SimConfig{
-		Seed:             cfg.Seed,
-		BatchSize:        cfg.BatchSize,
-		AgentID:          agentID,
-		Personas:         cfg.Personas,
-		MaxTurnsPerAgent: cfg.MaxTurnsPerAgent,
-		Judges:           cfg.Judges,
-		MaxRunCostUSD:    cfg.MaxCostUSD,
-		BaseRunCostUSD:   baseCost,
-		ProofMode:        cfg.ProofMode,
+		Seed:                   cfg.Seed,
+		BatchSize:              cfg.BatchSize,
+		AgentID:                agentID,
+		Personas:               cfg.Personas,
+		MaxTurnsPerAgent:       cfg.MaxTurnsPerAgent,
+		Judges:                 cfg.Judges,
+		MaxRunCostUSD:          cfg.MaxCostUSD,
+		BaseRunCostUSD:         baseCost,
+		MaxPromptIterations:    cfg.MaxPromptIterations,
+		MetaEvalEveryJudgeRuns: cfg.MetaEvalEveryJudgeRuns,
 	}
 
 	exp, controlScores, treatmentScores, err := runImprovementCycleDetailed(agentID, simCfg)
@@ -240,11 +242,7 @@ func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig, baseCost float64
 	}
 
 	var flags []models.MetaFlag
-	if cfg.ProofMode {
-		flags, err = RunMetaEvaluationProof(agentID)
-	} else {
-		flags, err = RunMetaEvaluation(agentID)
-	}
+	flags, err = RunMetaEvaluation(agentID)
 	if err != nil {
 		return nil, fmt.Errorf("meta evaluation: %w", err)
 	}
@@ -261,11 +259,7 @@ func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig, baseCost float64
 	}
 
 	var canaryResults []models.CanaryResult
-	if cfg.ProofMode {
-		canaryResults, err = RunCanarySetForAgentLimited(agentID, 1)
-	} else {
-		canaryResults, err = RunCanarySetForAgent(agentID)
-	}
+	canaryResults, err = RunCanarySetForAgent(agentID)
 	if err != nil {
 		return nil, fmt.Errorf("canary set: %w", err)
 	}
@@ -302,12 +296,16 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	candidateVersion, err := nextPromptVersion(agentID)
-	if err != nil {
-		return nil, nil, nil, err
+	maxIterations := cfg.MaxPromptIterations
+	if maxIterations <= 0 {
+		maxIterations = constants.DefaultSelfLearningConfig().MaxPromptIterations
+	}
+	metaEvery := cfg.MetaEvalEveryJudgeRuns
+	if metaEvery <= 0 {
+		metaEvery = constants.DefaultSelfLearningConfig().MetaEvalEveryJudgeRuns
 	}
 
-	log.Printf("[eval] experiment start agent=%s control_version=%d candidate_version=%d batch_size=%d personas=%d", agentID, current.VersionNumber, candidateVersion, cfg.BatchSize, len(cfg.Personas))
+	log.Printf("[eval] experiment loop start agent=%s control_version=%d max_iterations=%d batch_size=%d personas=%d", agentID, current.VersionNumber, maxIterations, cfg.BatchSize, len(cfg.Personas))
 
 	cfg.AgentID = agentID
 	cfg.PromptOverrides = nil
@@ -317,26 +315,69 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 	}
 	controlScores := aggregateSimulationMeans(controlStats)
 	controlCompliance := aggregateComplianceRate(controlStats)
-
-	evidence := PromptGenerationEvidenceFromScores(agentID, current.VersionNumber, candidateVersion, controlStats)
-	candidatePrompt, inputTokens, outputTokens, modelUsed, err := generateCandidatePrompt(agentID, current.PromptText, evidence)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	log.Printf("[eval] candidate prompt generated agent=%s candidate_version=%d tokens_in=%d tokens_out=%d model=%s prompt_chars=%d evidence_chars=%d", agentID, candidateVersion, inputTokens, outputTokens, modelUsed, len(candidatePrompt), len(evidence))
-
-	treatmentCfg := cfg
-	treatmentCfg.PromptOverrides = map[models.AgentID]PromptOverride{
-		agentID: {VersionNumber: candidateVersion, PromptText: candidatePrompt},
-	}
-	_, treatmentStats, err := RunSimulationScored(treatmentCfg, cfg.Judges)
-	if err != nil {
+	judgeRunsSinceMeta := countJudgeRuns(controlStats)
+	if err := maybeRunMetaEvaluationByJudgeBudget(agentID, cfg, &judgeRunsSinceMeta, metaEvery); err != nil {
 		return nil, nil, nil, err
 	}
 
+	rejectedStats := []SimulationScore{}
+	var finalExp *models.PromptExperiment
+	var finalTreatment []SimulationScore
+	var finalErr error
+	for iteration := 1; iteration <= maxIterations; iteration++ {
+		if err := enforceRunBudget(cfg); err != nil {
+			return finalExp, controlStats, finalTreatment, err
+		}
+		candidateVersion, err := nextPromptVersion(agentID)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		log.Printf("[eval] experiment iteration start agent=%s iteration=%d/%d candidate_version=%d", agentID, iteration, maxIterations, candidateVersion)
+		evidence := PromptGenerationEvidenceWithHistory(agentID, current.VersionNumber, candidateVersion, controlStats, rejectedStats)
+		candidatePrompt, inputTokens, outputTokens, modelUsed, err := generateCandidatePrompt(agentID, current.PromptText, evidence)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		log.Printf("[eval] candidate prompt generated agent=%s candidate_version=%d iteration=%d tokens_in=%d tokens_out=%d model=%s prompt_chars=%d evidence_chars=%d", agentID, candidateVersion, iteration, inputTokens, outputTokens, modelUsed, len(candidatePrompt), len(evidence))
+
+		treatmentCfg := cfg
+		treatmentCfg.PromptOverrides = map[models.AgentID]PromptOverride{
+			agentID: {VersionNumber: candidateVersion, PromptText: candidatePrompt},
+		}
+		treatmentCfg.PersonaGuidance = PersonaGuidanceFromScores(agentID, controlStats, rejectedStats)
+		_, treatmentStats, err := RunSimulationScored(treatmentCfg, cfg.Judges)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		judgeRunsSinceMeta += countJudgeRuns(treatmentStats)
+		if err := maybeRunMetaEvaluationByJudgeBudget(agentID, cfg, &judgeRunsSinceMeta, metaEvery); err != nil {
+			return nil, nil, nil, err
+		}
+
+		exp, err := buildAndSavePromptExperiment(agentID, current.VersionNumber, candidateVersion, controlScores, controlCompliance, controlStats, treatmentStats, candidatePrompt, modelUsed, inputTokens, outputTokens, cfg)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		finalExp = exp
+		finalTreatment = treatmentStats
+		log.Printf("[eval] experiment iteration done agent=%s experiment=%s iteration=%d delta=%.2f p=%.4f d=%.2f adopted=%t duration=%s",
+			agentID, exp.Id, iteration, exp.MeanDelta, exp.PValue, derefFloat(exp.CohensD), exp.Adopted, time.Since(start))
+		if exp.Adopted {
+			return exp, controlStats, treatmentStats, nil
+		}
+		rejectedStats = append(rejectedStats, treatmentStats...)
+		finalErr = fmt.Errorf("candidate rejected after iteration %d/%d: %s", iteration, maxIterations, derefString(exp.RejectionReason))
+	}
+	if finalExp == nil {
+		return nil, controlStats, nil, finalErr
+	}
+	log.Printf("[eval] experiment loop exhausted agent=%s final_experiment=%s adopted=%t err=%v duration=%s", agentID, finalExp.Id, finalExp.Adopted, finalErr, time.Since(start))
+	return finalExp, controlStats, finalTreatment, nil
+}
+
+func buildAndSavePromptExperiment(agentID models.AgentID, controlVersion int, candidateVersion int, controlScores []float64, controlCompliance float64, controlStats []SimulationScore, treatmentStats []SimulationScore, candidatePrompt string, modelUsed string, inputTokens int, outputTokens int, cfg SimConfig) (*models.PromptExperiment, error) {
 	treatmentScores := aggregateSimulationMeans(treatmentStats)
 	treatmentCompliance := aggregateComplianceRate(treatmentStats)
-
 	slCfg := constants.DefaultSelfLearningConfig()
 	pValue := WelchTTest(controlScores, treatmentScores)
 	delta := Mean(treatmentScores) - Mean(controlScores)
@@ -347,16 +388,11 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 		Stddev(treatmentScores) <= slCfg.AdoptionMaxStddev &&
 		treatmentCompliance >= slCfg.MinComplianceRate &&
 		treatmentCompliance >= controlCompliance
-	if cfg.ProofMode {
-		adopt = proofImprovementSignal(controlStats, treatmentStats)
-		isSignificant = adopt
-	}
 	rejection := rejectionReason(adopt, pValue, delta, effectSize, controlCompliance, treatmentCompliance)
-
 	exp := &models.PromptExperiment{
 		Id:                      utils.GenerateID(),
 		AgentId:                 agentID,
-		ControlVersion:          current.VersionNumber,
+		ControlVersion:          controlVersion,
 		CandidateVersion:        candidateVersion,
 		ControlN:                len(controlScores),
 		ControlMean:             Mean(controlScores),
@@ -379,23 +415,39 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 		ExperimentCostUsd:       floatPtr(0),
 		CreatedAt:               time.Now().UTC(),
 	}
-
 	expOrm := orm.Load(&models.PromptExperiment{})
 	defer expOrm.Close()
 	if err := expOrm.Insert(exp); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	if err := saveCandidatePrompt(agentID, candidateVersion, candidatePrompt, adopt, exp); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	if err := collections.LogCost("prompt_generation", &agentID, modelUsed, inputTokens, outputTokens, nil, &exp.Id); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
+	return exp, nil
+}
 
-	log.Printf("[eval] experiment done agent=%s experiment=%s delta=%.2f p=%.4f d=%.2f adopted=%t duration=%s",
-		agentID, exp.Id, exp.MeanDelta, exp.PValue, derefFloat(exp.CohensD), exp.Adopted, time.Since(start))
+func countJudgeRuns(stats []SimulationScore) int {
+	total := 0
+	for _, score := range stats {
+		total += len(score.JudgeResults)
+	}
+	return total
+}
 
-	return exp, controlStats, treatmentStats, nil
+func maybeRunMetaEvaluationByJudgeBudget(agentID models.AgentID, cfg SimConfig, judgeRunsSinceMeta *int, threshold int) error {
+	if threshold <= 0 || judgeRunsSinceMeta == nil || *judgeRunsSinceMeta < threshold {
+		return nil
+	}
+	log.Printf("[eval] meta evaluation triggered agent=%s judge_runs_since_meta=%d threshold=%d", agentID, *judgeRunsSinceMeta, threshold)
+	_, err := RunMetaEvaluation(agentID)
+	if err != nil {
+		return err
+	}
+	*judgeRunsSinceMeta = 0
+	return nil
 }
 
 func experimentDecision(exp *models.PromptExperiment) string {
@@ -408,38 +460,6 @@ func experimentDecision(exp *models.PromptExperiment) string {
 		reason = *exp.RejectionReason
 	}
 	return fmt.Sprintf("REJECTED: v%d kept (%s)", exp.ControlVersion, reason)
-}
-
-func proofImprovementSignal(controlStats, treatmentStats []SimulationScore) bool {
-	if len(treatmentStats) == 0 {
-		return false
-	}
-	if len(controlStats) == 0 {
-		return Mean(aggregateSimulationMeans(treatmentStats)) > 0 || meanJudgeComposite(treatmentStats) > 0
-	}
-	controlMean := Mean(aggregateSimulationMeans(controlStats))
-	treatmentMean := Mean(aggregateSimulationMeans(treatmentStats))
-	if treatmentMean > controlMean+0.5 {
-		return true
-	}
-	controlCompliance := aggregateComplianceRate(controlStats)
-	treatmentCompliance := aggregateComplianceRate(treatmentStats)
-	if treatmentCompliance > controlCompliance {
-		return true
-	}
-	controlJudgeMean := meanJudgeComposite(controlStats)
-	treatmentJudgeMean := meanJudgeComposite(treatmentStats)
-	return treatmentJudgeMean > controlJudgeMean+5 && treatmentCompliance >= controlCompliance
-}
-
-func meanJudgeComposite(stats []SimulationScore) float64 {
-	values := []float64{}
-	for _, score := range stats {
-		for _, judge := range score.JudgeResults {
-			values = append(values, judge.Metrics.CompositeScore)
-		}
-	}
-	return Mean(values)
 }
 
 func groupByPersona(scores []SimulationScore) map[models.Persona]PersonaStats {

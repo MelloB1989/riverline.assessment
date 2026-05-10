@@ -46,3 +46,7 @@ export async function sendChatMessageAction(workflowId: string, message: string)
     body: JSON.stringify({ message }),
   });
 }
+
+export async function loadDeltaHandoffAction(workflowId: string) {
+  return backendJson(`/api/v1/workflows/${workflowId}/delta-handoff`);
+}

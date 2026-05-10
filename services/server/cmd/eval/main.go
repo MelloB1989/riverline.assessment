@@ -27,11 +27,11 @@ func main() {
 	agent := flag.String("agent", "all", "aria, nova, delta, or all")
 	personaList := flag.String("personas", "all", "comma-separated personas or all")
 	maxTurns := flag.Int("max-turns", 6, "maximum simulated turns per agent stage")
+	maxPromptIterations := flag.Int("max-prompt-iterations", 3, "maximum prompt generate/evaluate iterations per agent before keeping the old prompt")
+	metaEvalEveryJudgeRuns := flag.Int("meta-eval-every-judge-runs", 6, "run meta-evaluation after this many LLM judge calls during the learning loop")
 	maxCost := flag.Float64("max-cost", 15, "maximum incremental LLM spend in USD for this run")
 	output := flag.String("output", "./eval-artifacts", "output directory for reproducible raw JSON artifacts")
 	resetDB := flag.Bool("reset-db", false, "truncate Riverline application tables before seeding defaults")
-	lowQualitySeeds := flag.Bool("low-quality-seeds", false, "seed deliberately weak active agent/evaluator prompts for proof runs")
-	proofMode := flag.Bool("proof-mode", false, "use small-sample proof adoption gates and include proof metadata")
 	flag.Parse()
 
 	if *resetDB {
@@ -42,11 +42,6 @@ func main() {
 	if err := collections.EnsureDefaults(); err != nil {
 		log.Fatal(err)
 	}
-	if *lowQualitySeeds {
-		if err := rivereval.SeedLowQualityProofData(); err != nil {
-			log.Fatal(err)
-		}
-	}
 
 	agents := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
 	if *agent != "all" {
@@ -55,13 +50,14 @@ func main() {
 	personas := parsePersonas(*personaList)
 
 	cfg := rivereval.FullCycleConfig{
-		Seed:             *seed,
-		BatchSize:        *batchSize,
-		Agents:           agents,
-		Personas:         personas,
-		MaxCostUSD:       *maxCost,
-		ProofMode:        *proofMode,
-		MaxTurnsPerAgent: *maxTurns,
+		Seed:                   *seed,
+		BatchSize:              *batchSize,
+		Agents:                 agents,
+		Personas:               personas,
+		MaxCostUSD:             *maxCost,
+		MaxTurnsPerAgent:       *maxTurns,
+		MaxPromptIterations:    *maxPromptIterations,
+		MetaEvalEveryJudgeRuns: *metaEvalEveryJudgeRuns,
 	}
 
 	printHeader("RIVERLINE SELF-LEARNING EVALUATION CYCLE")
@@ -142,8 +138,14 @@ func printConfig(cfg rivereval.FullCycleConfig) {
 	fmt.Printf("  Max Cost:    $%.2f incremental\n", cfg.MaxCostUSD)
 	fmt.Printf("  Agents:      %v\n", cfg.Agents)
 	fmt.Printf("  Personas:    %v\n", cfg.Personas)
-	totalSims := cfg.BatchSize * len(cfg.Personas) * 2 * len(cfg.Agents)
-	fmt.Printf("  Total Sims:  ~%d (control + treatment per agent)\n", totalSims)
+	iterations := cfg.MaxPromptIterations
+	if iterations <= 0 {
+		iterations = 3
+	}
+	totalSims := cfg.BatchSize * len(cfg.Personas) * (1 + iterations) * len(cfg.Agents)
+	fmt.Printf("  Iterations:  %d prompt attempts per agent\n", iterations)
+	fmt.Printf("  Meta Eval:   every %d judge calls\n", cfg.MetaEvalEveryJudgeRuns)
+	fmt.Printf("  Total Sims:  up to ~%d (control + iterative treatments)\n", totalSims)
 }
 
 func printReport(report *rivereval.FullCycleReport) {
@@ -481,34 +483,32 @@ func writeLearningProof(path string, report *rivereval.FullCycleReport) error {
 		controlPrompt := promptVersionText(report.PromptHistory, ar.AgentID, exp.ControlVersion)
 		candidatePrompt := promptVersionText(report.PromptHistory, ar.AgentID, exp.CandidateVersion)
 		agentProofs[ar.AgentID] = map[string]any{
-			"control_version":              exp.ControlVersion,
-			"candidate_version":            exp.CandidateVersion,
-			"adopted":                      exp.Adopted,
-			"decision":                     ar.Experiment.Decision,
-			"control_mean":                 exp.ControlMean,
-			"treatment_mean":               exp.TreatmentMean,
-			"mean_delta":                   exp.MeanDelta,
-			"control_compliance_rate":      exp.ControlComplianceRate,
-			"treatment_compliance_rate":    exp.TreatmentComplianceRate,
-			"control_scores":               exp.ControlScores,
-			"treatment_scores":             exp.TreatmentScores,
-			"control_by_judge":             ar.Experiment.ControlByJudge,
-			"treatment_by_judge":           ar.Experiment.TreatmentByJudge,
-			"control_prompt_chars":         len(controlPrompt),
-			"candidate_prompt_chars":       len(candidatePrompt),
-			"control_prompt_excerpt":       truncate(controlPrompt, 1200),
-			"candidate_prompt_excerpt":     truncate(candidatePrompt, 1200),
-			"control_prompt_full":          controlPrompt,
-			"candidate_prompt_full":        candidatePrompt,
-			"meta_flags":                   ar.MetaEval.Flags,
-			"canaries_passed":              ar.Canaries.Passed,
-			"canaries_failed":              ar.Canaries.Failed,
-			"small_sample_proof_mode_note": "When proof_mode is true, adoption is based on small-sample directional score/compliance/judge improvement, not the production p-value gate.",
+			"control_version":           exp.ControlVersion,
+			"candidate_version":         exp.CandidateVersion,
+			"adopted":                   exp.Adopted,
+			"decision":                  ar.Experiment.Decision,
+			"control_mean":              exp.ControlMean,
+			"treatment_mean":            exp.TreatmentMean,
+			"mean_delta":                exp.MeanDelta,
+			"control_compliance_rate":   exp.ControlComplianceRate,
+			"treatment_compliance_rate": exp.TreatmentComplianceRate,
+			"control_scores":            exp.ControlScores,
+			"treatment_scores":          exp.TreatmentScores,
+			"control_by_judge":          ar.Experiment.ControlByJudge,
+			"treatment_by_judge":        ar.Experiment.TreatmentByJudge,
+			"control_prompt_chars":      len(controlPrompt),
+			"candidate_prompt_chars":    len(candidatePrompt),
+			"control_prompt_excerpt":    truncate(controlPrompt, 1200),
+			"candidate_prompt_excerpt":  truncate(candidatePrompt, 1200),
+			"control_prompt_full":       controlPrompt,
+			"candidate_prompt_full":     candidatePrompt,
+			"meta_flags":                ar.MetaEval.Flags,
+			"canaries_passed":           ar.Canaries.Passed,
+			"canaries_failed":           ar.Canaries.Failed,
 		}
 	}
 	proof := map[string]any{
 		"repro_command":            strings.Join(os.Args, " "),
-		"proof_mode":               report.Config.ProofMode,
 		"prompt_generator":         constants.DefaultSelfLearningConfig().PromptGenerator,
 		"seed":                     report.Config.Seed,
 		"batch_size":               report.Config.BatchSize,

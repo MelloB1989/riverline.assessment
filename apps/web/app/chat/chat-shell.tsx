@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { UserButton } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
 import {
   Bot,
   CheckCircle2,
@@ -40,6 +41,14 @@ type ConversationView = {
     outcome?: string | null;
     final_offer_deadline?: string | null;
   };
+  offer?: {
+    status?: string;
+    vapi_call_id?: string | null;
+    scheduled_call_at?: string | null;
+    call_recording_url?: string | null;
+    offer_accepted?: boolean | null;
+    accepted_offer_type?: string | null;
+  } | null;
   messages?: AgentMessage[];
 };
 
@@ -75,11 +84,13 @@ const rails = [
 ];
 
 export default function ChatShell() {
+  const router = useRouter();
   const [workflowId, setWorkflowId] = React.useState("");
   const [messages, setMessages] = React.useState<AgentMessage[]>([]);
   const [input, setInput] = React.useState("");
   const [isLoading, setIsLoading] = React.useState(false);
   const [stage, setStage] = React.useState<"aria" | "nova" | "delta">("aria");
+  const [offer, setOffer] = React.useState<ConversationView["offer"]>(null);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const optimisticIdRef = React.useRef(0);
   const didStartRef = React.useRef(false);
@@ -90,6 +101,7 @@ export default function ChatShell() {
     const data = (await loadConversationAction(id)) as ConversationView | null;
     if (!data) return;
     setStage(data.workflow?.current_stage ?? "aria");
+    setOffer(data.offer ?? null);
     if (data.messages?.length) {
       setMessages(data.messages);
     }
@@ -149,6 +161,31 @@ export default function ChatShell() {
     },
     [activeChatAgent, input, isLoading, loadConversation, workflowId],
   );
+
+  const sendCallStatusMessage = React.useCallback(() => {
+    if (!workflowId || isLoading) return;
+    const details = [
+      `workflow stage ${stage.toUpperCase()}`,
+      offer?.status ? `offer status ${offer.status}` : "no offer status shown yet",
+      offer?.scheduled_call_at
+        ? `scheduled call at ${new Date(offer.scheduled_call_at).toLocaleString()}`
+        : "no scheduled call time shown",
+      offer?.vapi_call_id ? "a call has been created" : "no call id shown yet",
+      offer?.offer_accepted === true
+        ? "offer accepted"
+        : offer?.offer_accepted === false
+          ? "offer not accepted"
+          : "offer acceptance not recorded yet",
+    ].join("; ");
+    void sendMessage(
+      `I want to check the resolution call status. The portal currently shows: ${details}. Please explain the current call status and next step.`,
+    );
+  }, [isLoading, offer, sendMessage, stage, workflowId]);
+
+  const openDeltaHandoff = React.useCallback(() => {
+    if (!workflowId) return;
+    router.push(`/chat/handoff?workflowId=${encodeURIComponent(workflowId)}`);
+  }, [router, workflowId]);
 
   React.useEffect(() => {
     if (didStartRef.current) return;
@@ -211,17 +248,23 @@ export default function ChatShell() {
             Journey
           </p>
           {rails.map((thread, index) => (
-            <div
+            <button
               key={thread}
+              type="button"
+              disabled={(index === 1 || index === 2) && (!workflowId || isLoading)}
+              onClick={() => {
+                if (index === 1) sendCallStatusMessage();
+                if (index === 2) openDeltaHandoff();
+              }}
               className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm ${
                 index === (stage === "aria" ? 0 : stage === "nova" ? 1 : 2)
                   ? "bg-pink-400/12 text-pink-50"
                   : "text-zinc-400"
-              }`}
+              } ${index === 0 ? "cursor-default" : "transition hover:bg-pink-400/10 hover:text-pink-100 disabled:cursor-not-allowed disabled:opacity-50"}`}
             >
               {index === 1 ? <PhoneCall className="size-4" /> : <FileText className="size-4" />}
               <span className="truncate">{thread}</span>
-            </div>
+            </button>
           ))}
         </div>
 
@@ -334,6 +377,30 @@ export default function ChatShell() {
 
         <div className="shrink-0 border-t border-pink-300/10 bg-background/80 px-4 py-4 backdrop-blur-xl md:px-8">
           <div className="mx-auto max-w-4xl">
+            <div className="mb-3 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isLoading || !workflowId}
+                onClick={sendCallStatusMessage}
+                className="rounded-full border-pink-300/20 bg-white/[0.04] text-pink-100 hover:bg-pink-400/10 disabled:opacity-45"
+              >
+                <PhoneCall className="size-4" />
+                Call status
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!workflowId}
+                onClick={openDeltaHandoff}
+                className="rounded-full border-pink-300/20 bg-white/[0.04] text-pink-100 hover:bg-pink-400/10 disabled:opacity-45"
+              >
+                <FileText className="size-4" />
+                Delta handoff
+              </Button>
+            </div>
             <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
               {suggestions.map((suggestion) => (
                 <button

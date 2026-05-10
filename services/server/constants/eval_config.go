@@ -31,6 +31,8 @@ type SelfLearningConfig struct {
 	MinComplianceRate       float64                `json:"min_compliance_rate"`         //minimum compliance rate required for adoption.
 	MaxJudgeDisagreement    float64                `json:"max_judge_disagreement"`      //threshold used to flag excessive judge disagreement.
 	MetaEvaluationMinSample int                    `json:"meta_evaluation_min_sample"`  //minimum sample size before the meta-evaluator starts flagging issues.
+	MaxPromptIterations     int                    `json:"max_prompt_iterations"`       //maximum prompt generate/evaluate attempts per learning cycle.
+	MetaEvalEveryJudgeRuns  int                    `json:"meta_eval_every_judge_runs"`  //run meta-evaluator after this many LLM judge calls.
 }
 
 type ModelPricing struct {
@@ -60,6 +62,8 @@ func DefaultSelfLearningConfig() SelfLearningConfig {
 		MinComplianceRate:       1,
 		MaxJudgeDisagreement:    20,
 		MetaEvaluationMinSample: 5,
+		MaxPromptIterations:     3,
+		MetaEvalEveryJudgeRuns:  6,
 	}
 	raw := strings.TrimSpace(firstNonEmpty(cfg.EvaluatorJudges, os.Getenv("EVALUATOR_JUDGES_JSON")))
 	if raw != "" {
