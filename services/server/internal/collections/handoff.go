@@ -447,6 +447,11 @@ func applyNovaOffer(offer *models.ResolutionOffer, result NovaOfferResult) {
 	} else {
 		offer.CandidateOffer = map[string]any{}
 	}
+	offer.LumpSumOffered = result.LumpSumOffered
+	offer.LumpSumDiscountPct = result.LumpSumDiscountPct
+	offer.EmiAmount = result.EmiAmount
+	offer.EmiMonths = result.EmiMonths
+	offer.HardshipOffered = result.HardshipOffered
 	if result.LumpSumOffered != nil {
 		offer.CandidateOffer["lump_sum_offered"] = *result.LumpSumOffered
 	}
@@ -462,11 +467,12 @@ func applyNovaOffer(offer *models.ResolutionOffer, result NovaOfferResult) {
 	if result.HardshipOffered != nil {
 		offer.CandidateOffer["hardship_offered"] = *result.HardshipOffered
 	}
-	offer.LumpSumOffered = result.LumpSumOffered
-	offer.LumpSumDiscountPct = result.LumpSumDiscountPct
-	offer.EmiAmount = result.EmiAmount
-	offer.EmiMonths = result.EmiMonths
-	offer.HardshipOffered = result.HardshipOffered
+	if len(offer.CandidateOffer) == 0 {
+		offer.CandidateOffer["status"] = "hardship_review_pending"
+		hardship := true
+		offer.HardshipOffered = &hardship
+		offer.CandidateOffer["hardship_offered"] = true
+	}
 }
 
 func applyNovaCallHandoff(wf *models.BorrowerWorkflow, offer *models.ResolutionOffer, result NovaCallHandoffResult) {

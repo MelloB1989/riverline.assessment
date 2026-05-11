@@ -15,7 +15,12 @@ import {
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
-export const agentIdEnum = pgEnum("agent_id", ["aria", "nova", "delta"]);
+export const agentIdEnum = pgEnum("agent_id", [
+  "aria",
+  "nova",
+  "delta",
+  "system",
+]);
 
 export const borrowerStatusEnum = pgEnum("borrower_status", [
   "pending",

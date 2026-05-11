@@ -1,4 +1,0 @@
-id,agent_id,control_version,candidate_version,control_n,control_mean,control_stddev,control_compliance_rate,treatment_n,treatment_mean,treatment_stddev,treatment_compliance_rate,mean_delta,p_value,cohens_d,is_significant,adopted,rejection_reason,experiment_cost_usd,created_at
-319rw25j-e,aria,1,2,2,30.00,0.00,0.0000,2,30.00,0.00,0.0000,0.00,1.000000,0.000000,false,false,candidate rejected: delta=0.00 p=1.0000 d=0.00 compliance 0.00->0.00 did not clear adoption gates,0.000000,2026-05-09T08:32:16Z
-tf_bgrqz7w,aria,1,3,2,30.00,0.00,0.0000,2,30.00,0.00,0.0000,0.00,1.000000,0.000000,false,false,candidate rejected: delta=0.00 p=1.0000 d=0.00 compliance 0.00->0.00 did not clear adoption gates,0.000000,2026-05-09T14:58:41Z
-dqnnibtcej,aria,1,4,2,30.00,0.00,0.0000,1,30.00,0.00,0.0000,0.00,1.000000,0.000000,false,false,candidate rejected: delta=0.00 p=1.0000 d=0.00 compliance 0.00->0.00 did not clear adoption gates,0.000000,2026-05-09T15:24:02Z

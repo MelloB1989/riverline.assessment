@@ -134,11 +134,10 @@ func ConverseForStage(client *agents.Client, wf models.BorrowerWorkflow, chatAge
 					log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
 					return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"Ask the borrower for a specific preferred NOVA callback time, then call this tool again with an ISO-8601 timestamp including timezone. Simulation workflows still continue to NOVA for evaluation, so do not use not_applicable."}`, errText), nil
 				}
-				if scheduledAt.Before(now.Add(-1 * time.Minute)) {
-					errText := fmt.Sprintf("preferred_nova_call_at must be in the future: got %s", scheduledAt.Format(time.RFC3339))
-					handoffRecoverableFailures++
-					log.Printf("[collections] aria tool recoverable workflow=%s tool=%s duration=%s err=%s", wf.Id, agents.ToolCreateAriaHandoff, time.Since(start), errText)
-					return fmt.Sprintf(`{"handoff_generated":false,"recoverable_error":%q,"instruction":"The callback time is in the past. Ask the borrower for a future callback time, then call this tool again with an ISO-8601 timestamp including timezone."}`, errText), nil
+				minTime := now.Add(2 * time.Minute)
+				if scheduledAt.Before(minTime) {
+					scheduledAt = minTime
+					preferredCallAt = scheduledAt.Format(time.RFC3339)
 				}
 			}
 			results.AriaHandoff = &HandoffCall[AriaHandoffResult]{

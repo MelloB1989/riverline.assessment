@@ -1,0 +1,1 @@
+ALTER TYPE "agent_id" ADD VALUE 'system';

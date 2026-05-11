@@ -1,5 +1,0 @@
-id,agent_id,control_version,candidate_version,control_n,control_mean,control_stddev,control_compliance_rate,treatment_n,treatment_mean,treatment_stddev,treatment_compliance_rate,mean_delta,p_value,cohens_d,is_significant,adopted,rejection_reason,experiment_cost_usd,created_at
-n6t7l_m5z1,aria,2,3,3,30.00,0.00,0.0000,2,30.00,0.00,0.0000,0.00,1.000000,0.000000,true,true,,0.000000,2026-05-09T17:41:51Z
-cmf4uw9osw,nova,2,3,3,28.25,3.03,0.0000,1,30.00,0.00,0.0000,1.75,1.000000,0.000000,true,true,,0.000000,2026-05-09T17:50:43Z
-djqwivfqet,delta,2,3,3,28.58,2.45,0.0000,2,30.00,0.00,0.0000,1.42,0.317310,0.816497,true,true,,0.000000,2026-05-09T17:59:00Z
-5tqbhk0p9l,aria,3,4,1,30.00,0.00,0.0000,1,30.00,0.00,0.0000,0.00,1.000000,0.000000,false,false,candidate rejected: delta=0.00 p=1.0000 d=0.00 compliance 0.00->0.00 did not clear adoption gates,0.000000,2026-05-09T18:05:41Z

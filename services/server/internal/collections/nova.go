@@ -35,6 +35,9 @@ func PrepareNOVAWithClient(workflowID string, client *agents.Client) (*models.Re
 	if len(existing) == 0 || existing[0].ScheduledCallAt == nil {
 		return nil, errors.New("resolution offer schedule missing before NOVA preparation")
 	}
+	if len(existing[0].CandidateOffer) > 0 && wf.ContextForNova != nil && *wf.ContextForNova != "" {
+		return &existing[0], nil
+	}
 	handoff, err := GenerateNovaOfferWithClient(client, *wf)
 	if err != nil {
 		return nil, err
@@ -84,8 +87,9 @@ func SetNovaScheduledCall(workflowID string, scheduledAt time.Time, reason strin
 		return errors.New("scheduled call time is required")
 	}
 	now := time.Now().UTC()
-	if scheduledAt.Before(now.Add(-1 * time.Minute)) {
-		return fmt.Errorf("scheduled call time %s is in the past", scheduledAt.Format(time.RFC3339))
+	minTime := now.Add(2 * time.Minute)
+	if scheduledAt.Before(minTime) {
+		scheduledAt = minTime
 	}
 	offer, err := firstOffer(workflowID)
 	insert := false

@@ -58,7 +58,7 @@ func New(apiKey, baseURL, phoneNumberID, assistantID string, dryRun bool) *Clien
 }
 
 func (c *Client) StartCall(ctx context.Context, phone string, context HandoffContext) (string, error) {
-	if c.DryRun || c.APIKey == "" || phone == "" || isReservedTestPhone(phone) {
+	if c.DryRun || c.APIKey == "" || phone == "" {
 		return "mock-vapi-" + time.Now().UTC().Format("20060102150405"), nil
 	}
 	customer := map[string]any{"number": phone}
@@ -94,11 +94,6 @@ func (c *Client) StartCall(ctx context.Context, phone string, context HandoffCon
 		return id, nil
 	}
 	return "", fmt.Errorf("vapi response missing id")
-}
-
-func isReservedTestPhone(phone string) bool {
-	compact := strings.ReplaceAll(strings.TrimSpace(phone), " ", "")
-	return strings.HasPrefix(compact, "+1555555")
 }
 
 func (c *Client) GetTranscript(ctx context.Context, callID string) (string, error) {
