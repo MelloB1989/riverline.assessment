@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Activity,
   DatabaseZap,
+  Download,
   Loader2,
   MessageSquareText,
   RefreshCcw,
@@ -17,6 +18,8 @@ import {
   runAdminFullCycleAction,
   runAdminPromptExperimentAction,
   runAdminMetaEvaluationAction,
+  exportAdminScoresAction,
+  exportAdminExperimentsAction,
   type AdminConversationPreview,
   type AdminEvalProgress,
 } from "./actions";
@@ -207,6 +210,60 @@ export default function RunEvalButton() {
             {isStartingMetaEval ? <Loader2 className="size-4 animate-spin" /> : <ShieldAlert className="size-4" />}
             {isStartingMetaEval ? "Running..." : "Run meta evaluator"}
           </Button>
+          <div className="flex gap-2 border-l border-white/10 pl-2 ml-2">
+            <Button
+              type="button"
+              onClick={async () => {
+                setStatus("Exporting conversation scores...");
+                const csv = await exportAdminScoresAction();
+                if (!csv) {
+                  setStatus("Export failed.");
+                  return;
+                }
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "conversation_scores.csv";
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                setStatus("Export complete.");
+              }}
+              variant="outline"
+              className="rounded-full border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+            >
+              <Download className="size-4" />
+              Scores CSV
+            </Button>
+            <Button
+              type="button"
+              onClick={async () => {
+                setStatus("Exporting prompt experiments...");
+                const csv = await exportAdminExperimentsAction();
+                if (!csv) {
+                  setStatus("Export failed.");
+                  return;
+                }
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "prompt_experiments.csv";
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                setStatus("Export complete.");
+              }}
+              variant="outline"
+              className="rounded-full border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+            >
+              <Download className="size-4" />
+              Experiments CSV
+            </Button>
+          </div>
         </div>
       </div>
 

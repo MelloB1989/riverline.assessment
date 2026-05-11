@@ -45,6 +45,24 @@ export async function loadAdminMetaAction() {
   return backendJson<AdminEvalMeta>("/api/v1/admin/eval/meta");
 }
 
+export async function exportAdminScoresAction() {
+  const res = await fetch(`${apiBase}/api/v1/admin/eval/export/scores`, {
+    headers: await backendHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return await res.text();
+}
+
+export async function exportAdminExperimentsAction() {
+  const res = await fetch(`${apiBase}/api/v1/admin/eval/export/experiments`, {
+    headers: await backendHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return await res.text();
+}
+
 export async function runAdminFullCycleAction() {
   const result = await backendJson<AdminEvalStartResult>("/api/v1/admin/eval/full-cycle/start", {
     method: "POST",
