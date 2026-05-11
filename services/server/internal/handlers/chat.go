@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -371,14 +372,18 @@ func AdminRunPromptExperiment(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	if req.AgentID == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "agent_id is required")
+
+	// Run prompt experiments for all 3 agents
+	agents := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
+	if req.AgentID != "" {
+		// If a specific agent is requested, only run for that one
+		agents = []models.AgentID{req.AgentID}
 	}
+
 	cfg := rivereval.SimConfig{
 		Seed:             req.Seed,
 		BatchSize:        req.BatchSize,
 		Personas:         req.Personas,
-		AgentID:          req.AgentID,
 		MaxTurnsPerAgent: req.MaxTurnsPerAgent,
 		Judges:           req.Judges,
 	}
@@ -397,13 +402,19 @@ func AdminRunPromptExperiment(c *fiber.Ctx) error {
 	adminEvalRuns.latest = run.ID
 	adminEvalRuns.Unlock()
 
-	go func(runID string, agentID models.AgentID, simCfg rivereval.SimConfig) {
-		if _, err := rivereval.RunImprovementCycle(agentID, simCfg); err != nil {
-			markAdminEvalRunFailed(runID, err)
-			return
+	go func(runID string, targetAgents []models.AgentID, simCfg rivereval.SimConfig) {
+		for _, agentID := range targetAgents {
+			simCfg.AgentID = agentID
+			log.Printf("[eval] prompt experiment start agent=%s", agentID)
+			if _, err := rivereval.RunImprovementCycle(agentID, simCfg); err != nil {
+				log.Printf("[eval] prompt experiment failed agent=%s err=%v", agentID, err)
+				markAdminEvalRunFailed(runID, err)
+				return
+			}
+			log.Printf("[eval] prompt experiment done agent=%s", agentID)
 		}
 		markAdminEvalRunCompleted(runID)
-	}(run.ID, req.AgentID, cfg)
+	}(run.ID, agents, cfg)
 
 	return c.JSON(fiber.Map{"run_id": run.ID, "existing": false, "run": adminEvalRunToSnapshot(run)})
 }

@@ -67,7 +67,6 @@ export async function runAdminPromptExperimentAction() {
   const result = await backendJson<AdminEvalStartResult>("/api/v1/admin/prompt-experiments", {
     method: "POST",
     body: JSON.stringify({
-      agent_id: "aria",
       seed: 42,
       batch_size: 1,
       personas: ["cooperative", "combative", "evasive", "distressed", "confused"],

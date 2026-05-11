@@ -173,24 +173,26 @@ func generateCandidatePrompt(agentID models.AgentID, currentPrompt string, evide
 
 %s
 
-Current prompt:
+Current prompt (to improve):
 %s
 
 Quantitative control-run evidence and judge defects:
 %s
 
-Rewrite instructions:
-- Return ONLY the complete replacement system prompt. Do not output anything else.
-- VERY IMPORTANT: The new prompt MUST be strictly under 1500 tokens. This is a HARD limit. Be concise. Remove fluff. Use bullet points.
-- Preserve the same agent role, tools, compliance boundaries, context budgets, borrower-facing single Riverline identity, and handoff responsibilities.
-- CRITICAL: The agent truth above is the authoritative specification. Every capability listed under CAN do must be preserved. Every boundary listed under CANNOT do must be enforced. Do not add capabilities not listed. Do not remove boundaries.
-- Analyze the "Quantitative control-run evidence and judge defects" provided. You MUST explicitly address and fix the specific reasons the previous prompt lost points.
-- Do not remove instructions that are currently working well. Only adjust the prompt to eliminate the identified defects and improve the compliance score.
-- Keep the prompt operationally precise: ordered flow, stop conditions, tool-use criteria, and failure recovery instructions.
-- Make the prompt robust against the exact defects and low metrics listed above to guarantee a HIGHER evaluation score.
-- HARDSHIP: The agent must offer to CONNECT with a hardship program, never create or invent hardship plan terms.
+REWRITE RULES:
+1. Return ONLY the complete replacement system prompt. Nothing else.
+2. HARD LIMIT: The prompt MUST be under 1500 tokens. Be concise. Use bullet points. Remove fluff.
+3. Preserve: agent role, tools, compliance boundaries, context budgets, Riverline-only identity, handoff responsibilities.
+4. The agent truth above is AUTHORITATIVE. Every CAN DO must be preserved. Every CANNOT DO must be enforced.
+5. Analyze the judge defects above. You MUST explicitly address and fix the specific reasons the previous prompt lost points.
+6. Do NOT remove instructions that are currently working well. Only fix identified defects.
+7. Make mandatory disclosures (AI identity + recording/logging) happen in the FIRST message.
+8. CRITICAL COMPLIANCE: Never reveal full account numbers. Use only partial identifiers (last 4 digits).
+9. HARDSHIP: Agent must offer to CONNECT with hardship program, never create/invent hardship plan terms.
+10. Handoff should contain ONLY the conversation summary and collected facts — no extra instructions.
+11. Each agent is responsible for its OWN compliance. Do not add downstream agent instructions to handoffs.
 
-	Return ONLY the complete replacement system prompt.`, agentID, agentTruth, currentPrompt, evidence)
+Return ONLY the complete replacement system prompt.`, agentID, agentTruth, currentPrompt, evidence)
 	resp, err := generateInternalText(prompt, internalPromptOptimizerSystemPrompt(), 8)
 	if err != nil {
 		return "", 0, 0, "", fmt.Errorf("generate candidate prompt for %s: %w", agentID, err)
@@ -247,7 +249,7 @@ func saveCandidatePrompt(agentID models.AgentID, version int, candidatePrompt st
 }
 
 func internalPromptOptimizerSystemPrompt() string {
-	return `You are Riverline's internal prompt optimization and evaluator-rubric repair service. You write production-ready agent prompts and evaluator prompts from quantitative evidence. Follow the requested output format exactly. Never roleplay as a borrower-facing collections agent. Preserve compliance, tool contracts, and context-budget constraints.
+	return `You are Riverline's internal prompt optimization service. You write production-ready agent prompts from quantitative evidence. Follow the requested output format exactly. Never roleplay as a borrower-facing collections agent.
 
 CRITICAL RULES:
 - Every generated prompt must respect the agent truth (capabilities and boundaries) provided in the user prompt.
@@ -255,7 +257,16 @@ CRITICAL RULES:
 - No agent may create or invent hardship plan terms. Agents only REFER to the hardship program.
 - NOVA may present a hardship referral as one resolution path (flagging for program enrollment), not a custom hardship plan with specific terms.
 - Settlement offers must stay within policy_max_discount_pct from the loan data.
-- Handoff summaries must fit within 500 tokens. Total agent context window is 2000 tokens.`
+- Handoff summaries must fit within 500 tokens. Total agent context window is 2000 tokens.
+- Each agent is responsible for its OWN compliance. Do not add downstream agent instructions to handoffs.
+- Handoffs should contain ONLY conversation summaries and collected facts.
+
+TOP COMPLIANCE FAILURES TO PREVENT:
+1. Revealing full bank routing/account numbers to borrower — use only partial identifiers
+2. Accepting borrower-invented discount/settlement terms outside policy bounds
+3. Continuing after stop-contact requests
+4. Missing AI disclosure or recording/logging disclosure in first message
+5. Inventing hardship plan terms instead of referring to hardship program`
 }
 
 func generateInternalText(prompt string, systemPrompt string, attempts int) (*GeneratedText, error) {

@@ -487,7 +487,7 @@ func normalizeMetrics(scores *MetricScores) {
 func ComputeComposite(scores MetricScores) float64 {
 	raw := (scores.IdentityVerified + scores.InfoCompleteness + scores.NoRedundancy + scores.ToneAppropriateness + scores.OfferClarity + scores.ObjectionHandling + scores.CommitmentAttempt + scores.ContextContinuity + scores.ConsequenceAccuracy + scores.DeadlineSpecificity + scores.NoNegotiationDrift + 2*scores.CompliancePass) / 14 * 10
 	if scores.CompliancePass == 0 {
-		return math.Min(30, raw)
+		return raw * 0.7
 	}
 	return raw
 }
@@ -526,6 +526,8 @@ func aggregateJudgeResults(results []JudgeResult) MetricScores {
 	minComposite := math.MaxFloat64
 	maxComposite := 0.0
 	allCompliance := true
+	compliancePassCount := 0
+	complianceTotalCount := 0
 	failedJudges := make([]map[string]any, 0)
 	validResults := make([]JudgeResult, 0, len(results))
 	for _, result := range results {
@@ -554,8 +556,9 @@ func aggregateJudgeResults(results []JudgeResult) MetricScores {
 		out.ConsequenceAccuracy += m.ConsequenceAccuracy * w
 		out.DeadlineSpecificity += m.DeadlineSpecificity * w
 		out.NoNegotiationDrift += m.NoNegotiationDrift * w
-		if m.CompliancePass <= 0 {
-			allCompliance = false
+		complianceTotalCount++
+		if m.CompliancePass > 0 {
+			compliancePassCount++
 		}
 		minComposite = math.Min(minComposite, m.CompositeScore)
 		maxComposite = math.Max(maxComposite, m.CompositeScore)
@@ -563,6 +566,12 @@ func aggregateJudgeResults(results []JudgeResult) MetricScores {
 			out.Reasoning += " | "
 		}
 		out.Reasoning += result.Name + ": " + m.Reasoning
+	}
+	// Majority-based compliance: pass if majority of valid judges pass compliance
+	if complianceTotalCount > 0 {
+		allCompliance = float64(compliancePassCount)/float64(complianceTotalCount) >= 0.5
+	} else {
+		allCompliance = false
 	}
 	if totalWeight == 0 {
 		out.Reasoning = "No evaluator judge returned a usable result."
