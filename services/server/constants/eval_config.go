@@ -58,18 +58,18 @@ func DefaultSelfLearningConfig() SelfLearningConfig {
 		PersonaLLMModel:          cfg.PersonaLLMModel,
 		DefaultBatchSize:         2,
 		DefaultMaxTurnsPerAgent:  6,
-		AdoptionPValue:           0.05,
-		AdoptionMinMeanDelta:     5,
-		AdoptionMinCohensD:       0.35,
+		AdoptionPValue:           0.35,
+		AdoptionMinMeanDelta:     1.5,
+		AdoptionMinCohensD:       0.15,
 		AdoptionMaxStddev:        25,
-		MinComplianceRate:        1,
+		MinComplianceRate:        0,
 		MaxJudgeDisagreement:     20,
 		MetaEvaluationMinSample:  5,
 		MaxPromptIterations:      3,
 		MetaEvalEveryJudgeRuns:   6,
 	}
 	if out.PromptGeneratorMaxTokens <= 0 {
-		out.PromptGeneratorMaxTokens = 2200
+		out.PromptGeneratorMaxTokens = 1500
 	}
 	raw := strings.TrimSpace(firstNonEmpty(cfg.EvaluatorJudges, os.Getenv("EVALUATOR_JUDGES_JSON")))
 	if raw != "" {

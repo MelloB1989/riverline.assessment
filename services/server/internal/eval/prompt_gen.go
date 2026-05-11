@@ -196,9 +196,6 @@ Rewrite instructions:
 		return "", 0, 0, "", fmt.Errorf("generate candidate prompt for %s: %w", agentID, err)
 	}
 	candidate := strings.TrimSpace(resp.Text)
-	if len(candidate) < int(float64(len(strings.TrimSpace(currentPrompt)))*0.75) {
-		candidate = strings.TrimSpace(currentPrompt) + "\n\n[Self-Learning Revision Based On Control-Run Evidence]\n" + candidate
-	}
 	return candidate, resp.InputTokens, resp.OutputTokens, resp.ModelUsed, nil
 }
 
@@ -269,7 +266,7 @@ func generateInternalText(prompt string, systemPrompt string, attempts int) (*Ge
 	cfg := slCfg.PromptGenerator
 	maxTokens := slCfg.PromptGeneratorMaxTokens
 	if maxTokens <= 0 {
-		maxTokens = 2200
+		maxTokens = 1500
 	}
 	modelCfg := ai.ModelConfig{BaseModel: ai.BaseModel(cfg.Model), Provider: ai.Provider(cfg.Provider)}
 	options := []ai.Option{
@@ -278,7 +275,8 @@ func generateInternalText(prompt string, systemPrompt string, attempts int) (*Ge
 		ai.WithTemperature(cfg.Temperature),
 	}
 	reasoningAttached := false
-	if maxTokens >= 4000 {
+	effortNone := strings.ToLower(strings.TrimSpace(cfg.ReasoningEffort)) == "none"
+	if !effortNone && maxTokens >= 4000 {
 		if effort, ok := reasoningEffort(cfg.Provider, cfg.ReasoningEffort); ok {
 			reasoningAttached = true
 			options = append(options, ai.WithReasoningEffort(effort))

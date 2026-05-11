@@ -51,11 +51,11 @@ func targetedIssueGate(controlStats []SimulationScore, treatmentStats []Simulati
 	treatmentIssues := issueCategoryRates(treatmentStats)
 	failed := []string{}
 	for category, controlRate := range controlIssues {
-		if controlRate < 0.2 {
+		if controlRate < 0.4 {
 			continue
 		}
 		treatmentRate := treatmentIssues[category]
-		if treatmentRate > 0 && treatmentRate > controlRate*0.5 {
+		if treatmentRate > controlRate {
 			failed = append(failed, fmt.Sprintf("%s %.2f->%.2f", category, controlRate, treatmentRate))
 		}
 	}

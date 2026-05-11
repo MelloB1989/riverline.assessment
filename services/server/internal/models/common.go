@@ -41,10 +41,10 @@ type AppConfig struct {
 	PersonaLLMApiKey         string  `env:"PERSONA_LLM_API_KEY" optional:"true" default:""`
 	PersonaLLMModel          string  `env:"PERSONA_LLM_MODEL" optional:"true" default:"claude-3-5-haiku-20241022"`
 	EvaluatorJudges          string  `env:"EVALUATOR_JUDGES_JSON" optional:"true" default:""`
-	PromptGenProvider        string  `env:"PROMPT_GENERATOR_PROVIDER" optional:"true" default:"groq"`
-	PromptGenModel           string  `env:"PROMPT_GENERATOR_MODEL" optional:"true" default:"gpt-oss-120b"`
-	PromptGenMaxTokens       int     `env:"PROMPT_GENERATOR_MAX_TOKENS" optional:"true" default:"4000"`
-	PromptGenReasoningEffort string  `env:"PROMPT_GENERATOR_REASONING_EFFORT" optional:"true" default:""`
+	PromptGenProvider        string  `env:"PROMPT_GENERATOR_PROVIDER" optional:"true" default:"xai"`
+	PromptGenModel           string  `env:"PROMPT_GENERATOR_MODEL" optional:"true" default:"grok-4-fast-reasoning"`
+	PromptGenMaxTokens       int     `env:"PROMPT_GENERATOR_MAX_TOKENS" optional:"true" default:"1500"`
+	PromptGenReasoningEffort string  `env:"PROMPT_GENERATOR_REASONING_EFFORT" optional:"true" default:"none"`
 	LearningLoopBudgetUSD    float64 `env:"LEARNING_LOOP_BUDGET_USD" optional:"true" default:"15"`
 	NvidiaNIMRPM             int     `env:"NVIDIA_NIM_REQUESTS_PER_MINUTE" optional:"true" default:"35"`
 	LlmPricing               string  `env:"LLM_PRICING_JSON" optional:"true" default:""`
