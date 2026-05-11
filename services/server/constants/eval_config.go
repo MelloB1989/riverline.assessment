@@ -46,8 +46,6 @@ func DefaultSelfLearningConfig() SelfLearningConfig {
 	cfg := AppCfg.Get()
 	out := SelfLearningConfig{
 		Judges: []EvaluatorJudgeConfig{
-			// {Name: "judge_kimi_k2_6_primary", Provider: string(ai.NvidiaNIM), Model: string(ai.KimiK2_6), Weight: 1.2, Temperature: 0.2},
-			{Name: "judge_gpt_oss_120b_groq", Provider: string(ai.Groq), Model: string(ai.GPTOSS_120B), Weight: 1, Temperature: 0.15},
 			{Name: "judge_grok4_xai", Provider: string(ai.XAI), Model: string(ai.Grok4), Weight: 1, Temperature: 0.15},
 			{Name: "judge_grok4_fast_reasoning_xai", Provider: string(ai.XAI), Model: string(ai.Grok4ReasoningFast), Weight: 1.1, Temperature: 0.1, ReasoningEffort: "high"},
 		},

@@ -31,8 +31,8 @@ func rejectionReason(adopt bool, pValue, delta, effectSize, controlCompliance, t
 	if adopt {
 		return nil
 	}
-	if treatmentCompliance == 0 {
-		reason := fmt.Sprintf("candidate rejected: compliance remained 0.00; prompt must fix judge compliance_breakdown defects before adoption (delta=%.2f p=%.4f d=%.2f control_compliance=%.2f)", delta, pValue, effectSize, controlCompliance)
+	if treatmentCompliance == 0 && controlCompliance > 0 {
+		reason := fmt.Sprintf("candidate rejected: compliance regressed to 0.00 from %.2f; prompt must fix judge compliance_breakdown defects before adoption (delta=%.2f p=%.4f d=%.2f)", controlCompliance, delta, pValue, effectSize)
 		return &reason
 	}
 	if !issueGatePassed {

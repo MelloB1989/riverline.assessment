@@ -587,7 +587,9 @@ func aggregateJudgeResults(results []JudgeResult) MetricScores {
 		out.CompliancePass = 10
 	} else {
 		out.CompliancePass = 0
-		out.CompositeScore = math.Min(out.CompositeScore, 30)
+		// Apply proportional penalty (30%) instead of hard cap at 30.
+		// The hard cap made it impossible to distinguish between prompts.
+		out.CompositeScore = out.CompositeScore * 0.7
 	}
 	if len(validResults) > 1 {
 		out.JudgeBComposite = validResults[1].Metrics.CompositeScore
