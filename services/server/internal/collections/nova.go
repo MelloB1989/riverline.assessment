@@ -3,6 +3,7 @@ package collections
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -35,7 +36,13 @@ func PrepareNOVAWithClient(workflowID string, client *agents.Client) (*models.Re
 	if len(existing) == 0 || existing[0].ScheduledCallAt == nil {
 		return nil, errors.New("resolution offer schedule missing before NOVA preparation")
 	}
-	if len(existing[0].CandidateOffer) > 0 && wf.ContextForNova != nil && *wf.ContextForNova != "" {
+	strippedScheduleMetadata := stripNovaScheduleMetadata(&existing[0])
+	if novaOfferHasRuntimeTerms(&existing[0]) && novaRuntimeContextHasOfferTerms(derefString(wf.ContextForNova), &existing[0]) {
+		if strippedScheduleMetadata {
+			if err := o.Update(&existing[0], existing[0].Id); err != nil {
+				return nil, err
+			}
+		}
 		return &existing[0], nil
 	}
 	handoff, err := GenerateNovaOfferWithClient(client, *wf)
@@ -53,6 +60,10 @@ func PrepareNOVAWithClient(workflowID string, client *agents.Client) (*models.Re
 	applyNovaOffer(offer, handoff.Result)
 	if offer.EmiStartDate == nil {
 		offer.EmiStartDate = timePtr(now.Add(7 * 24 * time.Hour))
+	}
+	enrichNovaCandidateOffer(offer)
+	if !novaOfferHasRuntimeTerms(offer) {
+		applyFallbackNovaOffer(offer, wf, now)
 	}
 	runtimeContext, err := GenerateNovaRuntimeContextWithClient(client, *wf, offer)
 	if err != nil {
@@ -82,6 +93,189 @@ func PrepareNOVAWithClient(workflowID string, client *agents.Client) (*models.Re
 	return &existing[0], nil
 }
 
+func stripNovaScheduleMetadata(offer *models.ResolutionOffer) bool {
+	if offer == nil || offer.CandidateOffer == nil {
+		return false
+	}
+	_, hadScheduledAt := offer.CandidateOffer["scheduled_call_at"]
+	_, hadScheduleReason := offer.CandidateOffer["schedule_reason"]
+	delete(offer.CandidateOffer, "scheduled_call_at")
+	delete(offer.CandidateOffer, "schedule_reason")
+	return hadScheduledAt || hadScheduleReason
+}
+
+func novaOfferHasRuntimeTerms(offer *models.ResolutionOffer) bool {
+	if offer == nil {
+		return false
+	}
+	if offer.LumpSumOffered != nil && *offer.LumpSumOffered > 0 {
+		return true
+	}
+	if offer.EmiAmount != nil && *offer.EmiAmount > 0 && offer.EmiMonths != nil && *offer.EmiMonths > 0 {
+		return true
+	}
+	if offer.HardshipOffered != nil && *offer.HardshipOffered {
+		return true
+	}
+	return false
+}
+
+func novaRuntimeContextHasOfferTerms(context string, offer *models.ResolutionOffer) bool {
+	context = strings.ToLower(strings.TrimSpace(context))
+	if context == "" || offer == nil {
+		return false
+	}
+	if offer.LumpSumOffered != nil && *offer.LumpSumOffered > 0 && !contextContainsAmount(context, *offer.LumpSumOffered) {
+		return false
+	}
+	if offer.EmiAmount != nil && *offer.EmiAmount > 0 && !contextContainsAmount(context, *offer.EmiAmount) {
+		return false
+	}
+	if offer.EmiMonths != nil && *offer.EmiMonths > 0 && !strings.Contains(context, fmt.Sprintf("%d", *offer.EmiMonths)) {
+		return false
+	}
+	if offer.HardshipOffered != nil && *offer.HardshipOffered && !strings.Contains(context, "hardship") {
+		return false
+	}
+	return true
+}
+
+func contextContainsAmount(context string, amount float64) bool {
+	exact := fmt.Sprintf("%.2f", amount)
+	trimmed := strings.TrimRight(strings.TrimRight(exact, "0"), ".")
+	whole := fmt.Sprintf("%.0f", amount)
+	compact := strings.ReplaceAll(exact, ".", "")
+	normalized := strings.NewReplacer(",", "", ".", "", "$", "", "₹", "", " ", "").Replace(context)
+	return strings.Contains(context, exact) || strings.Contains(context, trimmed) || strings.Contains(context, whole) || strings.Contains(normalized, compact)
+}
+
+func applyFallbackNovaOffer(offer *models.ResolutionOffer, wf *models.BorrowerWorkflow, now time.Time) {
+	if offer == nil || wf == nil {
+		return
+	}
+	loan, err := GetLoan(wf.LoanId)
+	if err != nil || loan == nil || loan.OutstandingAmount <= 0 {
+		hardship := true
+		offer.HardshipOffered = &hardship
+		offer.CandidateOffer = map[string]any{
+			"hardship_offered": true,
+			"status":           "hardship_review_pending",
+		}
+		return
+	}
+	discountPct := loan.PolicyMaxDiscountPct
+	if discountPct < 0 {
+		discountPct = 0
+	}
+	if discountPct > 100 {
+		discountPct = 100
+	}
+	lumpSum := roundMoney(loan.OutstandingAmount * (1 - discountPct/100))
+	if lumpSum <= 0 {
+		lumpSum = roundMoney(loan.OutstandingAmount)
+		discountPct = 0
+	}
+	emiMonths := 6
+	emiAmount := roundMoney(loan.OutstandingAmount / float64(emiMonths))
+	emiStart := now.Add(7 * 24 * time.Hour)
+	hardship := false
+	offer.LumpSumOffered = &lumpSum
+	offer.LumpSumDiscountPct = &discountPct
+	offer.EmiAmount = &emiAmount
+	offer.EmiMonths = &emiMonths
+	offer.EmiStartDate = &emiStart
+	offer.HardshipOffered = &hardship
+	offer.CandidateOffer = map[string]any{
+		"primary_option": map[string]any{
+			"type":         "lump_sum",
+			"amount":       lumpSum,
+			"discount_pct": discountPct,
+			"deadline":     now.Add(48 * time.Hour).Format(time.RFC3339),
+		},
+		"secondary_option": map[string]any{
+			"type":           "emi",
+			"monthly_amount": emiAmount,
+			"months":         emiMonths,
+			"start_date":     emiStart.Format("2006-01-02"),
+		},
+		"lump_sum_offered":      lumpSum,
+		"lump_sum_discount_pct": discountPct,
+		"emi_amount":            emiAmount,
+		"emi_months":            emiMonths,
+		"emi_start_date":        emiStart.Format("2006-01-02"),
+		"hardship_offered":      hardship,
+	}
+}
+
+func enrichNovaCandidateOffer(offer *models.ResolutionOffer) {
+	if offer == nil {
+		return
+	}
+	if offer.CandidateOffer == nil {
+		offer.CandidateOffer = map[string]any{}
+	}
+	stripNovaScheduleMetadata(offer)
+	if offer.LumpSumOffered != nil && *offer.LumpSumOffered > 0 {
+		offer.CandidateOffer["lump_sum_offered"] = *offer.LumpSumOffered
+		if offer.LumpSumDiscountPct != nil {
+			offer.CandidateOffer["lump_sum_discount_pct"] = *offer.LumpSumDiscountPct
+		}
+		deadline := time.Now().UTC().Add(48 * time.Hour)
+		if offer.ScheduledCallAt != nil {
+			deadline = offer.ScheduledCallAt.UTC().Add(48 * time.Hour)
+		}
+		if option, ok := offer.CandidateOffer["primary_option"].(map[string]any); ok {
+			option["type"] = "lump_sum"
+			option["amount"] = *offer.LumpSumOffered
+			option["deadline"] = deadline.Format(time.RFC3339)
+			if offer.LumpSumDiscountPct != nil {
+				option["discount_pct"] = *offer.LumpSumDiscountPct
+			}
+		} else {
+			offer.CandidateOffer["primary_option"] = map[string]any{
+				"type":     "lump_sum",
+				"amount":   *offer.LumpSumOffered,
+				"deadline": deadline.Format(time.RFC3339),
+			}
+			if offer.LumpSumDiscountPct != nil {
+				offer.CandidateOffer["primary_option"].(map[string]any)["discount_pct"] = *offer.LumpSumDiscountPct
+			}
+		}
+	}
+	if offer.EmiAmount != nil && *offer.EmiAmount > 0 && offer.EmiMonths != nil && *offer.EmiMonths > 0 {
+		offer.CandidateOffer["emi_amount"] = *offer.EmiAmount
+		offer.CandidateOffer["emi_months"] = *offer.EmiMonths
+		if offer.EmiStartDate != nil {
+			offer.CandidateOffer["emi_start_date"] = offer.EmiStartDate.Format("2006-01-02")
+		}
+		if option, ok := offer.CandidateOffer["secondary_option"].(map[string]any); ok {
+			option["type"] = "emi"
+			option["monthly_amount"] = *offer.EmiAmount
+			option["months"] = *offer.EmiMonths
+			if offer.EmiStartDate != nil {
+				option["start_date"] = offer.EmiStartDate.Format("2006-01-02")
+			}
+		} else {
+			option := map[string]any{
+				"type":           "emi",
+				"monthly_amount": *offer.EmiAmount,
+				"months":         *offer.EmiMonths,
+			}
+			if offer.EmiStartDate != nil {
+				option["start_date"] = offer.EmiStartDate.Format("2006-01-02")
+			}
+			offer.CandidateOffer["secondary_option"] = option
+		}
+	}
+	if offer.HardshipOffered != nil {
+		offer.CandidateOffer["hardship_offered"] = *offer.HardshipOffered
+	}
+}
+
+func roundMoney(amount float64) float64 {
+	return math.Round(amount*100) / 100
+}
+
 func SetNovaScheduledCall(workflowID string, scheduledAt time.Time, reason string) error {
 	if scheduledAt.IsZero() {
 		return errors.New("scheduled call time is required")
@@ -107,9 +301,9 @@ func SetNovaScheduledCall(workflowID string, scheduledAt time.Time, reason strin
 	if offer.CandidateOffer == nil {
 		offer.CandidateOffer = map[string]any{}
 	}
-	offer.CandidateOffer["scheduled_call_at"] = scheduledAt.Format(time.RFC3339)
-	if strings.TrimSpace(reason) != "" {
-		offer.CandidateOffer["schedule_reason"] = strings.TrimSpace(reason)
+	stripNovaScheduleMetadata(offer)
+	if novaOfferHasRuntimeTerms(offer) {
+		enrichNovaCandidateOffer(offer)
 	}
 	o := orm.Load(&models.ResolutionOffer{})
 	defer o.Close()

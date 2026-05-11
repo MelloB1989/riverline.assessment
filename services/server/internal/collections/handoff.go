@@ -447,6 +447,7 @@ func applyNovaOffer(offer *models.ResolutionOffer, result NovaOfferResult) {
 	} else {
 		offer.CandidateOffer = map[string]any{}
 	}
+	stripNovaScheduleMetadata(offer)
 	offer.LumpSumOffered = result.LumpSumOffered
 	offer.LumpSumDiscountPct = result.LumpSumDiscountPct
 	offer.EmiAmount = result.EmiAmount
@@ -473,6 +474,7 @@ func applyNovaOffer(offer *models.ResolutionOffer, result NovaOfferResult) {
 		offer.HardshipOffered = &hardship
 		offer.CandidateOffer["hardship_offered"] = true
 	}
+	enrichNovaCandidateOffer(offer)
 }
 
 func applyNovaCallHandoff(wf *models.BorrowerWorkflow, offer *models.ResolutionOffer, result NovaCallHandoffResult) {
