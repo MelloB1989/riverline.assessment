@@ -212,6 +212,31 @@ func latestVersionScores(agentID models.AgentID) ([]models.ConversationScore, er
 	return latestScores, nil
 }
 
+func latestEvaluatorVersionScores() ([]models.ConversationScore, error) {
+	o := orm.Load(&models.ConversationScore{})
+	defer o.Close()
+	var allScores []models.ConversationScore
+	if err := o.GetAll().Scan(&allScores); err != nil {
+		return nil, err
+	}
+	maxEvalVersion := 0
+	for _, score := range allScores {
+		if score.EvaluatorVersion > maxEvalVersion {
+			maxEvalVersion = score.EvaluatorVersion
+		}
+	}
+	if maxEvalVersion == 0 {
+		return nil, nil
+	}
+	var latestScores []models.ConversationScore
+	for _, score := range allScores {
+		if score.EvaluatorVersion == maxEvalVersion {
+			latestScores = append(latestScores, score)
+		}
+	}
+	return latestScores, nil
+}
+
 func aggregateScoreRows(rows []models.ConversationScore) MetricAggregate {
 	values := make([]float64, 0, len(rows))
 	disagreements := make([]float64, 0, len(rows))
@@ -260,11 +285,11 @@ func nextPromptVersion(agentID models.AgentID) (int, error) {
 	return maxVersion + 1, nil
 }
 
-func nextEvaluatorVersion(agentID models.AgentID) (int, error) {
+func nextEvaluatorVersion() (int, error) {
 	o := orm.Load(&models.EvaluatorVersion{})
 	defer o.Close()
 	var rows []models.EvaluatorVersion
-	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&rows); err != nil {
+	if err := o.GetByFieldEquals("AgentId", models.AgentSystem).Scan(&rows); err != nil {
 		return 0, err
 	}
 	maxVersion := 0

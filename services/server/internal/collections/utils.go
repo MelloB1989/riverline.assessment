@@ -589,60 +589,41 @@ func seedPromptVersions() error {
 func seedEvaluatorVersions() error {
 	o := orm.Load(&models.EvaluatorVersion{})
 	defer o.Close()
-	for _, agentID := range []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta} {
-		var existingForAgent []models.EvaluatorVersion
-		if err := o.GetByFieldEquals("AgentId", agentID).Scan(&existingForAgent); err != nil {
-			return err
+	var existing []models.EvaluatorVersion
+	if err := o.GetByFieldEquals("AgentId", models.AgentSystem).Scan(&existing); err != nil {
+		return err
+	}
+	hasActive := false
+	hasVersionOne := false
+	for _, row := range existing {
+		if row.VersionNumber == 1 {
+			hasVersionOne = true
 		}
-		hasActive := false
-		hasVersionOne := false
-		for _, row := range existingForAgent {
-			if row.VersionNumber == 1 {
-				hasVersionOne = true
-			}
-			if row.IsActive != nil && *row.IsActive {
-				hasActive = true
-			}
+		if row.IsActive != nil && *row.IsActive {
+			hasActive = true
 		}
-		if hasVersionOne {
-			if !hasActive {
-				active := true
-				for i := range existingForAgent {
-					if existingForAgent[i].VersionNumber == 1 {
-						existingForAgent[i].IsActive = &active
-						if err := o.Update(&existingForAgent[i], existingForAgent[i].Id); err != nil {
-							return err
-						}
-						break
+	}
+	if hasVersionOne {
+		if !hasActive {
+			active := true
+			for i := range existing {
+				if existing[i].VersionNumber == 1 {
+					existing[i].IsActive = &active
+					if err := o.Update(&existing[i], existing[i].Id); err != nil {
+						return err
 					}
+					break
 				}
 			}
-			continue
 		}
-		judgePrompt, err := generateInitialEvaluatorPrompt(agentID)
-		if err != nil {
-			return err
-		}
-		active := true
-		row := models.EvaluatorVersion{Id: utils.GenerateID(), AgentId: agentID, VersionNumber: 1, JudgePrompt: judgePrompt, IsActive: &active, CreatedAt: time.Now().UTC()}
-		if err := o.Insert(&row); err != nil {
-			return err
-		}
+		return nil
+	}
+	active := true
+	row := models.EvaluatorVersion{Id: utils.GenerateID(), AgentId: models.AgentSystem, VersionNumber: 1, JudgePrompt: constants.SYSTEM_EVALUATOR_INITIAL_PROMPT, IsActive: &active, CreatedAt: time.Now().UTC()}
+	if err := o.Insert(&row); err != nil {
+		return err
 	}
 	return nil
-}
-
-func generateInitialEvaluatorPrompt(agentID models.AgentID) (string, error) {
-	switch agentID {
-	case models.AgentAria:
-		return constants.ARIA_EVALUATOR_INITIAL_PROMPT, nil
-	case models.AgentNova:
-		return constants.NOVA_EVALUATOR_INITIAL_PROMPT, nil
-	case models.AgentDelta:
-		return constants.DELTA_EVALUATOR_INITIAL_PROMPT, nil
-	default:
-		return "", fmt.Errorf("unsupported evaluator prompt agent %s", agentID)
-	}
 }
 
 func seedCanaries() error {

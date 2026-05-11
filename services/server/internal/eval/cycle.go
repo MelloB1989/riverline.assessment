@@ -250,7 +250,7 @@ func runAgentCycle(agentID models.AgentID, cfg FullCycleConfig, baseCost float64
 	}
 
 	var flags []models.MetaFlag
-	flags, err = RunMetaEvaluation(agentID)
+	flags, err = RunMetaEvaluation()
 	if err != nil {
 		log.Printf("[eval] meta evaluation failed in agent cycle agent=%s err=%v (non-fatal, continuing)", agentID, err)
 		flags = nil
@@ -511,7 +511,7 @@ func maybeRunMetaEvaluationByJudgeBudget(agentID models.AgentID, cfg SimConfig, 
 		return nil
 	}
 	log.Printf("[eval] meta evaluation triggered agent=%s judge_runs_since_meta=%d threshold=%d", agentID, *judgeRunsSinceMeta, threshold)
-	_, err := RunMetaEvaluation(agentID)
+	_, err := RunMetaEvaluation()
 	if err != nil {
 		log.Printf("[eval] meta evaluation failed agent=%s err=%v (non-fatal, resetting counter and continuing)", agentID, err)
 	}

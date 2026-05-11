@@ -44,10 +44,6 @@ type adminPromptExperimentRequest struct {
 	Judges           []constants.EvaluatorJudgeConfig `json:"judges"`
 }
 
-type adminMetaEvaluationRequest struct {
-	AgentID models.AgentID `json:"agent_id"`
-}
-
 type vapiWebhook struct {
 	Type       string         `json:"type"`
 	Message    map[string]any `json:"message"`
@@ -442,13 +438,6 @@ func AdminRollbackPrompt(c *fiber.Ctx) error {
 }
 
 func AdminRunMetaEvaluation(c *fiber.Ctx) error {
-	var req adminMetaEvaluationRequest
-	_ = c.BodyParser(&req)
-	agents := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
-	if req.AgentID != "" {
-		agents = []models.AgentID{req.AgentID}
-	}
-
 	if active := activeAdminEvalRun(); active != nil {
 		return c.JSON(fiber.Map{"run_id": active.ID, "existing": true, "run": adminEvalRunToSnapshot(active)})
 	}
@@ -463,15 +452,13 @@ func AdminRunMetaEvaluation(c *fiber.Ctx) error {
 	adminEvalRuns.latest = run.ID
 	adminEvalRuns.Unlock()
 
-	go func(runID string, targetAgents []models.AgentID) {
-		for _, agentID := range targetAgents {
-			if _, err := rivereval.RunMetaEvaluation(agentID); err != nil {
-				markAdminEvalRunFailed(runID, err)
-				return
-			}
+	go func(runID string) {
+		if _, err := rivereval.RunMetaEvaluation(); err != nil {
+			markAdminEvalRunFailed(runID, err)
+			return
 		}
 		markAdminEvalRunCompleted(runID)
-	}(run.ID, agents)
+	}(run.ID)
 
 	return c.JSON(fiber.Map{"run_id": run.ID, "existing": false, "run": adminEvalRunToSnapshot(run)})
 }

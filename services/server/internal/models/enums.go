@@ -17,9 +17,10 @@ type FlagType string
 type ComplianceRule string
 
 const (
-	AgentAria  AgentID = "aria"
-	AgentNova  AgentID = "nova"
-	AgentDelta AgentID = "delta"
+	AgentAria   AgentID = "aria"
+	AgentNova   AgentID = "nova"
+	AgentDelta  AgentID = "delta"
+	AgentSystem AgentID = "system"
 )
 
 const (

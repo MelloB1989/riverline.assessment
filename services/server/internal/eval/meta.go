@@ -21,97 +21,68 @@ func RunImprovementCycle(agentID models.AgentID, cfg SimConfig) (*models.PromptE
 }
 
 type metaEvaluationOptions struct {
-	CanaryLimit    int
-	BenchmarkLimit int
-	MaxFlags       int
-	MaxJudgeCalls  int
-	MaxDuration    time.Duration
+	MaxFlags    int
+	MaxDuration time.Duration
 }
 
-func RunMetaEvaluation(agentID models.AgentID) ([]models.MetaFlag, error) {
-	return runMetaEvaluation(agentID, metaEvaluationOptions{
-		CanaryLimit:    2,
-		BenchmarkLimit: 2,
-		MaxFlags:       3,
-		MaxJudgeCalls:  24,
-		MaxDuration:    5 * time.Minute,
+func RunMetaEvaluation() ([]models.MetaFlag, error) {
+	return runMetaEvaluation(metaEvaluationOptions{
+		MaxFlags:    3,
+		MaxDuration: 5 * time.Minute,
 	})
 }
 
-func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]models.MetaFlag, error) {
+func runMetaEvaluation(opts metaEvaluationOptions) ([]models.MetaFlag, error) {
 	metaStart := time.Now()
 	if err := collections.EnsureDefaults(); err != nil {
 		return nil, err
 	}
-	if opts.MaxJudgeCalls <= 0 {
-		opts.MaxJudgeCalls = 24
-	}
 	if opts.MaxDuration <= 0 {
 		opts.MaxDuration = 5 * time.Minute
-	}
-	if opts.CanaryLimit <= 0 {
-		opts.CanaryLimit = 2
-	}
-	if opts.BenchmarkLimit <= 0 {
-		opts.BenchmarkLimit = 2
 	}
 	if opts.MaxFlags <= 0 {
 		opts.MaxFlags = 3
 	}
 	slCfg := constants.DefaultSelfLearningConfig()
-	scores, err := latestVersionScores(agentID)
+	scores, err := latestEvaluatorVersionScores()
 	if err != nil {
 		return nil, err
+	}
+	if len(scores) == 0 {
+		log.Printf("[eval] meta evaluation done flags=0 reason=no_scores duration=%s", time.Since(metaStart))
+		return []models.MetaFlag{}, nil
 	}
 	flags := make([]models.MetaFlag, 0)
 	values := scoreValues(scores)
 	if len(values) >= slCfg.MetaEvaluationMinSample && Mean(values) > 78 && Stddev(values) < 10 {
-		flags = append(flags, newMetaFlag(models.FlagTypeScoreInflation, agentID, map[string]any{
+		flags = append(flags, newMetaFlag(models.FlagTypeScoreInflation, nil, map[string]any{
 			"mean": Mean(values), "stddev": Stddev(values), "sample_n": len(values),
 		}, "Tighten the evaluator rubric and add sharper mid/low score anchors."))
 	}
 	if len(values) >= slCfg.MetaEvaluationMinSample {
 		if metric, stddev := lowestMetricStddev(scores); metric != "" && stddev < 0.5 {
-			flags = append(flags, newMetaFlag(models.FlagTypeMetricUselessness, agentID, map[string]any{
+			flags = append(flags, newMetaFlag(models.FlagTypeMetricUselessness, nil, map[string]any{
 				"metric": metric, "stddev": stddev, "sample_n": len(values),
 			}, "Revise the evaluator prompt so this metric has discriminative anchors and is not always scored the same."))
 		}
 		pctDiverged, avgDelta := judgeDisagreementStats(scores, slCfg.MaxJudgeDisagreement)
 		if pctDiverged >= 0.25 {
-			flags = append(flags, newMetaFlag(models.FlagTypeJudgeDisagreement, agentID, map[string]any{
+			flags = append(flags, newMetaFlag(models.FlagTypeJudgeDisagreement, nil, map[string]any{
 				"pct_diverged": pctDiverged, "avg_delta": avgDelta, "threshold": slCfg.MaxJudgeDisagreement, "examples": judgeDisagreementExamples(scores, slCfg.MaxJudgeDisagreement, 4),
 			}, "Clarify ambiguous rubric boundaries that cause judge disagreement."))
 		}
 		invalidRate, invalidCount := judgeInvalidJSONStats(scores)
 		if invalidCount > 0 {
-			flags = append(flags, newMetaFlag(models.FlagTypeJudgeDisagreement, agentID, map[string]any{
+			flags = append(flags, newMetaFlag(models.FlagTypeJudgeDisagreement, nil, map[string]any{
 				"invalid_json_rate": invalidRate, "invalid_json_count": invalidCount, "sample_n": len(values),
 			}, "Revise the evaluator prompt to enforce strict JSON-only scoring and avoid schema-invalid judge outputs."))
 		}
 		if reg := postAdoptionRegression(scores); reg != nil {
-			flags = append(flags, newMetaFlag(models.FlagTypePostAdoptionRegression, agentID, reg, "Rollback or tighten adoption gates for the regressed prompt version."))
-		}
-	}
-	// Time guard: if meta-eval analysis took too long, skip canary+resolution
-	if time.Since(metaStart) >= opts.MaxDuration {
-		log.Printf("[eval] meta evaluation time guard hit agent=%s duration=%s flags=%d skipping_canaries_and_resolution", agentID, time.Since(metaStart), len(flags))
-		return flags, nil
-	}
-	// Run canaries with limit and error recovery
-	canaries, err := runCanarySetForAgent(agentID, opts.CanaryLimit)
-	if err != nil {
-		log.Printf("[eval] meta evaluation canary set failed agent=%s err=%v (non-fatal, continuing)", agentID, err)
-	} else {
-		for _, canary := range canaries {
-			if canary.CorrectlyFlagged != nil && !*canary.CorrectlyFlagged {
-				flags = append(flags, newMetaFlag(models.FlagTypeComplianceBlindspot, agentID, map[string]any{
-					"canary_id": canary.CanaryId, "evaluator_version": canary.EvaluatorVersion,
-				}, "Revise compliance checks so known canary violations are caught."))
-			}
+			flags = append(flags, newMetaFlag(models.FlagTypePostAdoptionRegression, nil, reg, "Rollback or tighten adoption gates for the regressed prompt version."))
 		}
 	}
 	if len(flags) == 0 {
-		log.Printf("[eval] meta evaluation done agent=%s flags=0 duration=%s", agentID, time.Since(metaStart))
+		log.Printf("[eval] meta evaluation done flags=0 duration=%s", time.Since(metaStart))
 		return []models.MetaFlag{}, nil
 	}
 	if opts.MaxFlags > 0 && len(flags) > opts.MaxFlags {
@@ -120,18 +91,16 @@ func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]mo
 	flagOrm := orm.Load(&models.MetaFlag{})
 	defer flagOrm.Close()
 	for i := range flags {
-		// Time guard per flag
 		if time.Since(metaStart) >= opts.MaxDuration {
-			log.Printf("[eval] meta evaluation time guard hit during flag resolution agent=%s flag=%d/%d duration=%s", agentID, i+1, len(flags), time.Since(metaStart))
+			log.Printf("[eval] meta evaluation time guard hit during flag resolution flag=%d/%d duration=%s", i+1, len(flags), time.Since(metaStart))
 			break
 		}
 		if err := flagOrm.Insert(&flags[i]); err != nil {
-			log.Printf("[eval] meta evaluation flag insert failed agent=%s flag=%s err=%v (non-fatal)", agentID, flags[i].Id, err)
+			log.Printf("[eval] meta evaluation flag insert failed flag=%s err=%v (non-fatal)", flags[i].Id, err)
 			continue
 		}
 		if err := resolveMetaFlag(&flags[i]); err != nil {
-			log.Printf("[eval] meta evaluation flag resolution failed agent=%s flag=%s err=%v (non-fatal, continuing)", agentID, flags[i].Id, err)
-			// Mark flag as resolved-with-error so it doesn't block future cycles
+			log.Printf("[eval] meta evaluation flag resolution failed flag=%s err=%v (non-fatal, continuing)", flags[i].Id, err)
 			resolved := true
 			errResolution := fmt.Sprintf("Resolution failed: %v", err)
 			flags[i].Resolved = &resolved
@@ -142,7 +111,7 @@ func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]mo
 			continue
 		}
 	}
-	log.Printf("[eval] meta evaluation done agent=%s flags=%d duration=%s", agentID, len(flags), time.Since(metaStart))
+	log.Printf("[eval] meta evaluation done flags=%d duration=%s", len(flags), time.Since(metaStart))
 	return flags, nil
 }
 
@@ -167,17 +136,13 @@ func RunProductionLearningTick() error {
 	slCfg := constants.DefaultSelfLearningConfig()
 	allAgents := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
 
-	// 1. Meta Evaluation Check
-	for _, agentID := range allAgents {
-		scores, err := latestVersionScores(agentID)
-		if err != nil {
-			log.Printf("[eval] production tick failed to load scores for %s: %v", agentID, err)
-			continue
-		}
-		if len(scores) >= slCfg.MetaEvaluationMinSample && len(scores)%slCfg.MetaEvaluationMinSample == 0 {
-			if _, err := RunMetaEvaluation(agentID); err != nil {
-				log.Printf("[eval] production tick meta eval failed for %s: %v", agentID, err)
-			}
+	// 1. Meta Evaluation Check (system-wide, not per-agent)
+	scores, err := latestEvaluatorVersionScores()
+	if err != nil {
+		log.Printf("[eval] production tick failed to load evaluator scores: %v", err)
+	} else if len(scores) >= slCfg.MetaEvaluationMinSample && len(scores)%slCfg.MetaEvaluationMinSample == 0 {
+		if _, err := RunMetaEvaluation(); err != nil {
+			log.Printf("[eval] production tick meta eval failed: %v", err)
 		}
 	}
 
@@ -207,7 +172,7 @@ func RunProductionLearningTick() error {
 		MaxPromptIterations:    1,
 		MetaEvalEveryJudgeRuns: slCfg.MetaEvalEveryJudgeRuns,
 	}
-	_, err := RunImprovementCycle(primaryAgent, cfg)
+	_, err = RunImprovementCycle(primaryAgent, cfg)
 	return err
 }
 
@@ -281,8 +246,7 @@ func runCanarySetForAgent(agentID models.AgentID, limit int) ([]models.CanaryRes
 }
 
 func resolveMetaFlag(flag *models.MetaFlag) error {
-	agentID := derefAgent(flag.AgentId)
-	before, err := activeEvaluatorVersion(agentID)
+	before, err := activeEvaluatorVersion(models.AgentSystem)
 	if err != nil {
 		return err
 	}
@@ -293,21 +257,21 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 		flag.Evidence = map[string]any{}
 	}
 
-	judgePrompt, inputTokens, outputTokens, modelUsed, err := generateEvaluatorRevision(agentID, *before, *flag)
+	judgePrompt, inputTokens, outputTokens, modelUsed, err := generateEvaluatorRevision(*before, *flag)
 	if err != nil {
 		return err
 	}
-	if err := collections.LogCost("evaluator_prompt_generation", flag.AgentId, modelUsed, inputTokens, outputTokens, nil, nil); err != nil {
+	if err := collections.LogCost("evaluator_prompt_generation", nil, modelUsed, inputTokens, outputTokens, nil, nil); err != nil {
 		return err
 	}
-	nextVersion, err := nextEvaluatorVersion(agentID)
+	nextVersion, err := nextEvaluatorVersion()
 	if err != nil {
 		return err
 	}
 
 	// Deactivate existing versions
 	var existing []models.EvaluatorVersion
-	if err := evaluatorOrm.GetByFieldEquals("AgentId", agentID).Scan(&existing); err != nil {
+	if err := evaluatorOrm.GetByFieldEquals("AgentId", models.AgentSystem).Scan(&existing); err != nil {
 		return err
 	}
 	inactive := false
@@ -326,7 +290,7 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	evaluator := models.EvaluatorVersion{
 		Id:                utils.GenerateID(),
 		VersionNumber:     nextVersion,
-		AgentId:           agentID,
+		AgentId:           models.AgentSystem,
 		JudgePrompt:       judgePrompt,
 		IsActive:          &active,
 		ChangeReason:      &changeReason,
@@ -345,7 +309,7 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	flag.EvaluatorVersionBefore = &before.VersionNumber
 	flag.EvaluatorVersionAfter = &nextVersion
 	flag.ResolvedAt = &now
-	
+
 	flagOrm := orm.Load(&models.MetaFlag{})
 	defer flagOrm.Close()
 	if err := flagOrm.Update(flag, flag.Id); err != nil {
@@ -354,10 +318,10 @@ func resolveMetaFlag(flag *models.MetaFlag) error {
 	return nil
 }
 
-func generateEvaluatorRevision(agentID models.AgentID, current models.EvaluatorVersion, flag models.MetaFlag) (string, int, int, string, error) {
+func generateEvaluatorRevision(current models.EvaluatorVersion, flag models.MetaFlag) (string, int, int, string, error) {
 	evidence, _ := json.Marshal(flag.Evidence)
-	agentTruth := constants.AgentTruthForPromptGenerator(agentID)
-	prompt := fmt.Sprintf(`Generate a revised evaluator judge prompt for the %s collections agent.
+	agentTruth := constants.AgentTruthForJudges()
+	prompt := fmt.Sprintf(`Generate a revised evaluator judge prompt for the full Riverline collections workflow (ARIA → NOVA → DELTA).
 
 Agent Policy/Truth Constraints (Judges MUST enforce these boundaries and capabilities):
 %s
@@ -373,15 +337,17 @@ The revised prompt must:
 - Return only JSON score outputs when used by an evaluator.
 - Preserve the existing schema exactly.
 - Add concrete low, medium, and high scoring anchors.
+- Evaluate the three-agent system as one borrower experience, not isolated agent segments.
+- Score ARIA intake, NOVA offer handling, the DELTA handoff/final-offer, and cross-stage handoff continuity.
 - Penalize vague compliance, repeated questions, missing disclosures, false threats, privacy leaks, harassment, ignored hardship, negotiation drift, and poor handoff continuity.
 - Ensure the judge strictly penalizes the agent if it violates ANY "CANNOT do" constraint from the Agent Truth.
 - Ensure the judge respects the agent's capabilities listed in the "CAN do" section of the Agent Truth.
 - Improve stable rerun behavior for identical transcripts.
 
-	Return only the revised judge prompt text.`, agentID, agentTruth, current.JudgePrompt, flag.FlagType, string(evidence), derefString(flag.ProposedAction))
+	Return only the revised judge prompt text.`, agentTruth, current.JudgePrompt, flag.FlagType, string(evidence), derefString(flag.ProposedAction))
 	resp, err := generateInternalText(prompt, internalPromptOptimizerSystemPrompt(), 8)
 	if err != nil {
-		return "", 0, 0, "", fmt.Errorf("generate evaluator revision for %s: %w", agentID, err)
+		return "", 0, 0, "", fmt.Errorf("generate evaluator revision: %w", err)
 	}
 	return strings.TrimSpace(resp.Text), resp.InputTokens, resp.OutputTokens, resp.ModelUsed, nil
 }
@@ -435,9 +401,9 @@ func recentSystemTranscriptsForAgent(agentID models.AgentID, limit int) ([]strin
 	return out, nil
 }
 
-func newMetaFlag(flagType models.FlagType, agentID models.AgentID, evidence map[string]any, action string) models.MetaFlag {
+func newMetaFlag(flagType models.FlagType, agentID *models.AgentID, evidence map[string]any, action string) models.MetaFlag {
 	resolved := false
-	return models.MetaFlag{Id: utils.GenerateID(), FlagType: flagType, AgentId: &agentID, Evidence: evidence, ProposedAction: &action, Resolved: &resolved, CreatedAt: time.Now().UTC()}
+	return models.MetaFlag{Id: utils.GenerateID(), FlagType: flagType, AgentId: agentID, Evidence: evidence, ProposedAction: &action, Resolved: &resolved, CreatedAt: time.Now().UTC()}
 }
 
 func scoreValues(scores []models.ConversationScore) []float64 {

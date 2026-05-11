@@ -228,7 +228,7 @@ func (s *Supervisor) runCycle(agentID models.AgentID, cfg SupervisorConfig) erro
 	// Meta-evaluation — non-fatal
 	status := s.Status()
 	if cfg.MetaEvalEveryNJudges > 0 && status.JudgeRunsSinceMeta >= cfg.MetaEvalEveryNJudges {
-		if _, err := RunMetaEvaluation(agentID); err != nil {
+		if _, err := RunMetaEvaluation(); err != nil {
 			log.Printf("[eval] learning supervisor meta evaluation failed agent=%s err=%v (non-fatal)", agentID, err)
 		}
 		s.resetJudgeRuns()

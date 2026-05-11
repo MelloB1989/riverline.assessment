@@ -378,12 +378,12 @@ func activeEvaluatorVersion(agentID models.AgentID) (*models.EvaluatorVersion, e
 	o := orm.Load(&models.EvaluatorVersion{})
 	defer o.Close()
 	var rows []models.EvaluatorVersion
-	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&rows); err != nil {
+	if err := o.GetByFieldEquals("AgentId", models.AgentSystem).Scan(&rows); err != nil {
 		return nil, err
 	}
 	rows = filterActiveEvaluators(rows)
 	if len(rows) == 0 {
-		return nil, fmt.Errorf("active evaluator not found for %s", agentID)
+		return nil, fmt.Errorf("active system evaluator not found (called for agent %s)", agentID)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].VersionNumber > rows[j].VersionNumber })
 	return &rows[0], nil
