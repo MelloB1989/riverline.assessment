@@ -37,4 +37,6 @@ func SetupMainRoutes(v1 fiber.Router) {
 	admin.Post("/eval/reset", handlers.AdminResetAndReseed)
 	admin.Get("/eval/metrics", handlers.AdminEvalMetrics)
 	admin.Get("/eval/meta", handlers.AdminEvalMeta)
+	admin.Get("/eval/export/scores", handlers.AdminExportScoresCSV)
+	admin.Get("/eval/export/experiments", handlers.AdminExportExperimentsCSV)
 }

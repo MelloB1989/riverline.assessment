@@ -180,14 +180,36 @@ func conversationsForRerun(req RerunRequest) ([]models.AgentConversation, error)
 	return out, nil
 }
 
-func recentSystemScores() ([]models.ConversationScore, error) {
+func latestVersionScores(agentID models.AgentID) ([]models.ConversationScore, error) {
 	o := orm.Load(&models.ConversationScore{})
 	defer o.Close()
-	var scores []models.ConversationScore
-	if err := o.GetAll().Scan(&scores); err != nil {
+	var allScores []models.ConversationScore
+	if err := o.GetAll().Scan(&allScores); err != nil {
 		return nil, err
 	}
-	return scores, nil
+
+	var agentScores []models.ConversationScore
+	maxVersion := 0
+
+	for _, score := range allScores {
+		if score.ComplianceBreakdown != nil {
+			if sa, ok := score.ComplianceBreakdown["scored_agent"].(string); ok && models.AgentID(sa) == agentID {
+				agentScores = append(agentScores, score)
+				if score.PromptVersion > maxVersion {
+					maxVersion = score.PromptVersion
+				}
+			}
+		}
+	}
+
+	var latestScores []models.ConversationScore
+	for _, score := range agentScores {
+		if score.PromptVersion == maxVersion {
+			latestScores = append(latestScores, score)
+		}
+	}
+
+	return latestScores, nil
 }
 
 func aggregateScoreRows(rows []models.ConversationScore) MetricAggregate {

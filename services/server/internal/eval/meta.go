@@ -59,7 +59,7 @@ func runMetaEvaluation(agentID models.AgentID, opts metaEvaluationOptions) ([]mo
 		opts.MaxFlags = 3
 	}
 	slCfg := constants.DefaultSelfLearningConfig()
-	scores, err := recentSystemScores()
+	scores, err := latestVersionScores(agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,34 +163,51 @@ func RunCanarySetForAgent(agentID models.AgentID) ([]models.CanaryResult, error)
 	return runCanarySetForAgent(agentID, 0)
 }
 
-func RunProductionLearningTick(agentID models.AgentID) error {
+func RunProductionLearningTick() error {
 	slCfg := constants.DefaultSelfLearningConfig()
-	scores, err := recentSystemScores()
-	if err != nil {
-		return err
-	}
-	if len(scores) < slCfg.MetaEvaluationMinSample {
-		return nil
-	}
-	if len(scores)%slCfg.MetaEvaluationMinSample == 0 {
-		if _, err := RunMetaEvaluation(agentID); err != nil {
-			return err
+	allAgents := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
+
+	// 1. Meta Evaluation Check
+	for _, agentID := range allAgents {
+		scores, err := latestVersionScores(agentID)
+		if err != nil {
+			log.Printf("[eval] production tick failed to load scores for %s: %v", agentID, err)
+			continue
+		}
+		if len(scores) >= slCfg.MetaEvaluationMinSample && len(scores)%slCfg.MetaEvaluationMinSample == 0 {
+			if _, err := RunMetaEvaluation(agentID); err != nil {
+				log.Printf("[eval] production tick meta eval failed for %s: %v", agentID, err)
+			}
 		}
 	}
-	if !recentScoresNeedPromptImprovement(scores, 8) || recentExperimentExists(agentID, time.Hour) {
+
+	// 2. Prompt Improvement Check
+	needsImprovement := false
+	for _, agentID := range allAgents {
+		scores, err := latestVersionScores(agentID)
+		if err == nil && recentScoresNeedPromptImprovement(scores, 8) {
+			needsImprovement = true
+			break
+		}
+	}
+
+	if !needsImprovement || recentExperimentExists(time.Hour) {
 		return nil
 	}
+
+	// Run cycle for all 3 agents (using ARIA as primary for scoring)
+	primaryAgent := models.AgentAria
 	cfg := SimConfig{
 		Seed:                   time.Now().Unix(),
 		BatchSize:              1,
 		Personas:               defaultPersonas(),
-		AgentID:                agentID,
+		AgentID:                primaryAgent,
 		MaxTurnsPerAgent:       slCfg.DefaultMaxTurnsPerAgent,
 		Judges:                 slCfg.Judges,
 		MaxPromptIterations:    1,
 		MetaEvalEveryJudgeRuns: slCfg.MetaEvalEveryJudgeRuns,
 	}
-	_, err = RunImprovementCycle(agentID, cfg)
+	_, err := RunImprovementCycle(primaryAgent, cfg)
 	return err
 }
 
@@ -214,11 +231,11 @@ func recentScoresNeedPromptImprovement(scores []models.ConversationScore, limit 
 	return false
 }
 
-func recentExperimentExists(agentID models.AgentID, window time.Duration) bool {
+func recentExperimentExists(window time.Duration) bool {
 	o := orm.Load(&models.PromptExperiment{})
 	defer o.Close()
 	var rows []models.PromptExperiment
-	if err := o.GetByFieldEquals("AgentId", agentID).Scan(&rows); err != nil {
+	if err := o.GetAll().Scan(&rows); err != nil {
 		return false
 	}
 	cutoff := time.Now().UTC().Add(-window)

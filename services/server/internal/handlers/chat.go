@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -871,4 +872,83 @@ func derefString(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func AdminExportScoresCSV(c *fiber.Ctx) error {
+	o := orm.Load(&models.ConversationScore{})
+	defer o.Close()
+	var scores []models.ConversationScore
+	if err := o.GetAll().Scan(&scores); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+
+	c.Set("Content-Type", "text/csv")
+	c.Set("Content-Disposition", "attachment; filename=conversation_scores.csv")
+
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		cw := csv.NewWriter(w)
+		cw.Write([]string{
+			"id", "conversation_id", "workflow_id", "prompt_version", "evaluator_version",
+			"persona", "seed", "composite_score", "compliance_passed", "created_at",
+		})
+		for _, s := range scores {
+			persona := ""
+			if s.PersonaType != nil {
+				persona = string(*s.PersonaType)
+			}
+			seed := ""
+			if s.Seed != nil {
+				seed = *s.Seed
+			}
+			workflowId := ""
+			if s.WorkflowId != nil {
+				workflowId = *s.WorkflowId
+			}
+			compliance := "unknown"
+			if s.CompliancePassed != nil {
+				compliance = fmt.Sprintf("%t", *s.CompliancePassed)
+			}
+			cw.Write([]string{
+				s.Id, s.ConversationId, workflowId, fmt.Sprintf("%d", s.PromptVersion),
+				fmt.Sprintf("%d", s.EvaluatorVersion), persona, seed,
+				fmt.Sprintf("%.2f", s.CompositeScore), compliance,
+				s.CreatedAt.Format(time.RFC3339),
+			})
+		}
+		cw.Flush()
+	})
+	return nil
+}
+
+func AdminExportExperimentsCSV(c *fiber.Ctx) error {
+	o := orm.Load(&models.PromptExperiment{})
+	defer o.Close()
+	var exps []models.PromptExperiment
+	if err := o.GetAll().Scan(&exps); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+
+	c.Set("Content-Type", "text/csv")
+	c.Set("Content-Disposition", "attachment; filename=prompt_experiments.csv")
+
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		cw := csv.NewWriter(w)
+		cw.Write([]string{
+			"id", "control_version", "candidate_version", "control_n", "control_mean",
+			"control_compliance_rate", "treatment_n", "treatment_mean", "treatment_compliance_rate",
+			"mean_delta", "p_value", "adopted", "created_at",
+		})
+		for _, e := range exps {
+			cw.Write([]string{
+				e.Id, fmt.Sprintf("%d", e.ControlVersion), fmt.Sprintf("%d", e.CandidateVersion),
+				fmt.Sprintf("%d", e.ControlN), fmt.Sprintf("%.2f", e.ControlMean),
+				fmt.Sprintf("%.2f", e.ControlComplianceRate), fmt.Sprintf("%d", e.TreatmentN),
+				fmt.Sprintf("%.2f", e.TreatmentMean), fmt.Sprintf("%.2f", e.TreatmentComplianceRate),
+				fmt.Sprintf("%.2f", e.MeanDelta), fmt.Sprintf("%.4f", e.PValue),
+				fmt.Sprintf("%t", e.Adopted), e.CreatedAt.Format(time.RFC3339),
+			})
+		}
+		cw.Flush()
+	})
+	return nil
 }

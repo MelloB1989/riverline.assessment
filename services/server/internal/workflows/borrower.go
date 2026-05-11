@@ -518,12 +518,7 @@ func EvaluateWorkflowConversations(workflowID string) (int, error) {
 
 func RunProductionLearningCycle(workflowID string) error {
 	_ = workflowID
-	for _, agentID := range []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta} {
-		if err := rivereval.RunProductionLearningTick(agentID); err != nil {
-			return err
-		}
-	}
-	return nil
+	return rivereval.RunProductionLearningTick()
 }
 
 func conversationTranscript(conv models.AgentConversation) (string, error) {

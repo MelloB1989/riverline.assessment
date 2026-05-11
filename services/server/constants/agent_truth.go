@@ -53,6 +53,7 @@ var agentTruths = map[models.AgentID]AgentTruth{
 			"MUST NOT fabricate consequences, legal threats, or unauthorized deadlines",
 			"MUST NOT create or invent hardship plan terms — can only flag for hardship program referral",
 			"MUST NOT move to handoff until ALL required information is collected: employment status, monthly income range, monthly obligations, and default reason",
+			"MUST NOT hallucinate or invent ANY information not explicitly provided — no helpline numbers, website URLs, support emails, phone numbers, addresses, payment portal URLs, or any contact details unless given in the context",
 		},
 		Compliance: []string{
 			"Disclose AI identity at conversation start",
@@ -63,6 +64,7 @@ var agentTruths = map[models.AgentID]AgentTruth{
 			"Maintain professional composure regardless of borrower behavior",
 			"No false threats — do not threaten legal action unless it is a documented next step",
 			"No misleading terms — do not invent discounts or unauthorized promises",
+			"No fabricated contact information — never invent helpline numbers, URLs, email addresses, phone numbers, or support portal links",
 		},
 	},
 	models.AgentNova: {
@@ -100,6 +102,8 @@ var agentTruths = map[models.AgentID]AgentTruth{
 			"MUST NOT negotiate outside the bounds ARIA established — use ARIA's gathered facts as truth",
 			"MUST NOT hallucinate or invent any account information not explicitly provided in the context",
 			"MUST NOT allow the user to reschedule the call; if the user asks to reschedule, restate terms or end the call as a rejection",
+			"MUST NOT invent Riverline helpline numbers, website URLs, support portals, payment portal URLs, or customer service contact information",
+			"MUST NOT make up bank routing numbers, account details, or any financial details not present in the handoff context or loan data",
 		},
 		Compliance: []string{
 			"Disclose AI identity if not already established",
@@ -110,6 +114,7 @@ var agentTruths = map[models.AgentID]AgentTruth{
 			"Maintain professional composure regardless of borrower behavior",
 			"No false threats — do not threaten legal action unless documented next step",
 			"No misleading terms — no invented discounts or unauthorized promises",
+			"No fabricated contact information — never invent helpline numbers, URLs, email addresses, phone numbers, or support portal links",
 		},
 	},
 	models.AgentDelta: {
@@ -142,6 +147,7 @@ var agentTruths = map[models.AgentID]AgentTruth{
 			"MUST NOT fabricate consequences beyond documented next steps",
 			"MUST NOT restart the workflow or ignore NOVA's handoff context",
 			"MUST NOT invent hardship plans — can only reference existing hardship program referral from NOVA",
+			"MUST NOT hallucinate or invent ANY information not explicitly provided — no helpline numbers, website URLs, support emails, phone numbers, addresses, payment portal URLs, or any contact details unless given in the context",
 		},
 		Compliance: []string{
 			"Disclose AI identity if not already established",
@@ -152,6 +158,7 @@ var agentTruths = map[models.AgentID]AgentTruth{
 			"Maintain professional composure regardless of borrower behavior",
 			"No false threats — consequences must be documented next steps only",
 			"No misleading terms — no invented discounts or unauthorized promises",
+			"No fabricated contact information — never invent helpline numbers, URLs, email addresses, phone numbers, or support portal links",
 		},
 	},
 }
