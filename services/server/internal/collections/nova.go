@@ -3,7 +3,6 @@ package collections
 import (
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -37,6 +36,8 @@ func PrepareNOVAWithClient(workflowID string, client *agents.Client) (*models.Re
 		return nil, errors.New("resolution offer schedule missing before NOVA preparation")
 	}
 	strippedScheduleMetadata := stripNovaScheduleMetadata(&existing[0])
+	normalizeHardshipOfferFlag(&existing[0], wf)
+	enrichNovaCandidateOffer(&existing[0])
 	if novaOfferHasRuntimeTerms(&existing[0]) && novaRuntimeContextHasOfferTerms(derefString(wf.ContextForNova), &existing[0]) {
 		if strippedScheduleMetadata {
 			if err := o.Update(&existing[0], existing[0].Id); err != nil {
@@ -45,27 +46,12 @@ func PrepareNOVAWithClient(workflowID string, client *agents.Client) (*models.Re
 		}
 		return &existing[0], nil
 	}
-	handoff, err := GenerateNovaOfferWithClient(client, *wf)
+	now := time.Now().UTC()
+	handoff, offer, offerClient, err := generateValidatedNovaOfferWithRetry(client, *wf, workflowID, now)
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
-	offer := &models.ResolutionOffer{
-		Id:             utils.GenerateID(),
-		WorkflowId:     workflowID,
-		CandidateOffer: map[string]any{},
-		Status:         models.OfferStatusProposed,
-		CreatedAt:      now,
-	}
-	applyNovaOffer(offer, handoff.Result)
-	if offer.EmiStartDate == nil {
-		offer.EmiStartDate = timePtr(now.Add(7 * 24 * time.Hour))
-	}
-	enrichNovaCandidateOffer(offer)
-	if !novaOfferHasRuntimeTerms(offer) {
-		applyFallbackNovaOffer(offer, wf, now)
-	}
-	runtimeContext, err := GenerateNovaRuntimeContextWithClient(client, *wf, offer)
+	runtimeContext, err := generateNovaRuntimeContextWithRetry(offerClient, *wf, offer)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +79,64 @@ func PrepareNOVAWithClient(workflowID string, client *agents.Client) (*models.Re
 	return &existing[0], nil
 }
 
+func generateValidatedNovaOfferWithRetry(client *agents.Client, wf models.BorrowerWorkflow, workflowID string, now time.Time) (*HandoffCall[NovaOfferResult], *models.ResolutionOffer, *agents.Client, error) {
+	handoff, offer, err := generateValidatedNovaOfferWithClient(client, wf, workflowID, now)
+	if err == nil {
+		return handoff, offer, client, nil
+	}
+	retryClient, retryErr := agents.NewNovaGrok4FastReasoning()
+	if retryErr != nil {
+		return nil, nil, nil, fmt.Errorf("NOVA offer generation failed with primary model: %w; create Grok 4 fast reasoning retry client: %v", err, retryErr)
+	}
+	retryHandoff, retryOffer, retryGenerateErr := generateValidatedNovaOfferWithClient(retryClient, wf, workflowID, now)
+	if retryGenerateErr != nil {
+		return nil, nil, nil, fmt.Errorf("NOVA offer generation failed with primary model: %w; Grok 4 fast reasoning retry failed: %v", err, retryGenerateErr)
+	}
+	return retryHandoff, retryOffer, retryClient, nil
+}
+
+func generateValidatedNovaOfferWithClient(client *agents.Client, wf models.BorrowerWorkflow, workflowID string, now time.Time) (*HandoffCall[NovaOfferResult], *models.ResolutionOffer, error) {
+	handoff, err := GenerateNovaOfferWithClient(client, wf)
+	if err != nil {
+		return nil, nil, err
+	}
+	offer := &models.ResolutionOffer{
+		Id:             utils.GenerateID(),
+		WorkflowId:     workflowID,
+		CandidateOffer: map[string]any{},
+		Status:         models.OfferStatusProposed,
+		CreatedAt:      now,
+	}
+	if err := applyNovaOffer(offer, handoff.Result); err != nil {
+		return nil, nil, err
+	}
+	normalizeHardshipOfferFlag(offer, &wf)
+	enrichNovaCandidateOffer(offer)
+	if !novaOfferHasRuntimeTerms(offer) {
+		return nil, nil, errors.New("NOVA offer generation produced no valid lump-sum, EMI, or explicit hardship terms")
+	}
+	if offer.EmiAmount != nil && offer.EmiMonths != nil && offer.EmiStartDate == nil {
+		return nil, nil, errors.New("NOVA offer generation produced EMI terms without an EMI start date")
+	}
+	return handoff, offer, nil
+}
+
+func generateNovaRuntimeContextWithRetry(client *agents.Client, wf models.BorrowerWorkflow, offer *models.ResolutionOffer) (*HandoffCall[string], error) {
+	runtimeContext, err := GenerateNovaRuntimeContextWithClient(client, wf, offer)
+	if err == nil {
+		return runtimeContext, nil
+	}
+	retryClient, retryErr := agents.NewNovaGrok4FastReasoning()
+	if retryErr != nil {
+		return nil, fmt.Errorf("NOVA runtime context generation failed with primary model: %w; create Grok 4 fast reasoning retry client: %v", err, retryErr)
+	}
+	retryRuntimeContext, retryRuntimeErr := GenerateNovaRuntimeContextWithClient(retryClient, wf, offer)
+	if retryRuntimeErr != nil {
+		return nil, fmt.Errorf("NOVA runtime context generation failed with primary model: %w; Grok 4 fast reasoning retry failed: %v", err, retryRuntimeErr)
+	}
+	return retryRuntimeContext, nil
+}
+
 func stripNovaScheduleMetadata(offer *models.ResolutionOffer) bool {
 	if offer == nil || offer.CandidateOffer == nil {
 		return false
@@ -116,6 +160,56 @@ func novaOfferHasRuntimeTerms(offer *models.ResolutionOffer) bool {
 	}
 	if offer.HardshipOffered != nil && *offer.HardshipOffered {
 		return true
+	}
+	return false
+}
+
+func normalizeHardshipOfferFlag(offer *models.ResolutionOffer, wf *models.BorrowerWorkflow) {
+	if offer == nil {
+		return
+	}
+	if !workflowHasExplicitHardship(wf) {
+		hardship := false
+		offer.HardshipOffered = &hardship
+	}
+}
+
+func workflowHasExplicitHardship(wf *models.BorrowerWorkflow) bool {
+	if wf == nil {
+		return false
+	}
+	if derefBool(wf.HardshipMentioned) || derefBool(wf.HardshipFlagged) {
+		return true
+	}
+	for _, value := range []string{derefString(wf.DefaultReason), derefString(wf.AriaSummary), derefString(wf.ContextForNova)} {
+		if textHasExplicitHardship(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func textHasExplicitHardship(value string) bool {
+	value = strings.ToLower(value)
+	for _, marker := range []string{
+		"hardship",
+		"medical emergency",
+		"medical crisis",
+		"lost job",
+		"job loss",
+		"unemployed",
+		"laid off",
+		"severe distress",
+		"crisis",
+		"cannot pay anything",
+		"can't pay anything",
+		"unable to pay anything",
+		"cannot afford anything",
+		"can't afford anything",
+	} {
+		if strings.Contains(value, marker) {
+			return true
+		}
 	}
 	return false
 }
@@ -149,64 +243,6 @@ func contextContainsAmount(context string, amount float64) bool {
 	return strings.Contains(context, exact) || strings.Contains(context, trimmed) || strings.Contains(context, whole) || strings.Contains(normalized, compact)
 }
 
-func applyFallbackNovaOffer(offer *models.ResolutionOffer, wf *models.BorrowerWorkflow, now time.Time) {
-	if offer == nil || wf == nil {
-		return
-	}
-	loan, err := GetLoan(wf.LoanId)
-	if err != nil || loan == nil || loan.OutstandingAmount <= 0 {
-		hardship := true
-		offer.HardshipOffered = &hardship
-		offer.CandidateOffer = map[string]any{
-			"hardship_offered": true,
-			"status":           "hardship_review_pending",
-		}
-		return
-	}
-	discountPct := loan.PolicyMaxDiscountPct
-	if discountPct < 0 {
-		discountPct = 0
-	}
-	if discountPct > 100 {
-		discountPct = 100
-	}
-	lumpSum := roundMoney(loan.OutstandingAmount * (1 - discountPct/100))
-	if lumpSum <= 0 {
-		lumpSum = roundMoney(loan.OutstandingAmount)
-		discountPct = 0
-	}
-	emiMonths := 6
-	emiAmount := roundMoney(loan.OutstandingAmount / float64(emiMonths))
-	emiStart := now.Add(7 * 24 * time.Hour)
-	hardship := false
-	offer.LumpSumOffered = &lumpSum
-	offer.LumpSumDiscountPct = &discountPct
-	offer.EmiAmount = &emiAmount
-	offer.EmiMonths = &emiMonths
-	offer.EmiStartDate = &emiStart
-	offer.HardshipOffered = &hardship
-	offer.CandidateOffer = map[string]any{
-		"primary_option": map[string]any{
-			"type":         "lump_sum",
-			"amount":       lumpSum,
-			"discount_pct": discountPct,
-			"deadline":     now.Add(48 * time.Hour).Format(time.RFC3339),
-		},
-		"secondary_option": map[string]any{
-			"type":           "emi",
-			"monthly_amount": emiAmount,
-			"months":         emiMonths,
-			"start_date":     emiStart.Format("2006-01-02"),
-		},
-		"lump_sum_offered":      lumpSum,
-		"lump_sum_discount_pct": discountPct,
-		"emi_amount":            emiAmount,
-		"emi_months":            emiMonths,
-		"emi_start_date":        emiStart.Format("2006-01-02"),
-		"hardship_offered":      hardship,
-	}
-}
-
 func enrichNovaCandidateOffer(offer *models.ResolutionOffer) {
 	if offer == nil {
 		return
@@ -220,22 +256,16 @@ func enrichNovaCandidateOffer(offer *models.ResolutionOffer) {
 		if offer.LumpSumDiscountPct != nil {
 			offer.CandidateOffer["lump_sum_discount_pct"] = *offer.LumpSumDiscountPct
 		}
-		deadline := time.Now().UTC().Add(48 * time.Hour)
-		if offer.ScheduledCallAt != nil {
-			deadline = offer.ScheduledCallAt.UTC().Add(48 * time.Hour)
-		}
 		if option, ok := offer.CandidateOffer["primary_option"].(map[string]any); ok {
 			option["type"] = "lump_sum"
 			option["amount"] = *offer.LumpSumOffered
-			option["deadline"] = deadline.Format(time.RFC3339)
 			if offer.LumpSumDiscountPct != nil {
 				option["discount_pct"] = *offer.LumpSumDiscountPct
 			}
 		} else {
 			offer.CandidateOffer["primary_option"] = map[string]any{
-				"type":     "lump_sum",
-				"amount":   *offer.LumpSumOffered,
-				"deadline": deadline.Format(time.RFC3339),
+				"type":   "lump_sum",
+				"amount": *offer.LumpSumOffered,
 			}
 			if offer.LumpSumDiscountPct != nil {
 				offer.CandidateOffer["primary_option"].(map[string]any)["discount_pct"] = *offer.LumpSumDiscountPct
@@ -270,10 +300,6 @@ func enrichNovaCandidateOffer(offer *models.ResolutionOffer) {
 	if offer.HardshipOffered != nil {
 		offer.CandidateOffer["hardship_offered"] = *offer.HardshipOffered
 	}
-}
-
-func roundMoney(amount float64) float64 {
-	return math.Round(amount*100) / 100
 }
 
 func SetNovaScheduledCall(workflowID string, scheduledAt time.Time, reason string) error {
@@ -498,10 +524,6 @@ func CompleteNOVAWithClients(workflowID, callID, transcript, recordingURL string
 		wf.ResolvedAt = &now
 	} else {
 		wf.CurrentStage = models.AgentDelta
-		if wf.FinalOfferDeadline == nil {
-			deadline := now.Add(48 * time.Hour)
-			wf.FinalOfferDeadline = &deadline
-		}
 		deltaRuntime, err := GenerateDeltaRuntimeContextWithClient(deltaClient, handoff.Result, offer, *wf)
 		if err != nil {
 			return "", err

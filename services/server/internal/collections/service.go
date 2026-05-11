@@ -396,7 +396,12 @@ func ActivePromptVersion(agentID models.AgentID) (*models.PromptVersion, error) 
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("active prompt not found for %s", agentID)
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].VersionNumber > rows[j].VersionNumber })
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].VersionNumber == rows[j].VersionNumber {
+			return rows[i].CreatedAt.After(rows[j].CreatedAt)
+		}
+		return rows[i].VersionNumber > rows[j].VersionNumber
+	})
 	return &rows[0], nil
 }
 

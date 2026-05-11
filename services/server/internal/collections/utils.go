@@ -422,7 +422,11 @@ func getOrCreateConversation(wf models.BorrowerWorkflow, agentID models.AgentID,
 	var rows []models.AgentConversation
 	if err := o.GetByFieldsEquals(map[string]any{"WorkflowId": wf.Id, "AgentId": agentID}).Scan(&rows); err == nil && len(rows) > 0 {
 		sort.Slice(rows, func(i, j int) bool { return rows[i].StartedAt.After(rows[j].StartedAt) })
-		return rows[0], nil
+		for _, row := range rows {
+			if row.EndedAt == nil && row.PromptVersion == promptVersion {
+				return row, nil
+			}
+		}
 	}
 	conv := models.AgentConversation{Id: utils.GenerateID(), WorkflowId: wf.Id, UserId: wf.UserId, AgentId: agentID, IsSimulated: boolPtr(false), PromptVersion: promptVersion, TotalTurns: intPtr(0), TotalTokensUsed: intPtr(0), StartedAt: time.Now().UTC()}
 	return conv, o.Insert(&conv)

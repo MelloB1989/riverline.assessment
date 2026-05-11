@@ -38,6 +38,7 @@ type NovaOfferResult struct {
 	LumpSumDiscountPct *float64       `json:"lump_sum_discount_pct"`
 	EmiAmount          *float64       `json:"emi_amount"`
 	EmiMonths          *int           `json:"emi_months"`
+	EmiStartDate       *string        `json:"emi_start_date"`
 	HardshipOffered    *bool          `json:"hardship_offered"`
 	ContextForNova     string         `json:"context_for_nova"`
 }
@@ -99,7 +100,7 @@ func GenerateAriaHandoffWithClient(client *agents.Client, wf models.BorrowerWork
   "aria_summary": string,
   "context_for_nova": string,
   "preferred_nova_call_at": string|null
-}`, `Use only the ARIA chat messages plus user and loan facts. Produce the assessment fields ARIA collected and a <= 500 token context for NOVA. For a normal ready-for-call handoff, preferred_nova_call_at must be the borrower-confirmed resolution-call time as an ISO-8601 timestamp with timezone. Use null only for stop-contact or hardship terminal outcomes. Do not compute or offer repayment terms.`)
+}`, `Use only the ARIA chat messages plus user and loan facts. Do not miss any important information in "context_for_nova" field; it must include current loan status, outstanding amount if present, overdue days if present, policy discount context if present, and relevant financial data such as savings, monthly obligations, earnings, employment, and default reason. For hardship fields, mark hardship_mentioned true only when the borrower explicitly mentions hardship, job loss, medical emergency, crisis, severe distress, or inability to pay anything. Do not treat ordinary affordability constraints, low income, high obligations, wanting a lower payment, or needing installments as hardship by themselves. For a normal ready-for-call handoff, context_for_nova must preserve facts needed for NOVA to generate lump-sum and EMI offers and must not recommend hardship unless explicit hardship/crisis facts are present. Produce the assessment fields ARIA collected and a <= 500 token context for NOVA. preferred_nova_call_at must be the borrower-confirmed resolution-call time as an ISO-8601 timestamp with timezone. Use null only for stop-contact or explicit hardship terminal outcomes. Do not compute or offer repayment terms.`)
 	var result AriaHandoffResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
@@ -125,6 +126,7 @@ func GenerateNovaOfferWithClient(client *agents.Client, wf models.BorrowerWorkfl
 	payload := map[string]any{
 		"aria_handoff": derefString(wf.ContextForNova),
 		"aria_summary": derefString(wf.AriaSummary),
+		"current_utc":  time.Now().UTC().Format(time.RFC3339),
 	}
 	if loan != nil {
 		payload["offer_policy"] = map[string]any{
@@ -139,8 +141,9 @@ func GenerateNovaOfferWithClient(client *agents.Client, wf models.BorrowerWorkfl
   "lump_sum_discount_pct": number|null,
   "emi_amount": number|null,
   "emi_months": number|null,
+  "emi_start_date": string|null,
   "hardship_offered": boolean|null
-}`, `Generate only the exact offer NOVA should present from ARIA context, loan facts, and policy. The candidate_offer must include a primary lump-sum option when policy allows it and a secondary EMI option when feasible. Populate exact amounts, discount percent, EMI amount, months, and hardship eligibility from the provided loan facts and policy. Do not generate runtime context and do not mark a call outcome.`)
+}`, `Generate only the exact commercial offer NOVA should present from ARIA context, loan facts, policy, and current_utc. If outstanding_amount is greater than zero, candidate_offer must include a primary lump-sum option using policy_max_discount_pct and a secondary EMI option when feasible. Populate exact amounts, discount percent, EMI amount, months, EMI start date, and hardship eligibility from the provided facts. candidate_offer must contain call-ready option objects with deadlines/start dates; do not leave required offer terms for downstream code to infer. Set hardship_offered true only when ARIA context explicitly reports hardship, job loss, medical emergency, crisis, severe distress, or inability to pay anything, or when no valid lump-sum/EMI offer can be produced from loan facts. Do not treat low income, high obligations, affordability concerns, requests for lower payments, or needing installments as hardship by themselves. Do not generate runtime context and do not mark a call outcome.`)
 	var result NovaOfferResult
 	tokens, err := client.ParseHandoff(prompt, &result)
 	if err != nil {
@@ -167,8 +170,8 @@ func GenerateNovaRuntimeContextWithClient(client *agents.Client, wf models.Borro
 		"aria_summary":     derefString(wf.AriaSummary),
 		"resolution_offer": conciseOfferState(offer),
 	}
-	prompt := buildRuntimeSummaryPrompt("NOVA runtime context", payload, "Generate only the <= 500 token voice-call context NOVA needs from ARIA's handoff and NOVA's generated offer. Include borrower/account identifiers only as partial identifiers, ARIA assessment facts, scheduled callback timing if relevant, and exact offer terms. Write the offer terms as call-ready instructions with a primary offer and secondary option where available, including exact amounts, deadlines or start dates, and the commitment question. Do not include raw JSON or unrelated workflow fields.")
-	resp, err := client.GenerateTextWithTemporarySystem("You are NOVA's internal runtime-context summarizer. Generate concise call context for the voice assistant from provided JSON. Do not speak to the borrower. Return only plain text.", prompt, 6)
+	prompt := buildRuntimeSummaryPrompt("NOVA runtime context", payload, "Generate only the <= 500 token voice-call context NOVA needs from ARIA's handoff and NOVA's generated offer. Include borrower/account identifiers only as partial identifiers, ARIA assessment facts, scheduled callback timing if relevant, and exact offer terms. Write the offer terms as call-ready instructions with a primary lump-sum offer and secondary EMI option wherever present, including exact amounts, deadlines or start dates, and the commitment question. Do not present hardship referral as an option unless resolution_offer.hardship_offered is true; ordinary affordability concerns, low income, high obligations, or requests for lower payments are not hardship. Do not include raw JSON or unrelated workflow fields.")
+	resp, err := client.GenerateTextWithTemporarySystem("You are NOVA's internal runtime-context summarizer. Generate concise call context for the voice assistant from provided JSON. Prioritize valid lump-sum and EMI offer terms. Include hardship referral only when the input explicitly says hardship_offered is true. Do not speak to the borrower. Return only plain text.", prompt, 6)
 	if err != nil {
 		log.Printf("[collections] handoff generation failed workflow=%s agent=%s type=runtime_context duration=%s err=%v", wf.Id, models.AgentNova, time.Since(start), err)
 		return nil, fmt.Errorf("generate nova runtime context: %w", err)
@@ -441,7 +444,7 @@ func applyAriaHandoff(wf *models.BorrowerWorkflow, result AriaHandoffResult) {
 	}
 }
 
-func applyNovaOffer(offer *models.ResolutionOffer, result NovaOfferResult) {
+func applyNovaOffer(offer *models.ResolutionOffer, result NovaOfferResult) error {
 	if len(result.CandidateOffer) > 0 {
 		offer.CandidateOffer = result.CandidateOffer
 	} else {
@@ -452,6 +455,13 @@ func applyNovaOffer(offer *models.ResolutionOffer, result NovaOfferResult) {
 	offer.LumpSumDiscountPct = result.LumpSumDiscountPct
 	offer.EmiAmount = result.EmiAmount
 	offer.EmiMonths = result.EmiMonths
+	if result.EmiStartDate != nil && strings.TrimSpace(*result.EmiStartDate) != "" {
+		emiStartDate, err := parseBorrowerCallTime(*result.EmiStartDate, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("parse nova EMI start date: %w", err)
+		}
+		offer.EmiStartDate = &emiStartDate
+	}
 	offer.HardshipOffered = result.HardshipOffered
 	if result.LumpSumOffered != nil {
 		offer.CandidateOffer["lump_sum_offered"] = *result.LumpSumOffered
@@ -468,13 +478,8 @@ func applyNovaOffer(offer *models.ResolutionOffer, result NovaOfferResult) {
 	if result.HardshipOffered != nil {
 		offer.CandidateOffer["hardship_offered"] = *result.HardshipOffered
 	}
-	if len(offer.CandidateOffer) == 0 {
-		offer.CandidateOffer["status"] = "hardship_review_pending"
-		hardship := true
-		offer.HardshipOffered = &hardship
-		offer.CandidateOffer["hardship_offered"] = true
-	}
 	enrichNovaCandidateOffer(offer)
+	return nil
 }
 
 func applyNovaCallHandoff(wf *models.BorrowerWorkflow, offer *models.ResolutionOffer, result NovaCallHandoffResult) {

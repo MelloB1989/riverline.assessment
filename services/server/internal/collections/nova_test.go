@@ -82,3 +82,22 @@ func TestNovaRuntimeContextMustContainOfferTerms(t *testing.T) {
 		t.Fatal("context containing exact lump-sum and EMI terms should be accepted")
 	}
 }
+
+func TestNormalizeHardshipOfferFlagRequiresExplicitHardship(t *testing.T) {
+	hardship := true
+	lumpSum := 7663.5
+	wf := &models.BorrowerWorkflow{
+		AriaSummary:    stringPtr("Student with income about 1000 and obligations about 500. Wants lower payments."),
+		ContextForNova: stringPtr("Affordability concern and request for installments only."),
+	}
+	offer := &models.ResolutionOffer{
+		LumpSumOffered:  &lumpSum,
+		HardshipOffered: &hardship,
+	}
+
+	normalizeHardshipOfferFlag(offer, wf)
+
+	if offer.HardshipOffered == nil || *offer.HardshipOffered {
+		t.Fatal("ordinary affordability facts must not leave hardship_offered true")
+	}
+}
