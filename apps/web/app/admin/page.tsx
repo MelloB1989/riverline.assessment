@@ -23,6 +23,7 @@ import {
   type PromptExperiment,
 } from "./actions";
 import RunEvalButton from "./run-eval-button";
+import ScoreTrendChart from "./score-trend-chart";
 
 const agents: AgentId[] = ["aria", "nova", "delta"];
 const SYSTEM_COLOR = "#f472b6";
@@ -418,48 +419,6 @@ function CostBreakdown({ summary }: { summary: AdminEvalSummary }) {
   );
 }
 
-function ScoreTrendChart({ scores }: { scores: ConversationScore[] }) {
-  const rows = [...scores].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-  if (rows.length === 0) return <EmptyState text="No score trend data yet." />;
-  const width = 720;
-  const height = 220;
-  const padding = 28;
-  const point = (row: ConversationScore, index: number) => {
-    const x = padding + (index / Math.max(1, rows.length - 1)) * (width - padding * 2);
-    const y = padding + (1 - Math.max(0, Math.min(100, row.composite_score)) / 100) * (height - padding * 2);
-    return `${x},${y}`;
-  };
-  const points = rows.map((row, index) => point(row, index)).join(" ");
-  return (
-    <div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-64 w-full overflow-visible rounded-2xl border border-white/10 bg-black/20 p-2">
-        {[0, 25, 50, 75, 100].map((tick) => {
-          const y = padding + (1 - tick / 100) * (height - padding * 2);
-          return (
-            <g key={tick}>
-              <line x1={padding} x2={width - padding} y1={y} y2={y} stroke="rgba(255,255,255,0.08)" />
-              <text x={4} y={y + 4} fill="rgba(255,255,255,0.35)" fontSize="10">
-                {tick}
-              </text>
-            </g>
-          );
-        })}
-        <polyline points={points} fill="none" stroke={SYSTEM_COLOR} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-        {rows.map((row, index) => {
-          const [x, y] = point(row, index).split(",").map(Number);
-          return <circle key={row.id} cx={x} cy={y} r="4" fill={SYSTEM_COLOR} />;
-        })}
-      </svg>
-      <div className="mt-3 flex flex-wrap gap-3 text-xs text-zinc-400">
-        <span className="inline-flex items-center gap-2">
-          <span className="size-2 rounded-full" style={{ backgroundColor: SYSTEM_COLOR }} />
-          System (full flow)
-        </span>
-        <span className="ml-auto text-zinc-600">{fmtInt(rows.length)} chronological score rows</span>
-      </div>
-    </div>
-  );
-}
 
 function ComplianceExperimentChart({ experiments }: { experiments: PromptExperiment[] }) {
   const rows = [...experiments].sort(sortNewest).slice(0, 10).reverse();
