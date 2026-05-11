@@ -373,17 +373,17 @@ func AdminRunPromptExperiment(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
-	// Run prompt experiments for all 3 agents
-	agents := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
+	// Primary agent for scoring rubric — all 3 agents get new prompts inside the cycle
+	primaryAgent := models.AgentID("aria")
 	if req.AgentID != "" {
-		// If a specific agent is requested, only run for that one
-		agents = []models.AgentID{req.AgentID}
+		primaryAgent = req.AgentID
 	}
 
 	cfg := rivereval.SimConfig{
 		Seed:             req.Seed,
 		BatchSize:        req.BatchSize,
 		Personas:         req.Personas,
+		AgentID:          primaryAgent,
 		MaxTurnsPerAgent: req.MaxTurnsPerAgent,
 		Judges:           req.Judges,
 	}
@@ -402,19 +402,16 @@ func AdminRunPromptExperiment(c *fiber.Ctx) error {
 	adminEvalRuns.latest = run.ID
 	adminEvalRuns.Unlock()
 
-	go func(runID string, targetAgents []models.AgentID, simCfg rivereval.SimConfig) {
-		for _, agentID := range targetAgents {
-			simCfg.AgentID = agentID
-			log.Printf("[eval] prompt experiment start agent=%s", agentID)
-			if _, err := rivereval.RunImprovementCycle(agentID, simCfg); err != nil {
-				log.Printf("[eval] prompt experiment failed agent=%s err=%v", agentID, err)
-				markAdminEvalRunFailed(runID, err)
-				return
-			}
-			log.Printf("[eval] prompt experiment done agent=%s", agentID)
+	go func(runID string, agentID models.AgentID, simCfg rivereval.SimConfig) {
+		log.Printf("[eval] prompt experiment start primary_agent=%s (all 3 agents will be optimized)", agentID)
+		if _, err := rivereval.RunImprovementCycle(agentID, simCfg); err != nil {
+			log.Printf("[eval] prompt experiment failed err=%v", err)
+			markAdminEvalRunFailed(runID, err)
+			return
 		}
+		log.Printf("[eval] prompt experiment done (all 3 agents updated)")
 		markAdminEvalRunCompleted(runID)
-	}(run.ID, agents, cfg)
+	}(run.ID, primaryAgent, cfg)
 
 	return c.JSON(fiber.Map{"run_id": run.ID, "existing": false, "run": adminEvalRunToSnapshot(run)})
 }

@@ -315,7 +315,11 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 		metaEvery = constants.DefaultSelfLearningConfig().MetaEvalEveryJudgeRuns
 	}
 
-	log.Printf("[eval] experiment loop start agent=%s control_version=%d max_iterations=%d batch_size=%d personas=%d", agentID, current.VersionNumber, maxIterations, cfg.BatchSize, len(cfg.Personas))
+	// All 3 agents whose prompts will be generated together
+	allAgents := []models.AgentID{models.AgentAria, models.AgentNova, models.AgentDelta}
+
+	log.Printf("[eval] experiment loop start agent=%s control_version=%d max_iterations=%d batch_size=%d personas=%d multi_agent=true",
+		agentID, current.VersionNumber, maxIterations, cfg.BatchSize, len(cfg.Personas))
 
 	cfg.AgentID = agentID
 	cfg.PromptOverrides = nil
@@ -340,36 +344,94 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 		if err := enforceRunBudget(cfg); err != nil {
 			return finalExp, controlStats, finalTreatment, err
 		}
-		candidateVersion, err := nextPromptVersion(agentID)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		log.Printf("[eval] experiment iteration start agent=%s iteration=%d/%d candidate_version=%d", agentID, iteration, maxIterations, candidateVersion)
-		evidence := PromptGenerationEvidenceWithHistory(agentID, current.VersionNumber, candidateVersion, controlStats, rejectedStats)
-		candidatePrompt, inputTokens, outputTokens, modelUsed, err := generateCandidatePrompt(agentID, current.PromptText, evidence)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		log.Printf("[eval] candidate prompt generated agent=%s candidate_version=%d iteration=%d tokens_in=%d tokens_out=%d model=%s prompt_chars=%d evidence_chars=%d", agentID, candidateVersion, iteration, inputTokens, outputTokens, modelUsed, len(candidatePrompt), len(evidence))
 
-		treatmentCfg := cfg
-		treatmentCfg.PromptOverrides = map[models.AgentID]PromptOverride{
-			agentID: {VersionNumber: candidateVersion, PromptText: candidatePrompt},
+		// Phase 1: Generate candidate prompts for ALL agents
+		type agentCandidate struct {
+			AgentID      models.AgentID
+			Version      int
+			Prompt       string
+			InputTokens  int
+			OutputTokens int
+			ModelUsed    string
+			CurrentPrompt string
 		}
+		candidates := make([]agentCandidate, 0, len(allAgents))
+		overrides := make(map[models.AgentID]PromptOverride, len(allAgents))
+
+		log.Printf("[eval] experiment iteration %d/%d: generating candidate prompts for all agents", iteration, maxIterations)
+		for _, aid := range allAgents {
+			agentCurrent, err := collections.ActivePromptVersion(aid)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("load active prompt for %s: %w", aid, err)
+			}
+			candidateVersion, err := nextPromptVersion(aid)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("next version for %s: %w", aid, err)
+			}
+			evidence := PromptGenerationEvidenceWithHistory(aid, agentCurrent.VersionNumber, candidateVersion, controlStats, rejectedStats)
+			candidatePrompt, inputTokens, outputTokens, modelUsed, err := generateCandidatePrompt(aid, agentCurrent.PromptText, evidence)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("generate candidate for %s: %w", aid, err)
+			}
+			log.Printf("[eval] candidate prompt generated agent=%s candidate_version=%d iteration=%d tokens_in=%d tokens_out=%d model=%s prompt_chars=%d",
+				aid, candidateVersion, iteration, inputTokens, outputTokens, modelUsed, len(candidatePrompt))
+
+			candidates = append(candidates, agentCandidate{
+				AgentID:       aid,
+				Version:       candidateVersion,
+				Prompt:        candidatePrompt,
+				InputTokens:   inputTokens,
+				OutputTokens:  outputTokens,
+				ModelUsed:     modelUsed,
+				CurrentPrompt: agentCurrent.PromptText,
+			})
+			overrides[aid] = PromptOverride{VersionNumber: candidateVersion, PromptText: candidatePrompt}
+		}
+
+		// Phase 2: Run ONE simulation with ALL 3 overrides — scored as a single flow
+		log.Printf("[eval] experiment iteration %d/%d: running treatment simulation with all %d agent overrides", iteration, maxIterations, len(overrides))
+		treatmentCfg := cfg
+		treatmentCfg.PromptOverrides = overrides
 		treatmentCfg.PersonaGuidance = PersonaGuidanceFromScores(agentID, controlStats, rejectedStats)
 		_, treatmentStats, err := RunSimulationScored(treatmentCfg, cfg.Judges)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 
-		exp, err := buildAndSavePromptExperiment(agentID, current.VersionNumber, candidateVersion, controlScores, controlCompliance, controlStats, treatmentStats, candidatePrompt, modelUsed, inputTokens, outputTokens, cfg)
+		// Phase 3: Evaluate flow scores and decide adoption
+		// Use primary agent for experiment record (the flow is scored as one unit)
+		primaryCandidate := candidates[0] // ARIA is first
+		for _, c := range candidates {
+			if c.AgentID == agentID {
+				primaryCandidate = c
+				break
+			}
+		}
+		exp, err := buildAndSavePromptExperiment(agentID, current.VersionNumber, primaryCandidate.Version,
+			controlScores, controlCompliance, controlStats, treatmentStats,
+			primaryCandidate.Prompt, primaryCandidate.ModelUsed,
+			primaryCandidate.InputTokens, primaryCandidate.OutputTokens, cfg)
 		if err != nil {
 			return nil, nil, nil, err
 		}
+
+		// Phase 4: Save ALL candidate prompts (adopted or rejected together)
+		for _, c := range candidates {
+			if c.AgentID == agentID {
+				continue // already saved by buildAndSavePromptExperiment
+			}
+			if err := saveCandidatePrompt(c.AgentID, c.Version, c.Prompt, exp.Adopted, exp); err != nil {
+				log.Printf("[eval] warning: failed to save candidate for %s: %v", c.AgentID, err)
+			}
+			if err := collections.LogCost("prompt_generation", &c.AgentID, c.ModelUsed, c.InputTokens, c.OutputTokens, nil, &exp.Id); err != nil {
+				log.Printf("[eval] warning: failed to log cost for %s: %v", c.AgentID, err)
+			}
+		}
+
 		finalExp = exp
 		finalTreatment = treatmentStats
-		log.Printf("[eval] experiment iteration done agent=%s experiment=%s iteration=%d delta=%.2f p=%.4f d=%.2f adopted=%t duration=%s",
-			agentID, exp.Id, iteration, exp.MeanDelta, exp.PValue, derefFloat(exp.CohensD), exp.Adopted, time.Since(start))
+		log.Printf("[eval] experiment iteration done iteration=%d delta=%.2f p=%.4f d=%.2f adopted=%t agents_updated=%d duration=%s",
+			iteration, exp.MeanDelta, exp.PValue, derefFloat(exp.CohensD), exp.Adopted, len(candidates), time.Since(start))
 		if exp.Adopted {
 			return exp, controlStats, treatmentStats, nil
 		}
@@ -379,7 +441,7 @@ func runImprovementCycleDetailed(agentID models.AgentID, cfg SimConfig) (*models
 	if finalExp == nil {
 		return nil, controlStats, nil, finalErr
 	}
-	log.Printf("[eval] experiment loop exhausted agent=%s final_experiment=%s adopted=%t err=%v duration=%s", agentID, finalExp.Id, finalExp.Adopted, finalErr, time.Since(start))
+	log.Printf("[eval] experiment loop exhausted final_experiment=%s adopted=%t err=%v duration=%s", finalExp.Id, finalExp.Adopted, finalErr, time.Since(start))
 	return finalExp, controlStats, finalTreatment, nil
 }
 
