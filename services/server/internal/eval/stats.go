@@ -27,16 +27,12 @@ func aggregateComplianceRate(stats []SimulationScore) float64 {
 	return total / float64(len(stats))
 }
 
-func rejectionReason(adopt bool, pValue, delta, effectSize, controlCompliance, treatmentCompliance float64, issueGatePassed bool, issueGateReason string) *string {
+func rejectionReason(adopt bool, pValue, delta, effectSize, controlCompliance, treatmentCompliance float64) *string {
 	if adopt {
 		return nil
 	}
 	if treatmentCompliance == 0 && controlCompliance > 0 {
 		reason := fmt.Sprintf("candidate rejected: compliance regressed to 0.00 from %.2f; prompt must fix judge compliance_breakdown defects before adoption (delta=%.2f p=%.4f d=%.2f)", controlCompliance, delta, pValue, effectSize)
-		return &reason
-	}
-	if !issueGatePassed {
-		reason := fmt.Sprintf("candidate rejected: targeted judge issue retest failed: %s (delta=%.2f p=%.4f d=%.2f compliance %.2f->%.2f)", issueGateReason, delta, pValue, effectSize, controlCompliance, treatmentCompliance)
 		return &reason
 	}
 	reason := fmt.Sprintf("candidate rejected: delta=%.2f p=%.4f d=%.2f compliance %.2f->%.2f did not clear adoption gates", delta, pValue, effectSize, controlCompliance, treatmentCompliance)
