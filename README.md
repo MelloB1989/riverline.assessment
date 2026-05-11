@@ -1,410 +1,292 @@
 # Riverline Collections AI
 
-A post-default debt collections system with three specialized AI agents operating behind a single continuous borrower experience. A Temporal workflow orchestrates handoffs between two chat agents and one voice agent, each with a self-learning loop that autonomously improves its own performance — and a meta-evaluation layer that evolves its own evaluation methodology over time.
+Riverline Collections AI is a post-default debt collections system built for the Riverline self-learning agents assignment in [llm-docs/problem.md](llm-docs/problem.md). It presents one continuous borrower experience while a Temporal workflow coordinates three specialized agents:
 
-```
-Borrower Chat UI
-  -> Go API (Fiber)
-  -> ARIA: Assessment Agent (Chat) — cold, clinical fact-gathering
-  -> NOVA: Resolution Agent (Voice via Vapi) — transactional dealmaker
-  -> DELTA: Final Notice Agent (Chat) — consequence-driven closer
+- ARIA, a chat assessment agent that verifies identity and gathers facts.
+- NOVA, a voice resolution agent powered through Vapi that presents policy-bounded repayment options.
+- DELTA, a final-notice chat agent that records the last written offer and consequences.
 
-Persistence: PostgreSQL 16 + Karma ORM
-Infra: Redis 7, Temporal 1.28, Docker Compose
-Frontend: Next.js
-```
+The system also includes a simulation harness, quantitative LLM-as-judge evaluation, prompt experiment adoption gates, prompt/evaluator versioning, rollback, cost logging, and an always-on self-learning supervisor. The deeper explanation of the judges, meta-evaluator, and self-learning loop lives in [SELF_LEARNING.md](SELF_LEARNING.md).
 
-## Architecture
+## Architecture Diagram
 
-### The Three Agents
+![Riverline architecture diagram](docs/assets/arch.png)
 
-| Agent | Modality | Role | Tone |
-|-------|----------|------|------|
-| **ARIA** | Chat | Assessment — establishes the debt, verifies identity via partial account info, gathers financial situation. Determines resolution path. | Cold, clinical, all business |
-| **NOVA** | Voice (Vapi) | Resolution — calls the borrower to present settlement options (lump-sum, structured plan, hardship referral) with deadlines and conditions. Handles objections by restating terms. | Transactional dealmaker |
-| **DELTA** | Chat | Final Notice — lays out consequences (credit reporting, legal referral, asset recovery). Makes one last offer with a hard expiry. | Consequence-driven, zero ambiguity |
+## Assignment Mapping
 
-The progression is **information → transaction → ultimatum**. The modality shift is intentional: assessment gathers facts over chat, resolution negotiates over voice where tone and real-time objection handling matter, and final notice returns to chat for a documented written record.
+| Requirement from problem.md                          | Implementation                                                                                                                                                                                         |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Temporal workflow per borrower                       | `services/server/internal/workflows/borrower.go` orchestrates ARIA, NOVA, DELTA, and evaluation child workflows.                                                                                       |
+| Two chat agents and one voice agent                  | ARIA and DELTA are chat agents; NOVA is a Vapi voice agent with a dry-run/synthetic fallback path.                                                                                                     |
+| Continuous borrower experience                       | Handoffs are structured summaries, not raw transcript dumps, so each stage starts with the minimum facts needed to continue without repeated questions.                                                |
+| 2000 token agent budget and 500 token handoff budget | Agent prompts reserve space for handoff context; handoff generators explicitly request `<= 500 token` runtime summaries.                                                                               |
+| Quantitative self-learning loop                      | Simulation scores are aggregated across independent judges, compared with Welch's t-test and Cohen's d, and stored with raw score arrays.                                                              |
+| Compliance preservation                              | Evaluator prompts, agent truth constraints, compliance canaries, and adoption gates prevent prompt updates that regress compliance.                                                                    |
+| Audit trail and rollback                             | `prompt_versions`, `prompt_experiments`, `conversation_scores`, `evaluator_versions`, `meta_flags`, and rollback endpoints preserve the evolution history.                                             |
+| Darwin Godel Machine style meta-evaluation           | `RunMetaEvaluation` detects evaluator flaws such as score inflation, useless metrics, judge disagreement, invalid judge output, and post-adoption regression, then creates a revised evaluator prompt. |
+| Reproducibility                                      | `make eval` reruns the full cycle with seed/config and emits JSON artifacts; `make report` exports CSV reports.                                                                                        |
+| Cost cap                                             | All LLM calls are logged in `llm_cost_log`; supervisor defaults to an incremental spend cap from `LEARNING_LOOP_BUDGET_USD` (default `15`).                                                            |
 
-### Cross-Modal Handoff Mechanism
+## Three-Agent Pipeline
 
-Handoffs are LLM-generated structured summaries, not raw context forwarding. Each handoff call produces a JSON object with exactly the fields the next agent needs.
+| Agent | Modality           | Purpose                                                                                                                                                                      | Style                           |
+| ----- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| ARIA  | Chat               | Establish debt, verify identity with partial account information, collect employment/income/obligations/default reason, and decide whether a NOVA resolution call is viable. | Cold, clinical, fact-gathering. |
+| NOVA  | Voice              | Generate and present exact policy-bounded settlement terms, including lump-sum, EMI, and hardship referral where allowed. Handles objections by restating terms.             | Transactional dealmaker.        |
+| DELTA | Chat/email handoff | Produce a documented final offer, deadline, and consequence summary after NOVA fails to close or cannot connect.                                                             | Deadline-focused final notice.  |
 
-**ARIA → NOVA**: When ARIA completes its assessment, `GenerateAriaHandoff` takes the full ARIA chat transcript plus user/loan facts and produces:
-- `aria_summary`: structured assessment (identity verified, financial situation, viable resolution paths)
-- `context_for_nova`: a ≤500-token context blob for NOVA's voice call
-- `preferred_nova_call_at`: borrower-confirmed callback time (ISO-8601)
-- `outcome`: assessment outcome determining workflow routing
+The intended borrower progression is information, then transaction, then ultimatum. The workflow does not expose the internal agent boundary to the borrower.
 
-**NOVA voice call → DELTA**: After the voice call ends, `GenerateNovaCallHandoff` takes the call transcript, persisted offer terms, and ARIA context to produce:
-- `aria_summary`: updated with what NOVA offered and how the borrower reacted
-- `delta_summary`: call outcome summary for DELTA
-- `offer_accepted`: whether the borrower accepted exact payment terms
-- `outcome`: determines whether DELTA is needed
+## Cross-Modal Handoffs
 
-Each agent generates its own runtime context in a separate step (`GenerateNovaRuntimeContext`) rather than receiving raw handoff data, ensuring each agent's context is optimized for its specific modality and role.
+Handoffs are generated as structured outputs in [services/server/internal/collections/handoff.go](services/server/internal/collections/handoff.go):
 
-### Context Budget
+- `GenerateAriaHandoff` consumes ARIA chat messages, borrower data, and loan data. It stores assessment fields, `aria_summary`, `context_for_nova`, and the borrower-confirmed callback time.
+- `GenerateNovaOffer` turns ARIA context and loan policy into exact commercial offer terms before the Vapi call.
+- `GenerateNovaRuntimeContext` creates a plain-text `<=500 token` voice-call context containing only call-ready facts and offer terms.
+- `GenerateNovaCallHandoff` parses the Vapi transcript or structured output into accepted/rejected status, objections, updated ARIA memory, and final-offer terms.
+- `GenerateDeltaRuntimeContext` and `GenerateDeltaHandoff` produce the final written context and DELTA handoff summary.
 
-Each agent operates under a strict token budget enforced via LLM instructions:
+This design preserves continuity while keeping each downstream agent under the context budget. The current enforcement is prompt/instruction based: the summarizers are explicitly instructed to stay under 500 tokens and cost/token usage is logged, but there is not yet a hard tokenizer truncation guard.
 
-- **Total context window**: 2000 tokens per agent (system prompt + handoff context)
-- **Handoff context**: maximum 500 tokens from prior stages
-- **ARIA**: starts fresh, full 2000 tokens for system prompt
-- **NOVA**: receives ≤500 tokens summarizing ARIA's chat, 1500 tokens for system prompt
-- **DELTA**: receives ≤500 tokens summarizing full history (ARIA chat + NOVA voice call), 1500 tokens for system prompt
+## Temporal Workflow
 
-The summarization layer preserves critical information (identity verification status, financial situation, offers made, objections raised, borrower emotional state) within the hard constraint. The LLM generating handoff context is explicitly instructed to stay within 500 tokens.
+`AriaHandoffWorkflow` is the entry workflow. It completes ARIA, prepares NOVA, waits until the scheduled call time, starts the Vapi call, and starts `NovaCompletionWorkflow` as a child.
 
-### Workflow Orchestration (Temporal)
+`NovaCompletionWorkflow` waits for either a Vapi webhook signal or polling fallback. Retryable call outcomes such as busy, no-answer, voicemail, and provider failure are retried up to `NovaMaxCallAttempts` with backoff. Once NOVA completes, the workflow starts `DeltaHandoffWorkflow`.
 
-One Temporal workflow per borrower, orchestrated as a linear pipeline with outcome-based transitions:
+`DeltaHandoffWorkflow` sends either a NOVA agreement email or a DELTA final-offer email, then starts `EvaluationWorkflow`.
 
-```
-AriaHandoffWorkflow
-  ├─ CompleteARIA activity
-  │   └─ stop_contact outcome → EXIT
-  ├─ PrepareNOVA activity (generate handoff context)
-  ├─ waitForNovaSchedule (timer + reschedule signal)
-  ├─ StartNOVA activity (Vapi outbound call)
-  └─ Start NovaCompletionWorkflow (child)
-        ├─ Wait for nova_complete signal (webhook or polling)
-        ├─ Retry logic (up to 3 attempts for failed/busy/no-answer)
-        ├─ CompleteNOVA activity
-        ├─ deal_agreed → send NOVA offer email → EXIT
-        └─ no_deal → Start DeltaHandoffWorkflow (child)
-              ├─ send DELTA final offer email
-              └─ Start EvaluationWorkflow (child)
-                    └─ Score all workflow conversations
-```
+`EvaluationWorkflow` scores all workflow conversations and calls the production learning tick when scores are available.
 
-Key workflow features:
-- **Signal-based NOVA scheduling**: Borrowers can reschedule the NOVA call via `RescheduleNovaCallSignal`, which cancels the pending timer and sets a new one
-- **Webhook + polling completion**: NOVA completion uses Vapi webhooks with polling fallback (15s intervals)
-- **Retryable call detection**: Busy, no-answer, voicemail, provider errors trigger automatic retry with backoff (30s, 30s, 2min)
-- **Child workflow isolation**: Each stage runs as a child workflow with `PARENT_CLOSE_POLICY_ABANDON` so parent completion doesn't kill in-progress stages
-- **Post-pipeline evaluation**: `EvaluationWorkflow` scores all non-simulated conversations after the pipeline completes
+Key implementation choices:
 
-## Self-Learning Loop
+- Child workflows use `PARENT_CLOSE_POLICY_ABANDON` so a parent completion does not kill later-stage work.
+- NOVA scheduling uses the `reschedule_nova_call` Temporal signal.
+- NOVA completion uses the `nova_complete` signal plus polling fallback.
+- Simulations force ARIA -> NOVA -> DELTA handoff coverage so evaluation sees the full system path even when a persona mentions stop-contact or hardship early.
 
-### How It Works
+## Self-Learning Flow Chart
 
-The self-learning loop runs per-agent and follows this cycle:
+![Riverline self-learning flow chart](docs/assets/self_learn.png)
 
-1. **Simulate**: Generate synthetic conversations using an LLM playing 5 borrower personas (cooperative, combative, evasive, distressed, confused) against the current agent prompt
-2. **Score**: Three independent LLM judges evaluate each conversation on multiple dimensions (compliance, tone, information gathering, resolution effectiveness, etc.) and produce a weighted composite score
-3. **Generate candidate**: An LLM analyzes the current prompt and scored conversations to propose an improved prompt
-4. **A/B test**: Run the same simulation batch against both the current (control) and candidate (treatment) prompts
-5. **Statistical comparison**: Welch's t-test for significance, Cohen's d for effect size
-6. **Adopt or reject**: Hard gates determine whether the candidate replaces the current prompt
+See [SELF_LEARNING.md](SELF_LEARNING.md) for the detailed mechanics.
 
-### Multi-Judge Evaluation
+## Evaluation Method
 
-Three judges score each conversation independently:
+Synthetic borrowers cover the assignment personas: cooperative, combative, evasive, confused, and distressed. A persona LLM chats against the current agent prompts and generates full-system transcripts. The scoring layer evaluates the transcript as a single borrower experience, not as isolated agent snippets.
 
-| Judge | Provider | Model | Weight |
-|-------|----------|-------|--------|
-| judge_a | Groq | Llama 3.1 8B | 1.0 |
-| judge_b | Groq | GPT-OSS 20B | 1.0 |
-| judge_c | xAI | Grok 4 Reasoning Fast | 1.0 |
+The default judges are configured in [services/server/constants/eval_config.go](services/server/constants/eval_config.go):
 
-Each judge produces per-dimension scores. The composite score is a weighted average across judges. Judge configuration is overridable via `EVALUATOR_JUDGES_JSON` env var.
+- `judge_grok4_xai` using xAI Grok 4.
+- `judge_grok4_fast_reasoning_xai` using xAI Grok 4 Fast Reasoning with slightly higher weight.
 
-### Statistical Adoption Gates
+Judge configuration is overridable with `EVALUATOR_JUDGES_JSON`. The evaluator returns numeric dimensions for identity verification, completeness, redundancy, tone, offer clarity, objection handling, commitment attempt, context continuity, consequence accuracy, deadline specificity, negotiation drift, and compliance.
 
-A candidate prompt is adopted only if **all** of the following hold:
+Prompt adoption is quantitative. The current demo defaults are:
 
-| Gate | Threshold | Rationale |
-|------|-----------|-----------|
-| p-value (Welch t-test) | < 0.05 | Statistical significance |
-| Cohen's d | >= 0.35 | Medium+ effect size, not noise |
-| Mean delta | >= 5.0 | Meaningful absolute improvement |
-| Treatment stddev | <= 25 | Consistent performance, not volatile |
-| Treatment compliance rate | = 100% | No compliance violations |
-| Treatment compliance | >= control compliance | No compliance regression |
+| Gate                 | Default                                            |
+| -------------------- | -------------------------------------------------- |
+| Welch p-value        | `< 0.35`                                           |
+| Cohen's d            | `>= 0.15`                                          |
+| Mean score delta     | `>= 1.5`                                           |
+| Treatment stddev     | `<= 25`                                            |
+| Treatment compliance | `>= MinComplianceRate` and `>= control compliance` |
 
-If any gate fails, the candidate is rejected with a specific reason logged in the experiment record. The rejection reason tracks exactly which gate(s) failed.
+These thresholds are intentionally cheap/demo-friendly for a constrained assignment run. They are centralized in `DefaultSelfLearningConfig` and can be tightened for production or larger sample sizes.
 
-### Rollback
+## Meta-Evaluation
 
-Any prompt version can be rolled back via the API (`POST /api/v1/admin/prompt-versions/rollback`). The rollback deactivates the current version and reactivates the specified previous version.
+The meta-evaluator checks whether the evaluator itself has become unreliable. It can raise flags for:
 
-### Audit Trail
+- Score inflation: high, low-variance scores that stop discriminating.
+- Metric uselessness: a metric with near-zero variance.
+- Judge disagreement: judges diverging beyond `MaxJudgeDisagreement`.
+- Invalid judge output: malformed or unusable JSON from judge calls.
+- Post-adoption regression: a newer active prompt performing worse than the previous version.
 
-Every prompt version is stored in the `prompt_versions` table with:
-- Full prompt text
-- Version number (monotonically increasing per agent)
-- Whether it's active
-- Adoption/rejection reason
-- Link to the experiment that produced it
-- Timestamp
+When a flag is raised, the system stores the evidence in `meta_flags`, asks the prompt generator to revise the evaluator prompt while preserving the JSON schema, creates a new `evaluator_versions` row for the system evaluator, and marks the flag resolved.
 
-Every experiment is stored in `prompt_experiments` with raw score arrays, statistical results, and the full decision record.
+Compliance canaries exercise the evaluator against known violations, including missing AI disclosure, false threats, harassment after stop-contact, misleading terms, hardship mishandling, missing logging/recording disclosure, unprofessional language, and privacy leaks.
 
-### Continuous Supervisor
+## Running Locally
 
-The backend also exposes an in-process learning supervisor for always-on simulation and prompt improvement. It rotates through ARIA, NOVA, and DELTA, runs scored simulations, triggers meta-evaluation by judge-call count, and only attempts prompt generation when accumulated scores show a low-scoring pattern worth testing.
+Prerequisites:
 
-Control endpoints:
-- `POST /api/v1/admin/learning/start` — start the supervisor
-- `POST /api/v1/admin/learning/stop` — stop the supervisor
-- `GET /api/v1/admin/learning/status` — inspect cycles, score counters, spend, current agent, and stop reason
+- Docker and Docker Compose.
+- Bun 1.3.x for local package scripts.
+- Go 1.22+ if running server commands outside Docker.
+- LLM provider keys for agents, judges, and prompt generation.
+- Vapi credentials for live NOVA calls, or `VAPI_DRY_RUN=true` for local dry-run behavior.
 
-Single-flow inspection endpoint:
-- `POST /api/v1/admin/simulations/single` — run one synchronous ARIA to NOVA to DELTA-handoff simulation and return transcripts, scores, and cost
-
-Smoke test:
-
-```sh
-curl -X POST "$URL/api/v1/admin/simulations/single" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"persona":"cooperative"}'
-```
-
-## Meta-Evaluation (Darwin Godel Machine)
-
-The meta-evaluation layer evaluates and improves the evaluation methodology itself. It runs after each improvement cycle and checks for:
-
-| Flag Type | What It Detects |
-|-----------|-----------------|
-| **score_inflation** | Mean scores trending upward without corresponding improvement in conversation quality |
-| **metric_uselessness** | A scoring dimension with near-zero variance (doesn't discriminate between good and bad conversations) |
-| **judge_disagreement** | Judges disagreeing beyond the threshold (default: 20 points), indicating inconsistent evaluation criteria |
-| **post_adoption_regression** | A recently adopted prompt performing worse than its predecessor on subsequent evaluations |
-| **canary_blind_spot** | Compliance canaries that should be caught but aren't being flagged by the current evaluator |
-
-When a flag is raised, the meta-evaluator:
-1. Logs the flag with evidence and proposed action
-2. Generates a revised evaluator prompt that addresses the specific flaw
-3. Creates a new evaluator version with the fix
-4. Marks the flag as resolved
-
-### Compliance Canaries
-
-Eight compliance canaries test the evaluation methodology's ability to detect violations:
-
-1. Identity disclosure — agent must identify as AI
-2. No false threats — no fabricated legal consequences
-3. No harassment — respect explicit stop-contact requests
-4. No misleading terms — offers within policy-defined ranges
-5. Sensitive situations — offer hardship program when borrower mentions crisis
-6. Recording disclosure — inform borrower conversation is logged
-7. Professional composure — maintain professional language regardless of borrower behavior
-8. Data privacy — never display full account numbers or personal details
-
-Each canary is a synthetic conversation containing a known violation. The evaluator must correctly flag it. Failed canaries indicate blind spots in the evaluation methodology.
-
-## Running the System
-
-### Prerequisites
-
-- Docker and Docker Compose
-- Go 1.22+ (for local eval CLI)
-- API keys: at least one LLM provider (Groq, xAI) for evaluation judges
-
-### Quick Start
+Setup:
 
 ```sh
 cp .env.example .env
 cp services/server/.env.example services/server/.env
 cp apps/web/.env.local.example apps/web/.env.local
-# Edit .env files with your API keys
-docker compose --profile dev up --build
+# Edit the env files with the provider keys and app credentials for your environment.
+bun install
+bun run dev
 ```
 
-Services:
+Development services:
 
-| Service | URL |
-|---------|-----|
-| Web UI | http://localhost:3000/chat |
-| API | http://localhost:9000 |
-| Temporal UI | http://localhost:8080 |
-| Drizzle Studio | http://localhost:4983 |
+| Service        | URL                           |
+| -------------- | ----------------------------- |
+| Web app        | `http://localhost:3000`       |
+| Chat UI        | `http://localhost:3000/chat`  |
+| Admin UI       | `http://localhost:3000/admin` |
+| API            | `http://localhost:9000`       |
+| Temporal UI    | `http://localhost:8080`       |
+| Drizzle Studio | `http://localhost:4983`       |
+| PostgreSQL     | `localhost:5433`              |
 
-The backend auto-seeds baseline prompts, evaluator versions, demo borrower data, and eight compliance canaries on startup.
+The backend calls `EnsureDefaults` during startup/evaluation flows to seed baseline prompts, evaluator versions, demo borrower data, and compliance canaries.
 
-### API Endpoints
+## Reproducibility
 
-**Borrower-facing (auth required)**:
-- `POST /api/v1/workflows/start` — start a new collections workflow
-- `GET /api/v1/workflows/:id` — get workflow state
-- `POST /api/v1/chat/:workflowId` — send a chat message
-- `GET /api/v1/chat/:workflowId/stream` — SSE stream of conversation updates
-- `GET /api/v1/conversations/:id` — get full conversation with messages
-
-**Webhooks**:
-- `POST /api/v1/vapi/webhook` — Vapi call events (call.ended, transcript)
-
-**Admin / Evaluation**:
-- `GET /api/v1/admin/eval` — summary of all scores, experiments, and costs
-- `GET /api/v1/admin/eval/metrics` — aggregated evaluation metrics
-- `GET /api/v1/admin/eval/meta` — meta-evaluation flags, evaluator versions, canaries
-- `GET /api/v1/admin/eval/experiments/:id` — experiment detail
-- `POST /api/v1/admin/simulations` — run simulations with scoring
-- `POST /api/v1/admin/simulations/single` — run one synchronous full-flow simulation for inspection
-- `POST /api/v1/admin/prompt-experiments` — run a prompt improvement experiment
-- `POST /api/v1/admin/eval/full-cycle` — run the complete self-learning cycle
-- `POST /api/v1/admin/learning/start` — start the continuous learning supervisor
-- `POST /api/v1/admin/learning/stop` — stop the continuous learning supervisor
-- `GET /api/v1/admin/learning/status` — continuous learning supervisor status
-- `POST /api/v1/admin/evaluations/rerun` — re-score existing conversations
-- `POST /api/v1/admin/prompt-versions/rollback` — rollback to a previous prompt version
-- `POST /api/v1/admin/meta-evaluations` — run meta-evaluation
-
-## Evaluation & Reproducibility
-
-### Single Command
+Run the complete evaluation cycle:
 
 ```sh
 make eval SEED=42 BATCH_SIZE=2 AGENT=all OUTPUT=./eval-artifacts
 ```
 
-This runs the full self-learning cycle for all three agents:
-1. Generates synthetic conversations (5 personas x batch_size x 2 arms x 3 agents)
-2. Scores with 3 independent judges
-3. Generates candidate prompts
-4. Runs A/B comparison with statistical testing
-5. Runs meta-evaluation and compliance canaries
-6. Outputs formatted results to stdout and raw JSON artifacts
+This runs seeded simulations, scoring, prompt generation, treatment comparison, meta-evaluation, canaries, and artifact export.
 
-### CLI Output
-
-The eval CLI prints a rich formatted report:
-- Per-agent control vs treatment comparison tables
-- Statistical analysis (p-value, Cohen's d, mean delta)
-- Adoption/rejection decisions with reasons
-- Per-persona breakdowns (mean, stddev, compliance rate)
-- Raw score arrays
-- Meta-evaluation flags and resolutions
-- Canary test results
-- Cost breakdown by model and usage type
-- Prompt version history
-- Final summary table
-
-### Artifacts
-
-All raw data is written to the output directory as JSON:
-
-| File | Contents |
-|------|----------|
-| `full_report.json` | Complete cycle report with all nested data |
-| `run_config.json` | Seed, batch size, agents, personas, timestamps |
-| `metrics.json` | Aggregated evaluation metrics |
-| `conversation_scores.json` | Per-conversation scores from all judges |
-| `prompt_experiments.json` | All experiments with raw score arrays |
-| `meta_flags.json` | Meta-evaluation flags |
-| `evaluator_versions.json` | Evaluator version history |
-| `canary_results.json` | Canary test results |
-| `llm_cost_log.json` | Per-call LLM cost records |
-| `prompt_versions.json` | All prompt versions with full text |
-
-### CSV Reports
+Generate CSV reports from database state:
 
 ```sh
 make report OUTPUT=./eval-artifacts
 ```
 
-Generates CSV files from existing DB data:
-- `conversations_{aria,nova,delta}.csv`
-- `experiments_{aria,nova,delta}.csv`
-- `meta_flags.csv`
-- `canary_results.csv`
-- `cost_breakdown.csv`
-- `prompt_versions.csv`
+The `cmd/eval` output directory includes JSON artifacts such as:
 
-### Cost Tracking
+| File                       | Contents                                               |
+| -------------------------- | ------------------------------------------------------ |
+| `full_report.json`         | Full nested cycle report.                              |
+| `run_config.json`          | Seed, agents, personas, batch size, and timestamps.    |
+| `conversation_scores.json` | Per-conversation scores and judge details.             |
+| `prompt_experiments.json`  | Control/treatment score arrays and adoption decisions. |
+| `meta_flags.json`          | Meta-evaluation flags and evidence.                    |
+| `evaluator_versions.json`  | Evaluator prompt history.                              |
+| `canary_results.json`      | Canary test results.                                   |
+| `llm_cost_log.json`        | Per-call cost records.                                 |
+| `prompt_versions.json`     | Agent prompt version history.                          |
 
-Every LLM call is logged to `llm_cost_log` with:
-- Call type (simulation, evaluation, prompt_generation, handoff, etc.)
-- Model used
-- Prompt and completion token counts
-- Estimated cost in USD
-- Associated agent, experiment, and conversation IDs
+## API Surface
 
-Cost estimates use configurable per-model pricing (overridable via `LLM_PRICING_JSON` env var).
+Routes are mounted under `/api/v1`. Borrower routes require Clerk auth; admin routes also require the user to be marked admin.
 
-## Database Schema
+Borrower-facing:
 
-14 tables managed via Drizzle migrations, accessed through Karma ORM:
+- `POST /api/v1/workflows/start`
+- `GET /api/v1/workflows/:id`
+- `POST /api/v1/chat/:workflowId`
+- `GET /api/v1/chat/:workflowId/stream`
+- `GET /api/v1/conversations/:id`
+- `GET /api/v1/workflows/:workflowId/delta-handoff`
+- `GET /api/v1/workflows/:workflowId/delta-handoff.pdf`
 
-| Table | Purpose |
-|-------|---------|
-| `users` | Borrower profiles (from Clerk auth) |
-| `loans` | Loan records with partial account numbers |
-| `borrower_workflows` | Workflow state, current stage, handoff context |
-| `resolution_offers` | NOVA-generated offers with terms and status |
-| `agent_conversations` | Conversation metadata per agent per workflow |
-| `agent_messages` | Individual messages within conversations |
-| `prompt_versions` | Versioned agent prompts with adoption records |
-| `conversation_scores` | Per-conversation evaluation scores |
-| `prompt_experiments` | A/B experiment records with statistical results |
-| `meta_flags` | Meta-evaluation flags and resolutions |
-| `evaluator_versions` | Evaluator prompt versions |
-| `compliance_canaries` | Canary test definitions |
-| `canary_results` | Canary test execution results |
-| `llm_cost_log` | Per-call LLM cost records |
+Webhooks:
 
-## Environment Variables
+- `POST /api/v1/vapi/webhook`
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `REDIS_URL` | Yes | Redis URL for caching and infra |
-| `TEMPORAL_HOST_PORT` | Yes | Temporal frontend address (default: `localhost:7233`) |
-| `GROQ_API_KEY` | For eval | Groq API key for judge LLMs |
-| `XAI_API_KEY` | For eval | xAI API key for Grok judge |
-| `VAPI_API_KEY` | For voice | Vapi API key for NOVA voice calls |
-| `VAPI_ASSISTANT_ID` | For voice | Vapi assistant ID |
-| `VAPI_PHONE_NUMBER_ID` | For voice | Vapi outbound phone number |
-| `VAPI_WEBHOOK_SECRET` | Optional | Shared secret for Vapi webhook auth |
-| `NEXT_PUBLIC_API_URL` | For web | Browser-visible API base URL |
-| `PERSONA_LLM_BASE_URL` | For eval | Base URL for persona simulation LLM |
-| `PERSONA_LLM_API_KEY` | For eval | API key for persona simulation LLM |
-| `PERSONA_LLM_MODEL` | For eval | Model name for persona simulation |
-| `EVALUATOR_JUDGES_JSON` | Optional | JSON override for judge configuration |
-| `PROMPT_GENERATOR_PROVIDER` | Optional | Provider used for prompt and evaluator-revision generation |
-| `PROMPT_GENERATOR_MODEL` | Optional | Model used for prompt and evaluator-revision generation |
-| `PROMPT_GENERATOR_MAX_TOKENS` | Optional | Output token cap for prompt generation; default `2200` |
-| `PROMPT_GENERATOR_REASONING_EFFORT` | Optional | Reasoning effort override; only attached when max tokens is at least `4000` |
-| `LEARNING_LOOP_BUDGET_USD` | Optional | Default incremental supervisor spend cap; default `15` |
-| `LLM_PRICING_JSON` | Optional | JSON override for per-model pricing |
+Admin and evaluation:
 
-## Limitations
+- `GET /api/v1/admin/eval`
+- `GET /api/v1/admin/eval/metrics`
+- `GET /api/v1/admin/eval/meta`
+- `GET /api/v1/admin/eval/experiments/:id`
+- `POST /api/v1/admin/simulations`
+- `POST /api/v1/admin/simulations/single`
+- `POST /api/v1/admin/prompt-experiments`
+- `POST /api/v1/admin/eval/full-cycle`
+- `POST /api/v1/admin/eval/full-cycle/start`
+- `GET /api/v1/admin/eval/runs/:id`
+- `POST /api/v1/admin/evaluations/rerun`
+- `POST /api/v1/admin/prompt-versions/rollback`
+- `POST /api/v1/admin/meta-evaluations`
+- `POST /api/v1/admin/learning/start`
+- `POST /api/v1/admin/learning/stop`
+- `GET /api/v1/admin/learning/status`
+- `POST /api/v1/admin/eval/reset`
+- `GET /api/v1/admin/eval/export/scores`
+- `GET /api/v1/admin/eval/export/experiments`
 
-- **Context budget enforcement is instruction-based**: The 500-token handoff budget is enforced via LLM instructions ("produce a ≤500-token context") rather than hard token counting and truncation. In practice, LLMs reliably respect this instruction, but there is no programmatic guarantee.
-- **NOVA voice depends on Vapi availability**: If Vapi is unreachable or the borrower has no phone number, NOVA generates a mock call ID and the workflow continues with a synthetic transcript.
-- **Self-learning requires LLM API keys**: The evaluation loop requires active API keys for at least the configured judge models. Without them, simulations run but scoring fails.
-- **Statistical power with small batches**: The default batch size of 2 per persona produces 10 scores per arm. This is sufficient for demonstration but low for production-grade statistical conclusions. Increase `BATCH_SIZE` for more reliable results (at higher cost).
-- **Single-pass improvement**: Each eval cycle generates one candidate prompt per agent. A production system would benefit from multiple candidates or iterative refinement.
-- **No live A/B testing**: The self-learning loop compares prompts via simulation only. It does not split live traffic between control and treatment.
+Single simulation smoke test:
+
+```sh
+curl -X POST "$URL/api/v1/admin/simulations/single" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"persona":"cooperative","seed":42,"max_turns_per_agent":6}'
+```
+
+Start the continuous learning supervisor:
+
+```sh
+curl -X POST "$URL/api/v1/admin/learning/start" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"max_incremental_cost_usd":15,"prompt_gen_every_n_scores":3,"meta_eval_every_n_judges":4}'
+```
+
+## Database Tables
+
+Database migrations are defined with Drizzle in [database/schema.ts](database/schema.ts). The Go server uses Karma ORM models in `services/server/internal/models`.
+
+Important tables:
+
+| Table                 | Purpose                                                                        |
+| --------------------- | ------------------------------------------------------------------------------ |
+| `users`               | Borrower profiles and admin flag.                                              |
+| `loans`               | Loan facts, outstanding amount, account suffix, policy discount, overdue days. |
+| `borrower_workflows`  | Workflow state and handoff context fields.                                     |
+| `resolution_offers`   | NOVA offer terms, call status, acceptance, objections.                         |
+| `agent_conversations` | Conversation metadata per agent and workflow.                                  |
+| `agent_messages`      | Individual borrower/agent messages.                                            |
+| `prompt_versions`     | Versioned ARIA/NOVA/DELTA prompts.                                             |
+| `conversation_scores` | Per-conversation/system evaluation results.                                    |
+| `prompt_experiments`  | Control/treatment comparison records.                                          |
+| `evaluator_versions`  | Versioned judge prompts.                                                       |
+| `meta_flags`          | Evaluator flaw flags and resolutions.                                          |
+| `compliance_canaries` | Known compliance-violation test cases.                                         |
+| `canary_results`      | Canary execution results.                                                      |
+| `llm_cost_log`        | Per-call cost and token accounting.                                            |
 
 ## Project Structure
 
-```
+```text
 riverline.assessment/
-├── apps/web/                    # Next.js frontend
-├── database/                    # Drizzle schema and migrations
-├── services/server/
-│   ├── cmd/
-│   │   ├── main/                # API server entrypoint
-│   │   ├── worker/              # Temporal worker entrypoint
-│   │   ├── eval/                # Self-learning eval CLI
-│   │   └── report/              # CSV report generator
-│   ├── constants/
-│   │   ├── initials.go          # Seed prompts for all 3 agents + evaluators
-│   │   └── eval_config.go       # Judge config, adoption thresholds, pricing
-│   └── internal/
-│       ├── agents/              # Agent implementations (ARIA, NOVA, DELTA)
-│       ├── collections/         # Business logic, handoff generation
-│       ├── eval/                # Self-learning loop, simulation, scoring, meta-eval
-│       ├── handlers/            # HTTP handlers
-│       ├── middleware/          # Auth middleware (Clerk)
-│       ├── models/              # Database models (Karma ORM)
-│       ├── routes/              # Route definitions
-│       ├── temporalclient/      # Temporal client factory
-│       ├── vapi/                # Vapi client for voice calls
-│       └── workflows/           # Temporal workflow definitions
-├── docker-compose.yml
-└── Makefile
+|-- apps/web/                    # Next.js frontend
+|-- database/                    # Drizzle schema and migrations
+|-- llm-docs/                    # Assignment, rules, ORM docs, implementation notes
+|-- services/server/
+|   |-- cmd/
+|   |   |-- eval/                # Reproducible evaluation CLI
+|   |   |-- report/              # CSV report generator
+|   |   |-- worker/              # Temporal worker
+|   |   `-- aiprobe/             # Provider probe utility
+|   |-- constants/               # Seed prompts, agent truth, evaluator config
+|   `-- internal/
+|       |-- agents/              # Agent clients and prompt loading
+|       |-- collections/         # Business logic, handoffs, cost logging
+|       |-- eval/                # Simulation, judges, experiments, meta-eval, supervisor
+|       |-- handlers/            # HTTP handlers
+|       |-- routes/              # Fiber route registration
+|       |-- vapi/                # Vapi client
+|       `-- workflows/           # Temporal workflows and activities
+|-- docker-compose.yml
+|-- Makefile
+`-- SELF_LEARNING.md
 ```
+
+## Limitations
+
+- Handoff token budgets are instruction-enforced today. A production version should add tokenizer-based hard truncation and rejection.
+- Demo statistical thresholds are intentionally permissive to fit a small, low-cost assignment run. Production should require larger samples and stricter significance.
+- The learning loop evaluates through simulations and post-run scoring. It does not run live traffic A/B splits.
+- NOVA depends on Vapi for real calls. Dry-run/synthetic behavior keeps local flows testable without a live phone call.
+- The supervisor status is in-memory and process-bounded. Restarting the backend loses the active supervisor state, though persisted scores, prompts, costs, and experiments remain.
+- The assignment requires a handwritten decision journal, an audio recording, and a short demo video. Those are submission artifacts outside the generated code/docs.
